@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Perp Signals — Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">PS</div>
+      <div class="brand-text">
+        <div class="brand-title">Perp Signals</div>
+        <div class="brand-sub">Top 50 perps • multi-timeframe • confidence scoring</div>
+      </div>
+    </div>
+
+    <nav class="tabs" aria-label="Primary navigation">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="signals">Signals</button>
+      <button class="tab" data-view="charts">Charts</button>
+      <button class="tab" data-view="pnl">PnL</button>
+    </nav>
+
+    <div class="topbar-actions">
+      <div class="pill" title="Scan cadence (prototype)">
+        <span class="dot live"></span>
+        <span id="scanStatus">Scanning every 2m</span>
+      </div>
+      <button class="btn ghost" id="mockRescanBtn">Mock Rescan</button>
+    </div>
+  </header>
+
+  <main class="app">
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3 class="card-title">Markets (Top 50)</h3>
+            <p class="muted">Sorted by volume (mock)</p>
+          </div>
+          <span class="badge">50</span>
+        </div>
+
+        <div class="field">
+          <label class="label" for="marketSearch">Search</label>
+          <input id="marketSearch" class="input" placeholder="BTC, ETH, SOL…" />
+        </div>
+
+        <div class="market-list" id="marketList" role="listbox" aria-label="Market list">
+          <!-- injected by JS -->
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">Filters</h3>
+
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="tfSelect">Timeframe</label>
+            <select id="tfSelect" class="select">
+              <option value="5m">5m</option>
+              <option value="15m" selected>15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="label" for="dirSelect">Direction</label>
+            <select id="dirSelect" class="select">
+              <option value="all" selected>All</option>
+              <option value="long">Long</option>
+              <option value="short">Short</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label" for="minConf">Min Confidence</label>
+          <input id="minConf" class="range" type="range" min="0" max="100" value="70" />
+          <div class="range-row">
+            <span class="muted">0</span>
+            <span class="pill" id="minConfPill">70%</span>
+            <span class="muted">100</span>
+          </div>
+        </div>
+
+        <button class="btn" id="applyFilters">Apply filters</button>
+      </div>
+    </aside>
+
+    <!-- CONTENT -->
+    <section class="content">
+      <!-- DASHBOARD VIEW -->
+      <div class="view active" id="view-dashboard">
+        <div class="hero">
+          <div class="hero-left">
+            <h1>Market Overview</h1>
+            <p class="muted">
+              Live prototype UI. Your backend will fill these cards with real perps,
+              indicator states, and setups found every scan cycle.
+            </p>
+
+            <div class="kpis">
+              <div class="kpi">
+                <div class="kpi-label">Active setups</div>
+                <div class="kpi-value" id="kpiSetups">12</div>
+                <div class="kpi-sub muted">Across all timeframes</div>
+              </div>
+              <div class="kpi">
+                <div class="kpi-label">80%+ signals</div>
+                <div class="kpi-value" id="kpiHigh">4</div>
+                <div class="kpi-sub muted">Paper trade eligible</div>
+              </div>
+              <div class="kpi">
+                <div class="kpi-label">Next scan</div>
+                <div class="kpi-value" id="kpiNextScan">01:34</div>
+                <div class="kpi-sub muted">Mock countdown</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-right card">
+            <div class="card-head">
+              <h3 class="card-title">Selected Market</h3>
+              <span class="badge" id="selectedSymbolBadge">BTCUSDT</span>
+            </div>
+            <div class="split">
+              <div>
+                <div class="muted">Trend</div>
+                <div class="big" id="selectedTrend">Bullish</div>
+              </div>
+              <div>
+                <div class="muted">Last signal</div>
+                <div class="big" id="selectedSignalDir">LONG</div>
+              </div>
+            </div>
+
+            <div class="mini">
+              <div class="mini-row">
+                <span class="muted">Confidence</span>
+                <span class="pill" id="selectedConfPill">84%</span>
+              </div>
+              <div class="progress" aria-label="Confidence bar">
+                <div class="progress-bar" id="selectedConfBar" style="width:84%"></div>
+              </div>
+
+              <ul class="bullets" id="selectedTldr">
+                <li>Price above EMA200 on 1h</li>
+                <li>MACD cross up, momentum building</li>
+                <li>Reclaimed prior resistance → support</li>
+              </ul>
+
+              <div class="cta-row">
+                <button class="btn" data-nav="charts">Open Chart</button>
+                <button class="btn ghost" data-nav="signals">View Signals</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2-wide">
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Top Signals (by confidence)</h3>
+              <button class="btn ghost small" data-nav="signals">All signals</button>
+            </div>
+            <div class="table-wrap">
+              <table class="table" id="topSignalsTable">
+                <thead>
+                  <tr>
+                    <th>Coin</th>
+                    <th>Dir</th>
+                    <th>TF</th>
+                    <th>Conf</th>
+                    <th>Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- injected -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Paper Account Snapshot</h3>
+              <button class="btn ghost small" data-nav="pnl">PnL tab</button>
+            </div>
+
+            <div class="pnl-cards">
+              <div class="pnl-card">
+                <div class="muted">Balance</div>
+                <div class="big" id="paperBalance">$2,143.20</div>
+              </div>
+              <div class="pnl-card">
+                <div class="muted">Open positions</div>
+                <div class="big" id="openPositions">2</div>
+              </div>
+              <div class="pnl-card">
+                <div class="muted">Win rate</div>
+                <div class="big" id="winRate">57%</div>
+              </div>
+            </div>
+
+            <div class="muted" style="margin-top:10px;">Recent trades (mock)</div>
+            <div class="table-wrap">
+              <table class="table compact" id="recentTradesTable">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Coin</th>
+                    <th>Dir</th>
+                    <th>PnL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- injected -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SIGNALS VIEW -->
+      <div class="view" id="view-signals">
+        <div class="view-head">
+          <div>
+            <h2>Signals</h2>
+            <p class="muted">Filtered list of setups detected on the last scan cycle.</p>
+          </div>
+          <div class="view-actions">
+            <button class="btn ghost" id="exportMock">Export (mock)</button>
+            <button class="btn" id="paperTradeMock">Paper trade 80%+</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-wrap">
+            <table class="table" id="signalsTable">
+              <thead>
+                <tr>
+                  <th>Coin</th>
+                  <th>Direction</th>
+                  <th>TF</th>
+                  <th>Confidence</th>
+                  <th>TL;DR</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- injected -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHARTS VIEW -->
+      <div class="view" id="view-charts">
+        <div class="view-head">
+          <div>
+            <h2>Charts</h2>
+            <p class="muted">
+              Chart panel placeholder. Your backend will feed candles + computed drawings
+              (S/R lines, trendlines) per timeframe.
+            </p>
+          </div>
+          <div class="view-actions">
+            <div class="pill">
+              <span class="dot"></span>
+              <span id="chartSymbol">BTCUSDT</span>
+            </div>
+            <button class="btn ghost" id="toggleDrawings">Toggle drawings</button>
+          </div>
+        </div>
+
+        <div class="grid-2-wide">
+          <div class="card chart-card">
+            <div class="chart-top">
+              <div class="chart-tabs">
+                <button class="chip active" data-chart-tf="15m">15m</button>
+                <button class="chip" data-chart-tf="1h">1h</button>
+                <button class="chip" data-chart-tf="4h">4h</button>
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="swatch"></span> Support</span>
+                <span class="legend-item"><span class="swatch"></span> Resistance</span>
+                <span class="legend-item"><span class="swatch"></span> Trendline</span>
+              </div>
+            </div>
+
+            <div class="chart-placeholder" id="chartPlaceholder" aria-label="Chart placeholder">
+              <div class="chart-grid">
+                <div class="line h"></div><div class="line h"></div><div class="line h"></div>
+                <div class="line v"></div><div class="line v"></div><div class="line v"></div>
+              </div>
+
+              <div class="overlay" id="drawingsOverlay">
+                <div class="sr-line resistance" style="top:18%"></div>
+                <div class="sr-line resistance" style="top:32%"></div>
+                <div class="sr-line support" style="top:68%"></div>
+                <div class="trendline" style="left:18%; top:70%; width:60%; transform:rotate(-18deg)"></div>
+
+                <div class="signal-marker long" style="left:64%; top:52%">
+                  <span>LONG 84%</span>
+                </div>
+              </div>
+
+              <div class="chart-center">
+                <div class="muted">TradingView / Lightweight Charts goes here</div>
+                <div class="big">Chart Placeholder</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <h3 class="card-title">Indicator Snapshot</h3>
+              <div class="kv">
+                <div class="kv-row">
+                  <span class="muted">RSI</span>
+                  <strong id="rsiVal">58.2</strong>
+                </div>
+                <div class="kv-row">
+                  <span class="muted">EMA200</span>
+                  <strong id="emaVal">Above</strong>
+                </div>
+                <div class="kv-row">
+                  <span class="muted">MACD</span>
+                  <strong id="macdVal">Cross Up</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3 class="card-title">Setup Explanation</h3>
+              <div class="pill-row">
+                <span class="pill green">Bullish</span>
+                <span class="pill">Conf: <span id="chartConf">84%</span></span>
+                <span class="pill">TF: <span id="chartTF">15m</span></span>
+              </div>
+              <ul class="bullets" id="chartTldr">
+                <li>Price holding above EMA200 (1h)</li>
+                <li>MACD histogram rising, momentum improving</li>
+                <li>Re-test of resistance turned support</li>
+              </ul>
+              <button class="btn" id="addWatchMock">Add to watchlist (mock)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PNL VIEW -->
+      <div class="view" id="view-pnl">
+        <div class="view-head">
+          <div>
+            <h2>PnL Tracker</h2>
+            <p class="muted">
+              Paper-only. Shows trades taken when confidence ≥ 80% (mock).
+            </p>
+          </div>
+          <div class="view-actions">
+            <button class="btn ghost" id="resetPaper">Reset paper balance</button>
+            <button class="btn" id="newTradeMock">Create mock trade</button>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="muted">Paper Balance</div>
+            <div class="big" id="pnlBalance">$2,143.20</div>
+            <div class="muted">Start: $2,000.00</div>
+          </div>
+          <div class="card">
+            <div class="muted">Total PnL</div>
+            <div class="big" id="pnlTotal">+$143.20</div>
+            <div class="muted">All trades combined</div>
+          </div>
+          <div class="card">
+            <div class="muted">Max Drawdown</div>
+            <div class="big" id="pnlDD">-4.3%</div>
+            <div class="muted">Mock number</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Trades</h3>
+            <div class="pill">Auto-trade threshold: <strong>80%</strong></div>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="tradesTable">
+              <thead>
+                <tr>
+                  <th>Opened</th>
+                  <th>Coin</th>
+                  <th>Dir</th>
+                  <th>Leverage</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Conf</th>
+                  <th>PnL</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- injected -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <footer class="footer">
+        <span class="muted">Prototype UI • Plug backend later • No real trading here</span>
+        <span class="muted">v0.1</span>
+      </footer>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
