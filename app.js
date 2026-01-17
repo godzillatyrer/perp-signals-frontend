@@ -10,21 +10,23 @@ const CONFIG = {
   COINGECKO_API: 'https://api.coingecko.com/api/v3',
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
   CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
+  CLAUDE_MODEL: 'claude-3-5-sonnet-20241022', // Model used for analysis
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
   PNL_UPDATE_INTERVAL: 500,
   CACHE_TTL: 30000,
   MIN_CONFIDENCE: 65,
-  HIGH_CONFIDENCE: 80,
+  HIGH_CONFIDENCE: 75, // Lowered for AI auto-trade
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
-  TP_PERCENT: 3, // Increased for better R/R
+  TP_PERCENT: 3,
   SL_PERCENT: 1,
-  MAX_OPEN_TRADES: 3, // Maximum concurrent AI trades
-  MAX_POSITION_SIZE_PERCENT: 25, // Max 25% of balance per trade
-  AI_MIN_CONFIDENCE: 75 // Minimum confidence for AI auto-trade
+  MAX_OPEN_TRADES: 5, // Increased for more trades
+  MAX_POSITION_SIZE_PERCENT: 20, // 20% of balance per trade
+  AI_MIN_CONFIDENCE: 70, // Lower threshold for AI auto-trade
+  CHART_HISTORY_LIMIT: 1000 // More candles for longer history
 };
 
 // Load API key from localStorage
@@ -57,9 +59,9 @@ function isAiConfigured() {
 // State
 const state = {
   markets: [],
-  signals: [],
+  signals: [], // Only used as fallback if AI not configured
   trades: [],
-  aiSignals: [], // AI-generated signals
+  aiSignals: [], // AI-generated signals (PRIMARY source)
   signalHistory: [], // Track all signals with timestamps for "New" tab
   selectedSymbol: 'BTCUSDT',
   currentTimeframe: '240',
@@ -80,6 +82,7 @@ const state = {
   candleSeries: null,
   volumeSeries: null,
   srLines: [], // Support/Resistance price lines
+  userLines: [], // User-drawn lines
   equityChart: null,
   equitySeries: null,
   wsConnection: null,
@@ -87,7 +90,9 @@ const state = {
   signalTab: 'new', // 'new' or 'all'
   nextAiScanTime: null,
   lastAiAnalysis: null,
-  aiAutoTradeEnabled: true
+  aiAutoTradeEnabled: true,
+  drawingMode: null, // 'hline', 'trendline', null
+  pendingLine: null // For drawing trendlines
 };
 
 // Utility Functions
@@ -539,7 +544,7 @@ async function runAiAnalysis() {
 
           // Convert AI picks to signals
           if (analysis.topPicks && analysis.topPicks.length > 0) {
-            state.aiSignals = analysis.topPicks.map(pick => ({
+            const newAiSignals = analysis.topPicks.map(pick => ({
               symbol: pick.symbol,
               direction: pick.direction,
               confidence: pick.confidence,
@@ -550,10 +555,28 @@ async function runAiAnalysis() {
               timeframe: 'AI',
               reasons: [pick.reasoning],
               isAiGenerated: true,
+              claudeModel: CONFIG.CLAUDE_MODEL, // Track which model analyzed
               keyLevels: pick.keyLevels,
               riskScore: pick.riskScore,
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              marketSentiment: analysis.marketSentiment
             }));
+
+            // Add to signal history for tracking
+            for (const signal of newAiSignals) {
+              const existingIdx = state.signalHistory.findIndex(
+                s => s.symbol === signal.symbol && s.direction === signal.direction
+              );
+              if (existingIdx === -1) {
+                state.signalHistory.unshift({ ...signal, isNew: true });
+              } else if (state.signalHistory[existingIdx].confidence !== signal.confidence) {
+                state.signalHistory.splice(existingIdx, 1);
+                state.signalHistory.unshift({ ...signal, isNew: true, isUpdated: true });
+              }
+            }
+            state.signalHistory = state.signalHistory.slice(0, 100);
+
+            state.aiSignals = newAiSignals;
 
             console.log('🤖 AI Analysis complete:', analysis.topPicks.length, 'picks');
             console.log('📊 Market Sentiment:', analysis.marketSentiment);
@@ -1175,7 +1198,8 @@ function initChart() {
 }
 
 async function loadChartData() {
-  const candles = await fetchKlines(state.selectedSymbol, state.currentTimeframe, 300);
+  // Load more candles for longer history view
+  const candles = await fetchKlines(state.selectedSymbol, state.currentTimeframe, CONFIG.CHART_HISTORY_LIMIT);
   if (candles.length === 0 || !state.candleSeries || !state.chart) return;
 
   // CRITICAL: Reset price scale to auto-scale for new data range
@@ -1239,6 +1263,9 @@ async function loadChartData() {
     updateChartLevels(supports, resistances, candles[candles.length - 1].close);
   }
 
+  // Load user-drawn lines for this symbol
+  loadUserLines();
+
   // Fit content with a small delay to ensure data is rendered
   setTimeout(() => {
     if (state.chart) {
@@ -1269,6 +1296,93 @@ function updateChartLevels(supports, resistances, currentPrice) {
 
   // Draw horizontal lines on the chart
   drawSupportResistanceLines(supports, resistances);
+}
+
+// User-drawn lines management
+function addUserLine(price) {
+  if (!state.candleSeries) return;
+
+  const line = state.candleSeries.createPriceLine({
+    price: price,
+    color: '#d29922', // Yellow for user lines
+    lineWidth: 2,
+    lineStyle: LightweightCharts.LineStyle.Solid,
+    axisLabelVisible: true,
+    title: 'User',
+    lineVisible: true,
+    axisLabelColor: '#d29922',
+    axisLabelTextColor: '#ffffff'
+  });
+
+  state.userLines.push(line);
+  console.log(`📏 User line added at $${formatPrice(price)}`);
+
+  // Save user lines to localStorage
+  saveUserLines();
+}
+
+function clearUserLines() {
+  if (!state.candleSeries || state.userLines.length === 0) return;
+
+  state.userLines.forEach(line => {
+    try {
+      state.candleSeries.removePriceLine(line);
+    } catch (e) {
+      // Line might already be removed
+    }
+  });
+
+  state.userLines = [];
+  localStorage.removeItem(`user_lines_${state.selectedSymbol}`);
+  console.log('📏 User lines cleared');
+}
+
+function saveUserLines() {
+  const prices = state.userLines.map(line => {
+    try {
+      return line.options().price;
+    } catch (e) {
+      return null;
+    }
+  }).filter(p => p !== null);
+
+  localStorage.setItem(`user_lines_${state.selectedSymbol}`, JSON.stringify(prices));
+}
+
+function loadUserLines() {
+  if (!state.candleSeries) return;
+
+  // Clear existing user lines first
+  state.userLines.forEach(line => {
+    try {
+      state.candleSeries.removePriceLine(line);
+    } catch (e) {}
+  });
+  state.userLines = [];
+
+  // Load saved lines for this symbol
+  try {
+    const saved = localStorage.getItem(`user_lines_${state.selectedSymbol}`);
+    if (saved) {
+      const prices = JSON.parse(saved);
+      for (const price of prices) {
+        const line = state.candleSeries.createPriceLine({
+          price: price,
+          color: '#d29922',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'User',
+          lineVisible: true,
+          axisLabelColor: '#d29922',
+          axisLabelTextColor: '#ffffff'
+        });
+        state.userLines.push(line);
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load user lines:', e);
+  }
 }
 
 function drawSupportResistanceLines(supports, resistances) {
@@ -1429,6 +1543,8 @@ function renderSignals() {
   container.innerHTML = signals.map(signal => {
     const isRecent = Date.now() - signal.timestamp < 300000; // 5 minutes
     const isNew = signal.isNew && isRecent;
+    const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : null;
+    const hasOpenTrade = state.trades.some(t => t.status === 'open' && t.symbol === signal.symbol);
 
     return `
     <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''}" data-symbol="${signal.symbol}">
@@ -1438,6 +1554,7 @@ function renderSignals() {
           <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
           ${isNew ? '<span class="new-badge">NEW</span>' : ''}
           ${signal.isUpdated ? '<span class="updated-badge">UPDATED</span>' : ''}
+          ${hasOpenTrade ? '<span class="trading-badge">TRADING</span>' : ''}
         </div>
         <div class="signal-confidence">
           <span class="conf-label">Confidence:</span>
@@ -1446,12 +1563,19 @@ function renderSignals() {
         </div>
       </div>
       <div class="signal-body">
+        ${signal.isAiGenerated && modelShort ? `
+          <div class="claude-model-badge">
+            <span class="model-icon">🧠</span>
+            <span class="model-name">Claude ${modelShort}</span>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>
+        ` : ''}
         <div class="signal-tags">
           ${signal.reasons.slice(0, 4).map((r, i) =>
             `<span class="signal-tag ${i < 2 ? 'active' : ''}">${r.split(' ').slice(0, 3).join(' ')}</span>`
           ).join('')}
         </div>
-        <div class="signal-analysis">${signal.reasons.slice(0, 2).join('. ')}...</div>
+        <div class="signal-analysis">${signal.reasons.slice(0, 2).join('. ')}</div>
         <div class="signal-levels">
           <div class="level-item rr"><div class="level-label">R/R Ratio</div><div class="level-value">1:${signal.riskReward.toFixed(1)}</div></div>
           <div class="level-item entry"><div class="level-label">Entry</div><div class="level-value">${formatPrice(signal.entry)}</div></div>
@@ -1462,9 +1586,10 @@ function renderSignals() {
       <div class="signal-footer">
         <div class="footer-stat"><div class="label">Risk ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
         <div class="footer-stat"><div class="label">Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
-        <button class="take-trade-btn" data-symbol="${signal.symbol}" data-direction="${signal.direction}">
-          Take Trade
-        </button>
+        <div class="footer-stat">
+          <div class="label">Status</div>
+          <div class="value ${hasOpenTrade ? 'green' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
+        </div>
       </div>
     </div>
   `}).join('');
@@ -1860,6 +1985,50 @@ function initEventListeners() {
       // Toggle legend visibility
       const legend = document.querySelector('.chart-legend');
       if (legend) legend.style.display = visible ? 'flex' : 'none';
+    });
+  }
+
+  // Drawing tools
+  const drawHLineBtn = document.getElementById('drawHLine');
+  const clearLinesBtn = document.getElementById('clearLines');
+
+  if (drawHLineBtn) {
+    drawHLineBtn.addEventListener('click', () => {
+      if (state.drawingMode === 'hline') {
+        state.drawingMode = null;
+        drawHLineBtn.classList.remove('drawing');
+      } else {
+        state.drawingMode = 'hline';
+        drawHLineBtn.classList.add('drawing');
+      }
+    });
+  }
+
+  if (clearLinesBtn) {
+    clearLinesBtn.addEventListener('click', () => {
+      clearUserLines();
+    });
+  }
+
+  // Chart click handler for drawing
+  const chartContainer = document.getElementById('tradingChart');
+  if (chartContainer) {
+    chartContainer.addEventListener('click', (event) => {
+      if (state.drawingMode === 'hline' && state.chart && state.candleSeries) {
+        // Get price from click position
+        const rect = chartContainer.getBoundingClientRect();
+        const y = event.clientY - rect.top;
+
+        // Convert Y position to price using the chart's coordinate conversion
+        const price = state.candleSeries.coordinateToPrice(y);
+
+        if (price && price > 0) {
+          addUserLine(price);
+          // Exit drawing mode after placing line
+          state.drawingMode = null;
+          if (drawHLineBtn) drawHLineBtn.classList.remove('drawing');
+        }
+      }
     });
   }
 
