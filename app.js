@@ -1,170 +1,222 @@
-// ============================================
-// AI PERP SIGNALS - CRYPTO TRADING INTELLIGENCE
-// ============================================
+/* ============================================
+   SENTIENT TRADER - AI Crypto Trading Intelligence v2.1
+   ============================================ */
 
-// --- Configuration ---
+// Configuration
 const CONFIG = {
   BINANCE_API: 'https://fapi.binance.com',
-  SCAN_INTERVAL: 120000, // 2 minutes
-  TOP_COINS_COUNT: 50,
-  STARTING_BALANCE: 2000,
-  AUTO_TRADE_THRESHOLD: 80,
-  DEFAULT_LEVERAGE: 5,
-  POSITION_SIZE_PERCENT: 5, // 5% of balance per trade
-  TAKE_PROFIT_PERCENT: 2,
-  STOP_LOSS_PERCENT: 1,
-  TIMEFRAMES: ['5m', '15m', '1h', '4h'],
+  BYBIT_API: 'https://api.bybit.com',
+  COINGECKO_API: 'https://api.coingecko.com/api/v3',
+  SCAN_INTERVAL: 90000,
+  PRICE_UPDATE_INTERVAL: 1000,
+  PNL_UPDATE_INTERVAL: 500,
+  CACHE_TTL: 30000,
+  MIN_CONFIDENCE: 65,
+  HIGH_CONFIDENCE: 80,
+  TOP_COINS: 50,
+  LEVERAGE: 5,
+  RISK_PERCENT: 2,
+  TP_PERCENT: 2,
+  SL_PERCENT: 1
 };
 
-// --- State Management ---
+// State
 const state = {
   markets: [],
   signals: [],
   trades: [],
   selectedSymbol: 'BTCUSDT',
-  balance: CONFIG.STARTING_BALANCE,
-  equityHistory: [CONFIG.STARTING_BALANCE],
-  maxBalance: CONFIG.STARTING_BALANCE,
-  isScanning: false,
-  soundEnabled: true,
-  drawingsVisible: true,
-  currentTimeframe: '15',
-  previousHighConfSignals: new Set(),
-  alerts: [],
+  currentTimeframe: '240',
+  balance: 2000,
+  startBalance: 2000,
+  equityHistory: [{ time: Date.now(), value: 2000 }],
   priceCache: {},
   klineCache: {},
-  tradingviewWidget: null,
+  previousHighConfSignals: new Set(),
+  isScanning: false,
+  soundEnabled: true,
+  showSR: true,
+  showIndicators: false,
+  showVolume: false,
+  dataSource: 'binance',
+  chart: null,
+  candleSeries: null,
+  volumeSeries: null,
+  equityChart: null,
+  equitySeries: null,
+  wsConnection: null,
+  signalFilter: 'all'
 };
 
-// --- Utility Functions ---
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-
-function formatPrice(price, decimals = 2) {
+// Utility Functions
+const formatPrice = (price, decimals = 2) => {
   if (price >= 1000) return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (price >= 1) return price.toFixed(decimals);
   if (price >= 0.01) return price.toFixed(4);
   return price.toFixed(6);
-}
+};
 
-function formatVolume(vol) {
-  if (vol >= 1e9) return (vol / 1e9).toFixed(2) + 'B';
-  if (vol >= 1e6) return (vol / 1e6).toFixed(2) + 'M';
-  if (vol >= 1e3) return (vol / 1e3).toFixed(2) + 'K';
-  return vol.toFixed(2);
-}
+const formatVolume = (vol) => {
+  if (vol >= 1e9) return (vol / 1e9).toFixed(1) + 'B';
+  if (vol >= 1e6) return (vol / 1e6).toFixed(1) + 'M';
+  if (vol >= 1e3) return (vol / 1e3).toFixed(1) + 'K';
+  return vol.toFixed(0);
+};
 
-function formatPnL(pnl) {
-  const sign = pnl >= 0 ? '+' : '';
-  return sign + '$' + Math.abs(pnl).toFixed(2);
-}
+const formatPercent = (pct) => (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
 
-function getTimeAgo(date) {
-  const seconds = Math.floor((new Date() - date) / 1000);
-  if (seconds < 60) return 'Just now';
-  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
-  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
-  return Math.floor(seconds / 86400) + 'd ago';
-}
+const timeAgo = (timestamp) => {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+};
 
-// --- Binance API Integration ---
-async function fetchWithRetry(url, retries = 3) {
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// ============================================
+// DATA FETCHING WITH FALLBACK
+// ============================================
+
+async function fetchWithRetry(url, options = {}, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } catch (error) {
       if (i === retries - 1) throw error;
-      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      await sleep(1000 * (i + 1));
     }
   }
 }
 
-async function getTop50Perps() {
+// Binance API
+async function fetchBinanceMarkets() {
+  const data = await fetchWithRetry(`${CONFIG.BINANCE_API}/fapi/v1/ticker/24hr`);
+  return data
+    .filter(t => t.symbol.endsWith('USDT') && !t.symbol.includes('_'))
+    .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+    .slice(0, CONFIG.TOP_COINS)
+    .map(t => ({
+      symbol: t.symbol,
+      price: parseFloat(t.lastPrice),
+      change: parseFloat(t.priceChangePercent),
+      volume: parseFloat(t.quoteVolume),
+      high: parseFloat(t.highPrice),
+      low: parseFloat(t.lowPrice)
+    }));
+}
+
+// Bybit API (Backup)
+async function fetchBybitMarkets() {
+  const data = await fetchWithRetry(`${CONFIG.BYBIT_API}/v5/market/tickers?category=linear`);
+  return data.result.list
+    .filter(t => t.symbol.endsWith('USDT'))
+    .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
+    .slice(0, CONFIG.TOP_COINS)
+    .map(t => ({
+      symbol: t.symbol,
+      price: parseFloat(t.lastPrice),
+      change: parseFloat(t.price24hPcnt) * 100,
+      volume: parseFloat(t.turnover24h),
+      high: parseFloat(t.highPrice24h),
+      low: parseFloat(t.lowPrice24h)
+    }));
+}
+
+// Fetch markets with fallback
+async function fetchMarkets() {
   try {
-    const ticker24h = await fetchWithRetry(`${CONFIG.BINANCE_API}/fapi/v1/ticker/24hr`);
-
-    // Filter USDT perpetuals and sort by volume
-    const perps = ticker24h
-      .filter(t => t.symbol.endsWith('USDT') && !t.symbol.includes('_'))
-      .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-      .slice(0, CONFIG.TOP_COINS_COUNT)
-      .map(t => ({
-        symbol: t.symbol,
-        price: parseFloat(t.lastPrice),
-        priceChange: parseFloat(t.priceChangePercent),
-        volume: parseFloat(t.quoteVolume),
-        high24h: parseFloat(t.highPrice),
-        low24h: parseFloat(t.lowPrice),
-      }));
-
-    state.markets = perps;
-    state.priceCache = {};
-    perps.forEach(p => state.priceCache[p.symbol] = p.price);
-
-    return perps;
+    const markets = await fetchBinanceMarkets();
+    state.dataSource = 'binance';
+    updateDataSource('Binance', true);
+    return markets;
   } catch (error) {
-    console.error('Failed to fetch markets:', error);
-    return state.markets;
+    console.warn('Binance failed, trying Bybit...', error);
+    try {
+      const markets = await fetchBybitMarkets();
+      state.dataSource = 'bybit';
+      updateDataSource('Bybit', true);
+      return markets;
+    } catch (error2) {
+      console.error('All exchanges failed:', error2);
+      updateDataSource('Offline', false);
+      return state.markets;
+    }
   }
 }
 
-async function getKlines(symbol, interval = '15m', limit = 200) {
+// Fetch Klines
+async function fetchKlines(symbol, interval = '240', limit = 200) {
   const cacheKey = `${symbol}_${interval}`;
-  const now = Date.now();
-
-  // Return cached if less than 30 seconds old
-  if (state.klineCache[cacheKey] && now - state.klineCache[cacheKey].timestamp < 30000) {
-    return state.klineCache[cacheKey].data;
+  const cached = state.klineCache[cacheKey];
+  if (cached && Date.now() - cached.timestamp < CONFIG.CACHE_TTL) {
+    return cached.data;
   }
 
   try {
-    const klines = await fetchWithRetry(
-      `${CONFIG.BINANCE_API}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-    );
+    let data;
+    if (state.dataSource === 'binance') {
+      const intervalMap = { '5': '5m', '15': '15m', '60': '1h', '240': '4h', 'D': '1d' };
+      data = await fetchWithRetry(
+        `${CONFIG.BINANCE_API}/fapi/v1/klines?symbol=${symbol}&interval=${intervalMap[interval]}&limit=${limit}`
+      );
+      data = data.map(k => ({
+        time: Math.floor(k[0] / 1000),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    } else {
+      const intervalMap = { '5': '5', '15': '15', '60': '60', '240': '240', 'D': 'D' };
+      const response = await fetchWithRetry(
+        `${CONFIG.BYBIT_API}/v5/market/kline?category=linear&symbol=${symbol}&interval=${intervalMap[interval]}&limit=${limit}`
+      );
+      data = response.result.list.reverse().map(k => ({
+        time: Math.floor(parseInt(k[0]) / 1000),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
 
-    const data = klines.map(k => ({
-      time: k[0],
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5]),
-    }));
-
-    state.klineCache[cacheKey] = { data, timestamp: now };
+    state.klineCache[cacheKey] = { data, timestamp: Date.now() };
     return data;
   } catch (error) {
     console.error(`Failed to fetch klines for ${symbol}:`, error);
-    return [];
+    return cached?.data || [];
   }
 }
 
-// --- Technical Indicators ---
+// ============================================
+// TECHNICAL INDICATORS
+// ============================================
+
 function calculateRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
 
   let gains = 0, losses = 0;
-
   for (let i = 1; i <= period; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses -= diff;
+    const change = closes[i] - closes[i - 1];
+    if (change > 0) gains += change;
+    else losses -= change;
   }
 
   let avgGain = gains / period;
   let avgLoss = losses / period;
 
   for (let i = period + 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) {
-      avgGain = (avgGain * (period - 1) + diff) / period;
-      avgLoss = (avgLoss * (period - 1)) / period;
-    } else {
-      avgGain = (avgGain * (period - 1)) / period;
-      avgLoss = (avgLoss * (period - 1) - diff) / period;
-    }
+    const change = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (change < 0 ? -change : 0)) / period;
   }
 
   if (avgLoss === 0) return 100;
@@ -174,1261 +226,938 @@ function calculateRSI(closes, period = 14) {
 
 function calculateEMA(data, period) {
   if (data.length < period) return data[data.length - 1] || 0;
-
-  const multiplier = 2 / (period + 1);
-  let ema = data.slice(0, period).reduce((a, b) => a + b) / period;
-
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
   for (let i = period; i < data.length; i++) {
-    ema = (data[i] - ema) * multiplier + ema;
+    ema = data[i] * k + ema * (1 - k);
   }
-
   return ema;
 }
 
-function calculateMACD(closes, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-  if (closes.length < slowPeriod + signalPeriod) {
-    return { macd: 0, signal: 0, histogram: 0 };
+function calculateMACD(closes) {
+  if (closes.length < 26) return { macd: 0, signal: 0, histogram: 0 };
+
+  const ema12 = calculateEMA(closes, 12);
+  const ema26 = calculateEMA(closes, 26);
+  const macd = ema12 - ema26;
+
+  const macdLine = [];
+  for (let i = 26; i <= closes.length; i++) {
+    const e12 = calculateEMA(closes.slice(0, i), 12);
+    const e26 = calculateEMA(closes.slice(0, i), 26);
+    macdLine.push(e12 - e26);
   }
 
-  const fastEMA = calculateEMAArray(closes, fastPeriod);
-  const slowEMA = calculateEMAArray(closes, slowPeriod);
-
-  const macdLine = fastEMA.map((fast, i) => fast - slowEMA[i]);
-  const signalLine = calculateEMAArray(macdLine.slice(-signalPeriod * 2), signalPeriod);
-
-  const currentMACD = macdLine[macdLine.length - 1];
-  const currentSignal = signalLine[signalLine.length - 1];
-  const prevMACD = macdLine[macdLine.length - 2];
-  const prevSignal = signalLine[signalLine.length - 2];
-
-  return {
-    macd: currentMACD,
-    signal: currentSignal,
-    histogram: currentMACD - currentSignal,
-    crossUp: prevMACD <= prevSignal && currentMACD > currentSignal,
-    crossDown: prevMACD >= prevSignal && currentMACD < currentSignal,
-  };
+  const signal = macdLine.length >= 9 ? calculateEMA(macdLine, 9) : macd;
+  return { macd, signal, histogram: macd - signal };
 }
 
-function calculateEMAArray(data, period) {
-  const result = [];
-  const multiplier = 2 / (period + 1);
-  let ema = data.slice(0, period).reduce((a, b) => a + b) / period;
+function calculateBollingerBands(closes, period = 20, stdDev = 2) {
+  if (closes.length < period) return { upper: 0, middle: 0, lower: 0 };
 
-  for (let i = 0; i < period; i++) {
-    result.push(ema);
-  }
+  const slice = closes.slice(-period);
+  const middle = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((sum, val) => sum + Math.pow(val - middle, 2), 0) / period;
+  const std = Math.sqrt(variance);
 
-  for (let i = period; i < data.length; i++) {
-    ema = (data[i] - ema) * multiplier + ema;
-    result.push(ema);
-  }
-
-  return result;
+  return { upper: middle + std * stdDev, middle, lower: middle - std * stdDev };
 }
 
-function findSupportResistance(klines) {
-  if (klines.length < 50) return { supports: [], resistances: [] };
+function calculateATR(candles, period = 14) {
+  if (candles.length < period + 1) return 0;
 
-  const highs = klines.map(k => k.high);
-  const lows = klines.map(k => k.low);
-  const currentPrice = klines[klines.length - 1].close;
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+  }
 
-  // Find swing highs and lows
+  return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
+}
+
+function findSupportResistance(candles, lookback = 50) {
+  if (candles.length < lookback) return { supports: [], resistances: [] };
+
+  const recent = candles.slice(-lookback);
   const swingHighs = [];
   const swingLows = [];
 
-  for (let i = 5; i < klines.length - 5; i++) {
-    const isSwingHigh = highs[i] === Math.max(...highs.slice(i - 5, i + 6));
-    const isSwingLow = lows[i] === Math.min(...lows.slice(i - 5, i + 6));
-
-    if (isSwingHigh) swingHighs.push(highs[i]);
-    if (isSwingLow) swingLows.push(lows[i]);
+  for (let i = 2; i < recent.length - 2; i++) {
+    const curr = recent[i];
+    if (curr.high > recent[i-1].high && curr.high > recent[i-2].high &&
+        curr.high > recent[i+1].high && curr.high > recent[i+2].high) {
+      swingHighs.push(curr.high);
+    }
+    if (curr.low < recent[i-1].low && curr.low < recent[i-2].low &&
+        curr.low < recent[i+1].low && curr.low < recent[i+2].low) {
+      swingLows.push(curr.low);
+    }
   }
 
-  // Cluster similar levels
   const clusterLevels = (levels, threshold = 0.005) => {
     const clusters = [];
-    const sorted = [...levels].sort((a, b) => a - b);
+    levels.sort((a, b) => a - b);
 
-    for (const level of sorted) {
-      const existingCluster = clusters.find(c => Math.abs(c.price - level) / level < threshold);
-      if (existingCluster) {
-        existingCluster.count++;
-        existingCluster.price = (existingCluster.price + level) / 2;
+    for (const level of levels) {
+      const existing = clusters.find(c => Math.abs(c.price - level) / level < threshold);
+      if (existing) {
+        existing.count++;
+        existing.price = (existing.price + level) / 2;
       } else {
         clusters.push({ price: level, count: 1 });
       }
     }
 
-    return clusters.sort((a, b) => b.count - a.count).slice(0, 5);
+    return clusters.sort((a, b) => b.count - a.count).slice(0, 3).map(c => c.price);
   };
 
-  const resistanceLevels = clusterLevels(swingHighs)
-    .filter(l => l.price > currentPrice)
-    .sort((a, b) => a.price - b.price)
-    .slice(0, 2);
-
-  const supportLevels = clusterLevels(swingLows)
-    .filter(l => l.price < currentPrice)
-    .sort((a, b) => b.price - a.price)
-    .slice(0, 2);
-
-  return {
-    supports: supportLevels.map(l => l.price),
-    resistances: resistanceLevels.map(l => l.price),
-  };
+  return { supports: clusterLevels(swingLows), resistances: clusterLevels(swingHighs) };
 }
 
-// --- AI Signal Generation ---
-async function analyzeSymbol(symbol, timeframe = '15m') {
-  const klines = await getKlines(symbol, timeframe, 200);
-  if (klines.length < 50) return null;
+// ============================================
+// SIGNAL GENERATION
+// ============================================
 
-  const closes = klines.map(k => k.close);
-  const currentPrice = closes[closes.length - 1];
-
-  // Calculate indicators
-  const rsi = calculateRSI(closes);
-  const ema200 = calculateEMA(closes, 200);
-  const ema50 = calculateEMA(closes, 50);
-  const macd = calculateMACD(closes);
-  const { supports, resistances } = findSupportResistance(klines);
-
-  // Score calculation
-  let bullishScore = 0;
-  let bearishScore = 0;
-  const reasons = [];
-
-  // RSI Analysis
-  if (rsi < 30) {
-    bullishScore += 20;
-    reasons.push({ type: 'bullish', text: 'RSI oversold (' + rsi.toFixed(1) + ')' });
-  } else if (rsi > 70) {
-    bearishScore += 20;
-    reasons.push({ type: 'bearish', text: 'RSI overbought (' + rsi.toFixed(1) + ')' });
-  } else if (rsi > 50 && rsi < 70) {
-    bullishScore += 10;
-    reasons.push({ type: 'bullish', text: 'RSI bullish momentum (' + rsi.toFixed(1) + ')' });
-  } else if (rsi < 50 && rsi > 30) {
-    bearishScore += 10;
-    reasons.push({ type: 'bearish', text: 'RSI bearish momentum (' + rsi.toFixed(1) + ')' });
-  }
-
-  // EMA200 Analysis
-  if (currentPrice > ema200) {
-    bullishScore += 25;
-    reasons.push({ type: 'bullish', text: 'Price above EMA200 (bullish trend)' });
-  } else {
-    bearishScore += 25;
-    reasons.push({ type: 'bearish', text: 'Price below EMA200 (bearish trend)' });
-  }
-
-  // EMA50/200 Cross
-  if (ema50 > ema200) {
-    bullishScore += 10;
-    reasons.push({ type: 'bullish', text: 'EMA50 above EMA200 (golden cross zone)' });
-  } else {
-    bearishScore += 10;
-    reasons.push({ type: 'bearish', text: 'EMA50 below EMA200 (death cross zone)' });
-  }
-
-  // MACD Analysis
-  if (macd.crossUp) {
-    bullishScore += 25;
-    reasons.push({ type: 'bullish', text: 'MACD bullish crossover' });
-  } else if (macd.crossDown) {
-    bearishScore += 25;
-    reasons.push({ type: 'bearish', text: 'MACD bearish crossover' });
-  } else if (macd.histogram > 0 && macd.histogram > macd.macd * 0.1) {
-    bullishScore += 15;
-    reasons.push({ type: 'bullish', text: 'MACD histogram rising' });
-  } else if (macd.histogram < 0 && macd.histogram < macd.macd * 0.1) {
-    bearishScore += 15;
-    reasons.push({ type: 'bearish', text: 'MACD histogram falling' });
-  }
-
-  // Support/Resistance Analysis
-  if (supports.length > 0) {
-    const nearestSupport = supports[0];
-    const distToSupport = (currentPrice - nearestSupport) / currentPrice;
-    if (distToSupport < 0.02) {
-      bullishScore += 20;
-      reasons.push({ type: 'bullish', text: 'Price near strong support ($' + formatPrice(nearestSupport) + ')' });
-    }
-  }
-
-  if (resistances.length > 0) {
-    const nearestResistance = resistances[0];
-    const distToResistance = (nearestResistance - currentPrice) / currentPrice;
-    if (distToResistance < 0.02) {
-      bearishScore += 20;
-      reasons.push({ type: 'bearish', text: 'Price near resistance ($' + formatPrice(nearestResistance) + ')' });
-    }
-  }
-
-  // Volume analysis (simple: compare last candle to average)
-  const volumes = klines.map(k => k.volume);
-  const avgVolume = volumes.slice(-20).reduce((a, b) => a + b) / 20;
-  const lastVolume = volumes[volumes.length - 1];
-
-  if (lastVolume > avgVolume * 1.5) {
-    if (closes[closes.length - 1] > closes[closes.length - 2]) {
-      bullishScore += 10;
-      reasons.push({ type: 'bullish', text: 'High volume on bullish candle' });
-    } else {
-      bearishScore += 10;
-      reasons.push({ type: 'bearish', text: 'High volume on bearish candle' });
-    }
-  }
-
-  // Determine direction and confidence
-  const totalScore = bullishScore + bearishScore;
-  const direction = bullishScore > bearishScore ? 'LONG' : 'SHORT';
-  const dominantScore = Math.max(bullishScore, bearishScore);
-  const confidence = Math.min(95, Math.round((dominantScore / Math.max(totalScore, 1)) * 100 * (dominantScore / 100)));
-
-  // Filter reasons by direction
-  const filteredReasons = reasons
-    .filter(r => r.type === (direction === 'LONG' ? 'bullish' : 'bearish'))
-    .map(r => r.text)
-    .slice(0, 4);
-
-  return {
-    symbol,
-    direction,
-    timeframe,
-    confidence,
-    price: currentPrice,
-    rsi,
-    ema200,
-    macd,
-    supports,
-    resistances,
-    tldr: filteredReasons.length > 0 ? filteredReasons : ['Technical setup detected'],
-    timestamp: Date.now(),
-  };
-}
-
-async function runAIScan() {
-  if (state.isScanning) return;
-
-  state.isScanning = true;
-  updateScanStatus('Scanning...');
-  $('#scanDot').classList.add('active');
-
+async function analyzeMarket(symbol, timeframe = '240') {
   try {
-    await getTop50Perps();
-    const signals = [];
+    const candles = await fetchKlines(symbol, timeframe, 200);
+    if (candles.length < 50) return null;
 
-    // Analyze each market
-    for (const market of state.markets.slice(0, 30)) { // Limit to top 30 for performance
-      for (const tf of ['15m', '1h', '4h']) {
-        try {
-          const signal = await analyzeSymbol(market.symbol, tf);
-          if (signal && signal.confidence >= 50) {
-            signals.push(signal);
-          }
-        } catch (e) {
-          console.warn(`Failed to analyze ${market.symbol} ${tf}:`, e);
-        }
-      }
-      // Small delay to avoid rate limiting
-      await new Promise(r => setTimeout(r, 100));
+    const closes = candles.map(c => c.close);
+    const currentPrice = closes[closes.length - 1];
+
+    const rsi = calculateRSI(closes);
+    const ema20 = calculateEMA(closes, 20);
+    const ema50 = calculateEMA(closes, 50);
+    const ema200 = calculateEMA(closes, 200);
+    const macd = calculateMACD(closes);
+    const bb = calculateBollingerBands(closes);
+    const atr = calculateATR(candles);
+    const { supports, resistances } = findSupportResistance(candles);
+
+    let bullScore = 0, bearScore = 0;
+    const reasons = [];
+
+    // RSI Analysis
+    if (rsi < 30) { bullScore += 20; reasons.push('RSI oversold (<30)'); }
+    else if (rsi > 70) { bearScore += 20; reasons.push('RSI overbought (>70)'); }
+    else if (rsi < 45) { bullScore += 10; reasons.push('RSI showing bullish momentum'); }
+    else if (rsi > 55) { bearScore += 10; reasons.push('RSI showing bearish momentum'); }
+
+    // EMA Trend
+    if (currentPrice > ema200) { bullScore += 15; reasons.push('Price above EMA200 (bullish trend)'); }
+    else { bearScore += 15; reasons.push('Price below EMA200 (bearish trend)'); }
+
+    if (ema20 > ema50) { bullScore += 10; reasons.push('EMA20 > EMA50 (bullish cross)'); }
+    else { bearScore += 10; reasons.push('EMA20 < EMA50 (bearish cross)'); }
+
+    if (ema50 > ema200) { bullScore += 10; reasons.push('Golden cross zone'); }
+    else { bearScore += 10; reasons.push('Death cross zone'); }
+
+    // MACD
+    if (macd.histogram > 0 && macd.macd > macd.signal) {
+      bullScore += 15; reasons.push('MACD bullish crossover');
+    } else if (macd.histogram < 0 && macd.macd < macd.signal) {
+      bearScore += 15; reasons.push('MACD bearish crossover');
     }
 
-    // Sort by confidence
-    signals.sort((a, b) => b.confidence - a.confidence);
+    // Bollinger Bands
+    if (currentPrice < bb.lower) { bullScore += 15; reasons.push('Price below lower BB'); }
+    else if (currentPrice > bb.upper) { bearScore += 15; reasons.push('Price above upper BB'); }
 
-    // Check for new high confidence signals
-    const currentHighConf = new Set(
-      signals.filter(s => s.confidence >= 80).map(s => `${s.symbol}_${s.timeframe}_${s.direction}`)
-    );
+    // Support/Resistance
+    const nearestSupport = supports.find(s => currentPrice > s && (currentPrice - s) / s < 0.02);
+    const nearestResistance = resistances.find(r => currentPrice < r && (r - currentPrice) / currentPrice < 0.02);
 
-    for (const signalKey of currentHighConf) {
-      if (!state.previousHighConfSignals.has(signalKey)) {
-        const signal = signals.find(s => `${s.symbol}_${s.timeframe}_${s.direction}` === signalKey);
-        if (signal) {
-          showNotification(signal);
-          addAlert(signal);
+    if (nearestSupport) { bullScore += 15; reasons.push(`Near support ($${formatPrice(nearestSupport)})`); }
+    if (nearestResistance) { bearScore += 15; reasons.push(`Near resistance ($${formatPrice(nearestResistance)})`); }
 
-          // Auto-trade if enabled
-          if (signal.confidence >= CONFIG.AUTO_TRADE_THRESHOLD) {
-            autoTrade(signal);
-          }
-        }
-      }
+    // Volume analysis
+    const avgVolume = candles.slice(-20).reduce((a, c) => a + c.volume, 0) / 20;
+    const lastVolume = candles[candles.length - 1].volume;
+    if (lastVolume > avgVolume * 1.5) {
+      const lastCandle = candles[candles.length - 1];
+      if (lastCandle.close > lastCandle.open) { bullScore += 10; reasons.push('High volume bullish candle'); }
+      else { bearScore += 10; reasons.push('High volume bearish candle'); }
     }
 
-    state.previousHighConfSignals = currentHighConf;
-    state.signals = signals;
+    const totalScore = bullScore + bearScore;
+    const direction = bullScore > bearScore ? 'LONG' : 'SHORT';
+    const dominantScore = direction === 'LONG' ? bullScore : bearScore;
+    const confidence = Math.min(95, Math.round((dominantScore / Math.max(totalScore, 1)) * 100));
 
-    // Update UI
-    renderAll();
-    updateLastUpdate();
+    if (confidence < CONFIG.MIN_CONFIDENCE) return null;
 
+    const entry = currentPrice;
+    const tp = direction === 'LONG' ? entry * (1 + CONFIG.TP_PERCENT / 100) : entry * (1 - CONFIG.TP_PERCENT / 100);
+    const sl = direction === 'LONG' ? entry * (1 - CONFIG.SL_PERCENT / 100) : entry * (1 + CONFIG.SL_PERCENT / 100);
+    const riskReward = Math.abs(tp - entry) / Math.abs(entry - sl);
+
+    return {
+      symbol, direction, confidence, entry, tp, sl, riskReward, timeframe,
+      reasons: reasons.slice(0, 5),
+      indicators: { rsi, ema20, ema50, ema200, macd, bb, atr },
+      levels: { supports, resistances },
+      timestamp: Date.now()
+    };
   } catch (error) {
-    console.error('Scan failed:', error);
-  } finally {
-    state.isScanning = false;
-    $('#scanDot').classList.remove('active');
+    console.error(`Analysis failed for ${symbol}:`, error);
+    return null;
   }
 }
 
-// --- Paper Trading System ---
-function autoTrade(signal) {
-  // Check if we already have an open position for this symbol
-  const existingOpen = state.trades.find(t => t.symbol === signal.symbol && t.status === 'OPEN');
-  if (existingOpen) return;
+async function runScan() {
+  if (state.isScanning) return;
+  state.isScanning = true;
+  updateScanStatus(0, 0);
 
-  const positionSize = state.balance * (CONFIG.POSITION_SIZE_PERCENT / 100);
-  const leverage = CONFIG.DEFAULT_LEVERAGE;
+  const newSignals = [];
+  const timeframes = ['240', 'D'];
 
+  for (let i = 0; i < state.markets.length; i++) {
+    const market = state.markets[i];
+    updateScanStatus(i + 1, newSignals.length);
+
+    for (const tf of timeframes) {
+      const signal = await analyzeMarket(market.symbol, tf);
+      if (signal) {
+        const existingIdx = newSignals.findIndex(s => s.symbol === signal.symbol);
+        if (existingIdx === -1 || newSignals[existingIdx].confidence < signal.confidence) {
+          if (existingIdx !== -1) newSignals.splice(existingIdx, 1);
+          newSignals.push(signal);
+        }
+      }
+    }
+    await sleep(50);
+  }
+
+  newSignals.sort((a, b) => b.confidence - a.confidence);
+  state.signals = newSignals;
+
+  const highConfSignals = newSignals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE);
+  for (const signal of highConfSignals) {
+    const key = `${signal.symbol}_${signal.direction}_${signal.timeframe}`;
+    if (!state.previousHighConfSignals.has(key)) {
+      showNotification(signal);
+      state.previousHighConfSignals.add(key);
+    }
+  }
+
+  state.isScanning = false;
+  renderAll();
+}
+
+// ============================================
+// PAPER TRADING
+// ============================================
+
+function openTrade(signal) {
+  const positionSize = (state.balance * CONFIG.RISK_PERCENT / 100) * CONFIG.LEVERAGE;
   const trade = {
     id: Date.now(),
     symbol: signal.symbol,
     direction: signal.direction,
-    leverage: leverage,
-    entry: signal.price,
-    exit: null,
-    confidence: signal.confidence,
-    positionSize: positionSize,
-    pnl: 0,
-    pnlPercent: 0,
-    status: 'OPEN',
-    openTime: new Date(),
-    closeTime: null,
-    takeProfit: signal.direction === 'LONG'
-      ? signal.price * (1 + CONFIG.TAKE_PROFIT_PERCENT / 100)
-      : signal.price * (1 - CONFIG.TAKE_PROFIT_PERCENT / 100),
-    stopLoss: signal.direction === 'LONG'
-      ? signal.price * (1 - CONFIG.STOP_LOSS_PERCENT / 100)
-      : signal.price * (1 + CONFIG.STOP_LOSS_PERCENT / 100),
+    entry: signal.entry,
+    tp: signal.tp,
+    sl: signal.sl,
+    size: positionSize,
+    leverage: CONFIG.LEVERAGE,
+    timestamp: Date.now(),
+    status: 'open',
+    pnl: 0
   };
 
-  state.trades.unshift(trade);
-  saveState();
-
-  showNotification({
-    ...signal,
-    isTradeOpen: true,
-  });
+  state.trades.push(trade);
+  saveTrades();
+  renderPositions();
+  renderHistory();
+  updatePortfolioStats();
 }
 
 function updateOpenPositions() {
-  for (const trade of state.trades.filter(t => t.status === 'OPEN')) {
-    const currentPrice = state.priceCache[trade.symbol];
-    if (!currentPrice) continue;
+  const openTrades = state.trades.filter(t => t.status === 'open');
+  let totalUnrealizedPnl = 0;
 
-    // Calculate unrealized PnL
-    let priceDiff;
+  for (const trade of openTrades) {
+    const currentPrice = state.priceCache[trade.symbol] || trade.entry;
+    const priceDiff = trade.direction === 'LONG' ? currentPrice - trade.entry : trade.entry - currentPrice;
+    trade.pnl = (priceDiff / trade.entry) * trade.size;
+    totalUnrealizedPnl += trade.pnl;
+
     if (trade.direction === 'LONG') {
-      priceDiff = (currentPrice - trade.entry) / trade.entry;
+      if (currentPrice >= trade.tp || currentPrice <= trade.sl) closeTrade(trade, currentPrice);
     } else {
-      priceDiff = (trade.entry - currentPrice) / trade.entry;
-    }
-
-    trade.pnlPercent = priceDiff * 100 * trade.leverage;
-    trade.pnl = trade.positionSize * priceDiff * trade.leverage;
-
-    // Check TP/SL
-    if (trade.direction === 'LONG') {
-      if (currentPrice >= trade.takeProfit || currentPrice <= trade.stopLoss) {
-        closeTrade(trade, currentPrice);
-      }
-    } else {
-      if (currentPrice <= trade.takeProfit || currentPrice >= trade.stopLoss) {
-        closeTrade(trade, currentPrice);
-      }
+      if (currentPrice <= trade.tp || currentPrice >= trade.sl) closeTrade(trade, currentPrice);
     }
   }
+
+  const unrealizedEl = document.getElementById('unrealizedPnl');
+  if (unrealizedEl) {
+    unrealizedEl.textContent = (totalUnrealizedPnl >= 0 ? '+' : '') + totalUnrealizedPnl.toFixed(2);
+    unrealizedEl.className = 'stat-value ' + (totalUnrealizedPnl >= 0 ? 'green' : 'red');
+  }
+  renderPositions();
 }
 
 function closeTrade(trade, exitPrice) {
-  trade.status = 'CLOSED';
-  trade.exit = exitPrice;
-  trade.closeTime = new Date();
+  trade.status = 'closed';
+  trade.exitPrice = exitPrice;
+  trade.closeTimestamp = Date.now();
 
-  // Final PnL calculation
-  let priceDiff;
-  if (trade.direction === 'LONG') {
-    priceDiff = (exitPrice - trade.entry) / trade.entry;
-  } else {
-    priceDiff = (trade.entry - exitPrice) / trade.entry;
-  }
+  const priceDiff = trade.direction === 'LONG' ? exitPrice - trade.entry : trade.entry - exitPrice;
+  trade.pnl = (priceDiff / trade.entry) * trade.size;
 
-  trade.pnlPercent = priceDiff * 100 * trade.leverage;
-  trade.pnl = trade.positionSize * priceDiff * trade.leverage;
-
-  // Update balance
   state.balance += trade.pnl;
-  state.equityHistory.push(state.balance);
-  state.maxBalance = Math.max(state.maxBalance, state.balance);
+  state.equityHistory.push({ time: Date.now(), value: state.balance });
 
-  saveState();
-  renderPnL();
+  saveTrades();
+  renderHistory();
+  updatePortfolioStats();
+  updateEquityChart();
 }
 
-function getTradeStats() {
-  const closedTrades = state.trades.filter(t => t.status === 'CLOSED');
-  const openTrades = state.trades.filter(t => t.status === 'OPEN');
+function updatePortfolioStats() {
+  const closedTrades = state.trades.filter(t => t.status === 'closed');
+  const wins = closedTrades.filter(t => t.pnl > 0).length;
+  const winRate = closedTrades.length > 0 ? (wins / closedTrades.length * 100) : 0;
+  const maxDrawdown = calculateMaxDrawdown();
 
-  const wins = closedTrades.filter(t => t.pnl > 0);
-  const losses = closedTrades.filter(t => t.pnl < 0);
+  const equityEl = document.getElementById('equityValue');
+  const winRateEl = document.getElementById('winRateValue');
+  const maxDdEl = document.getElementById('maxDrawdown');
+  const posCountEl = document.getElementById('positionCount');
+  const histCountEl = document.getElementById('historyCount');
 
-  const totalPnL = closedTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const unrealizedPnL = openTrades.reduce((sum, t) => sum + t.pnl, 0);
+  if (equityEl) equityEl.textContent = '$' + state.balance.toFixed(2);
+  if (winRateEl) winRateEl.textContent = winRate.toFixed(0) + '%';
+  if (maxDdEl) maxDdEl.textContent = maxDrawdown.toFixed(1) + '%';
+  if (posCountEl) posCountEl.textContent = state.trades.filter(t => t.status === 'open').length;
+  if (histCountEl) histCountEl.textContent = closedTrades.length;
+}
 
-  const winRate = closedTrades.length > 0
-    ? (wins.length / closedTrades.length * 100).toFixed(1)
-    : 0;
+function calculateMaxDrawdown() {
+  if (state.equityHistory.length < 2) return 0;
+  let peak = state.equityHistory[0].value;
+  let maxDd = 0;
 
-  // Calculate max drawdown
-  let maxDrawdown = 0;
-  let peak = CONFIG.STARTING_BALANCE;
-  for (const equity of state.equityHistory) {
-    if (equity > peak) peak = equity;
-    const drawdown = (peak - equity) / peak * 100;
-    maxDrawdown = Math.max(maxDrawdown, drawdown);
+  for (const point of state.equityHistory) {
+    if (point.value > peak) peak = point.value;
+    const dd = (peak - point.value) / peak * 100;
+    if (dd > maxDd) maxDd = dd;
+  }
+  return maxDd;
+}
+
+// ============================================
+// WEBSOCKET FOR REAL-TIME PRICES
+// ============================================
+
+function initWebSocket() {
+  if (state.wsConnection) state.wsConnection.close();
+
+  const symbols = state.markets.slice(0, 20).map(m => m.symbol.toLowerCase());
+  const streams = symbols.map(s => `${s}@ticker`).join('/');
+
+  try {
+    state.wsConnection = new WebSocket(`wss://fstream.binance.com/stream?streams=${streams}`);
+
+    state.wsConnection.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.data) {
+        const ticker = data.data;
+        const symbol = ticker.s;
+        state.priceCache[symbol] = parseFloat(ticker.c);
+
+        const market = state.markets.find(m => m.symbol === symbol);
+        if (market) {
+          market.price = parseFloat(ticker.c);
+          market.change = parseFloat(ticker.P);
+        }
+
+        if (symbol === state.selectedSymbol) {
+          updateChartPrice(parseFloat(ticker.c), parseFloat(ticker.P));
+        }
+      }
+    };
+
+    state.wsConnection.onerror = () => {
+      console.warn('WebSocket error, falling back to polling');
+      startPricePolling();
+    };
+
+    state.wsConnection.onclose = () => setTimeout(initWebSocket, 5000);
+  } catch (error) {
+    console.error('WebSocket init failed:', error);
+    startPricePolling();
+  }
+}
+
+function startPricePolling() {
+  setInterval(async () => {
+    try {
+      const markets = await fetchMarkets();
+      state.markets = markets;
+      for (const m of markets) state.priceCache[m.symbol] = m.price;
+      renderMarkets();
+    } catch (error) {
+      console.error('Price polling failed:', error);
+    }
+  }, 5000);
+}
+
+// ============================================
+// CHART RENDERING
+// ============================================
+
+function initChart() {
+  const container = document.getElementById('tradingChart');
+  if (!container || typeof LightweightCharts === 'undefined') {
+    console.error('Chart container or LightweightCharts not available');
+    return;
   }
 
-  return {
-    totalPnL,
-    unrealizedPnL,
-    winRate,
-    totalTrades: closedTrades.length,
-    openPositions: openTrades.length,
-    maxDrawdown: maxDrawdown.toFixed(1),
-  };
+  container.innerHTML = '';
+
+  state.chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: container.clientHeight,
+    layout: {
+      background: { type: 'solid', color: '#111820' },
+      textColor: '#8b949e'
+    },
+    grid: {
+      vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
+      horzLines: { color: 'rgba(255, 255, 255, 0.03)' }
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: 'rgba(124, 92, 255, 0.4)', width: 1, style: 2 },
+      horzLine: { color: 'rgba(124, 92, 255, 0.4)', width: 1, style: 2 }
+    },
+    rightPriceScale: {
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+      scaleMargins: { top: 0.1, bottom: 0.2 }
+    },
+    timeScale: {
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+      timeVisible: true,
+      secondsVisible: false
+    }
+  });
+
+  state.candleSeries = state.chart.addCandlestickSeries({
+    upColor: '#3fb950',
+    downColor: '#f85149',
+    borderUpColor: '#3fb950',
+    borderDownColor: '#f85149',
+    wickUpColor: '#3fb950',
+    wickDownColor: '#f85149'
+  });
+
+  state.volumeSeries = state.chart.addHistogramSeries({
+    color: '#7c5cff',
+    priceFormat: { type: 'volume' },
+    priceScaleId: '',
+    scaleMargins: { top: 0.85, bottom: 0 }
+  });
+
+  new ResizeObserver(() => {
+    if (state.chart) {
+      state.chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+    }
+  }).observe(container);
+
+  loadChartData();
 }
 
-// --- Notifications & Alerts ---
+async function loadChartData() {
+  const candles = await fetchKlines(state.selectedSymbol, state.currentTimeframe, 300);
+  if (candles.length === 0 || !state.candleSeries) return;
+
+  state.candleSeries.setData(candles);
+  state.volumeSeries.setData(candles.map(c => ({
+    time: c.time,
+    value: c.volume,
+    color: c.close >= c.open ? 'rgba(63, 185, 80, 0.3)' : 'rgba(248, 81, 73, 0.3)'
+  })));
+
+  if (state.showSR) {
+    const { supports, resistances } = findSupportResistance(candles);
+    updateChartLevels(supports, resistances, candles[candles.length - 1].close);
+  }
+
+  state.chart.timeScale().fitContent();
+}
+
+function updateChartLevels(supports, resistances, currentPrice) {
+  const container = document.getElementById('chartLevels');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const allLevels = [
+    ...resistances.map(p => ({ price: p, type: 'resistance' })),
+    { price: currentPrice, type: 'current' },
+    ...supports.map(p => ({ price: p, type: 'support' }))
+  ].sort((a, b) => b.price - a.price);
+
+  for (const level of allLevels.slice(0, 5)) {
+    const marker = document.createElement('div');
+    marker.className = `level-marker ${level.type}`;
+    marker.textContent = formatPrice(level.price);
+    container.appendChild(marker);
+  }
+}
+
+function updateChartPrice(price, change) {
+  const priceEl = document.getElementById('chartPrice');
+  const changeEl = document.getElementById('chartChange');
+  if (priceEl) priceEl.textContent = '$' + formatPrice(price);
+  if (changeEl) {
+    changeEl.textContent = formatPercent(change);
+    changeEl.className = 'chart-change ' + (change >= 0 ? 'up' : 'down');
+  }
+}
+
+function initEquityChart() {
+  const container = document.getElementById('equityChart');
+  if (!container || typeof LightweightCharts === 'undefined') return;
+
+  state.equityChart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 120,
+    layout: { background: { type: 'solid', color: '#111820' }, textColor: '#8b949e' },
+    grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+    rightPriceScale: { visible: false },
+    timeScale: { visible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Hidden }
+  });
+
+  state.equitySeries = state.equityChart.addAreaSeries({
+    lineColor: '#7c5cff',
+    topColor: 'rgba(124, 92, 255, 0.3)',
+    bottomColor: 'rgba(124, 92, 255, 0.05)',
+    lineWidth: 2
+  });
+
+  updateEquityChart();
+}
+
+function updateEquityChart() {
+  if (!state.equitySeries) return;
+
+  const data = state.equityHistory.map(p => ({
+    time: Math.floor(p.time / 1000),
+    value: p.value
+  }));
+
+  if (data.length > 0) {
+    state.equitySeries.setData(data);
+    state.equityChart.timeScale().fitContent();
+  }
+}
+
+// ============================================
+// UI RENDERING
+// ============================================
+
+function renderMarkets() {
+  const container = document.getElementById('marketList');
+  if (!container) return;
+
+  const html = state.markets.map(market => {
+    const signal = state.signals.find(s => s.symbol === market.symbol);
+    const isActive = market.symbol === state.selectedSymbol;
+
+    let classes = 'market-item';
+    if (isActive) classes += ' active';
+    if (signal) classes += ` has-signal ${signal.direction.toLowerCase()}`;
+
+    return `
+      <div class="${classes}" data-symbol="${market.symbol}">
+        <div class="market-row">
+          <span class="market-symbol">${market.symbol.replace('USDT', '')}</span>
+          <span class="market-change ${market.change >= 0 ? 'up' : 'down'}">${formatPercent(market.change)}</span>
+        </div>
+        <div class="market-meta">
+          <span class="market-price">$${formatPrice(market.price)}</span>
+          <span class="market-volume">Vol: ${formatVolume(market.volume)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = html;
+  container.querySelectorAll('.market-item').forEach(el => {
+    el.addEventListener('click', () => selectMarket(el.dataset.symbol));
+  });
+}
+
+function renderSignals() {
+  const container = document.getElementById('signalsList');
+  if (!container) return;
+
+  let signals = state.signals;
+  if (state.signalFilter === 'longs') signals = signals.filter(s => s.direction === 'LONG');
+  else if (state.signalFilter === 'shorts') signals = signals.filter(s => s.direction === 'SHORT');
+
+  if (signals.length === 0) {
+    container.innerHTML = '<div class="empty-state">No signals found</div>';
+    return;
+  }
+
+  container.innerHTML = signals.map(signal => `
+    <div class="signal-card ${signal.direction.toLowerCase()}" data-symbol="${signal.symbol}">
+      <div class="signal-header">
+        <div class="signal-symbol-info">
+          <span class="signal-symbol">${signal.symbol.replace('USDT', '')}</span>
+          <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
+          <span class="signal-leverage">LEV ${CONFIG.LEVERAGE}x</span>
+        </div>
+        <div class="signal-confidence">
+          <span class="conf-label">Total Conf:</span>
+          <span class="conf-value">${signal.confidence}%</span>
+          <span class="signal-time">${timeAgo(signal.timestamp)}</span>
+        </div>
+      </div>
+      <div class="signal-body">
+        <div class="signal-tags">
+          ${signal.reasons.slice(0, 4).map((r, i) =>
+            `<span class="signal-tag ${i < 2 ? 'active' : ''}">${r.split(' ').slice(0, 3).join(' ')}</span>`
+          ).join('')}
+        </div>
+        <div class="signal-analysis">${signal.reasons.slice(0, 2).join('. ')}...</div>
+        <div class="signal-levels">
+          <div class="level-item rr"><div class="level-label">R/R Ratio</div><div class="level-value">1:${signal.riskReward.toFixed(1)}</div></div>
+          <div class="level-item entry"><div class="level-label">Entry</div><div class="level-value">${formatPrice(signal.entry)}</div></div>
+          <div class="level-item target"><div class="level-label">Target</div><div class="level-value">${formatPrice(signal.tp)}</div></div>
+          <div class="level-item stop"><div class="level-label">Stop</div><div class="level-value">${formatPrice(signal.sl)}</div></div>
+        </div>
+      </div>
+      <div class="signal-footer">
+        <div class="footer-stat"><div class="label">Risk Amount ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
+        <div class="footer-stat"><div class="label">SL Distance</div><div class="value red">${CONFIG.SL_PERCENT}%</div></div>
+        <div class="footer-stat"><div class="label">Position Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
+      </div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('.signal-card').forEach(el => {
+    el.addEventListener('click', () => selectMarket(el.dataset.symbol));
+  });
+}
+
+function renderAlertBar() {
+  const container = document.getElementById('alertBarSignals');
+  if (!container) return;
+
+  const highConfSignals = state.signals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE).slice(0, 5);
+
+  if (highConfSignals.length === 0) {
+    container.innerHTML = '<span class="muted">No high confidence signals</span>';
+    return;
+  }
+
+  container.innerHTML = highConfSignals.map(s => `
+    <div class="alert-signal" data-symbol="${s.symbol}">
+      <span class="symbol">${s.symbol.replace('USDT', '')}</span>
+      <span class="direction ${s.direction.toLowerCase()}">${s.direction}</span>
+      <span class="entry">Entry ${formatPrice(s.entry)}</span>
+      <span class="conf">Conf ${s.confidence}%</span>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('.alert-signal').forEach(el => {
+    el.addEventListener('click', () => selectMarket(el.dataset.symbol));
+  });
+}
+
+function renderMarketBias() {
+  const longs = state.signals.filter(s => s.direction === 'LONG').length;
+  const shorts = state.signals.filter(s => s.direction === 'SHORT').length;
+  const total = longs + shorts || 1;
+
+  const bullishPct = Math.round(longs / total * 100);
+  const bearishPct = 100 - bullishPct;
+
+  let biasText = 'Neutral';
+  if (bullishPct >= 60) biasText = 'Bullish';
+  else if (bearishPct >= 60) biasText = 'Bearish';
+
+  const biasValueEl = document.getElementById('marketBiasValue');
+  const biasBullEl = document.getElementById('biasFillBullish');
+  const biasBearEl = document.getElementById('biasFillBearish');
+
+  if (biasValueEl) biasValueEl.textContent = `${biasText} (${bullishPct}%)`;
+  if (biasBullEl) biasBullEl.style.width = `${bullishPct}%`;
+  if (biasBearEl) biasBearEl.style.width = `${bearishPct}%`;
+}
+
+function renderPositions() {
+  const container = document.getElementById('positionsList');
+  if (!container) return;
+
+  const openTrades = state.trades.filter(t => t.status === 'open');
+
+  if (openTrades.length === 0) {
+    container.innerHTML = '<div class="empty-state">No open positions</div>';
+    return;
+  }
+
+  container.innerHTML = openTrades.map(t => {
+    const currentPrice = state.priceCache[t.symbol] || t.entry;
+    const pnlPct = (t.pnl / t.size * 100).toFixed(2);
+
+    return `
+      <div class="position-item">
+        <span class="symbol">${t.symbol.replace('USDT', '')}</span>
+        <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
+        <span class="entry">$${formatPrice(t.entry)}</span>
+        <span class="current">$${formatPrice(currentPrice)}</span>
+        <span class="pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
+        <span class="pnl-pct ${t.pnl >= 0 ? 'positive' : 'negative'}">${pnlPct}%</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderHistory() {
+  const container = document.getElementById('historyList');
+  if (!container) return;
+
+  const closedTrades = state.trades.filter(t => t.status === 'closed').slice(-20).reverse();
+
+  if (closedTrades.length === 0) {
+    container.innerHTML = '<div class="empty-state">No trade history</div>';
+    return;
+  }
+
+  container.innerHTML = closedTrades.map(t => `
+    <div class="history-item">
+      <span class="symbol">${t.symbol.replace('USDT', '')}</span>
+      <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
+      <span class="entry">$${formatPrice(t.entry)}</span>
+      <span class="exit">$${formatPrice(t.exitPrice)}</span>
+      <span class="pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
+      <span class="time">${timeAgo(t.closeTimestamp)}</span>
+    </div>
+  `).join('');
+}
+
+function renderAll() {
+  renderMarkets();
+  renderSignals();
+  renderAlertBar();
+  renderMarketBias();
+  renderPositions();
+  renderHistory();
+  updatePortfolioStats();
+}
+
+// ============================================
+// UI HELPERS
+// ============================================
+
+function selectMarket(symbol) {
+  state.selectedSymbol = symbol;
+  const symbolNameEl = document.getElementById('chartSymbolName');
+  if (symbolNameEl) symbolNameEl.textContent = symbol;
+
+  const market = state.markets.find(m => m.symbol === symbol);
+  if (market) updateChartPrice(market.price, market.change);
+
+  renderMarkets();
+  loadChartData();
+}
+
+function updateScanStatus(current, found) {
+  const progressEl = document.getElementById('scanProgress');
+  const analyzedEl = document.getElementById('analyzedCount');
+  if (progressEl) progressEl.textContent = current;
+  if (analyzedEl) analyzedEl.textContent = `${found} analyzed`;
+}
+
+function updateDataSource(name, isLive) {
+  const nameEl = document.getElementById('dataSourceName');
+  const statusEl = document.getElementById('dataSourceStatus');
+  if (nameEl) nameEl.textContent = name;
+  if (statusEl) {
+    statusEl.textContent = isLive ? '● Live' : '● Offline';
+    statusEl.style.color = isLive ? 'var(--green)' : 'var(--red)';
+  }
+}
+
 function showNotification(signal) {
-  if (!state.soundEnabled) return;
-
-  // Play sound
-  const audio = $('#alertSound');
-  if (audio) {
-    audio.currentTime = 0;
-    audio.play().catch(() => {});
+  if (state.soundEnabled) {
+    const audio = document.getElementById('alertSound');
+    if (audio) audio.play().catch(() => {});
   }
 
-  // Create notification element
-  const container = $('#notificationContainer');
-  const notification = document.createElement('div');
-  notification.className = `notification ${signal.direction.toLowerCase()} ${signal.isTradeOpen ? 'trade' : ''}`;
+  const container = document.getElementById('notificationContainer');
+  if (!container) return;
 
+  const notification = document.createElement('div');
+  notification.className = `notification ${signal.direction.toLowerCase()}`;
   notification.innerHTML = `
     <div class="notification-header">
-      <span class="notification-icon">
-        ${signal.isTradeOpen ? '&#9889;' : '&#128200;'}
-      </span>
-      <span class="notification-title">
-        ${signal.isTradeOpen ? 'Trade Opened' : 'New Signal'}: ${signal.symbol}
-      </span>
+      <span class="notification-icon">${signal.direction === 'LONG' ? '📈' : '📉'}</span>
+      <span class="notification-title">${signal.symbol} ${signal.direction}</span>
       <button class="notification-close">&times;</button>
     </div>
     <div class="notification-body">
       <div class="notification-signal">
-        <span class="tag ${signal.direction.toLowerCase()}">${signal.direction}</span>
-        <span class="notification-conf">${signal.confidence}% confidence</span>
+        <span class="notification-conf">Confidence: ${signal.confidence}%</span>
       </div>
-      <div class="notification-reason">${signal.tldr[0]}</div>
+      <div class="notification-reason">${signal.reasons[0]}</div>
     </div>
   `;
+
+  container.appendChild(notification);
 
   notification.querySelector('.notification-close').addEventListener('click', () => {
     notification.classList.add('closing');
     setTimeout(() => notification.remove(), 300);
   });
 
-  container.appendChild(notification);
-
-  // Auto-remove after 10 seconds
   setTimeout(() => {
-    if (notification.parentNode) {
+    if (notification.parentElement) {
       notification.classList.add('closing');
       setTimeout(() => notification.remove(), 300);
     }
-  }, 10000);
+  }, 8000);
 }
 
-function addAlert(signal) {
-  state.alerts.unshift({
-    ...signal,
-    id: Date.now(),
-    time: new Date(),
-  });
+// ============================================
+// PERSISTENCE
+// ============================================
 
-  // Keep only last 20 alerts
-  state.alerts = state.alerts.slice(0, 20);
-  renderAlerts();
+function saveTrades() {
+  localStorage.setItem('sentient_trades', JSON.stringify(state.trades));
+  localStorage.setItem('sentient_balance', state.balance.toString());
+  localStorage.setItem('sentient_equity', JSON.stringify(state.equityHistory));
 }
 
-function renderAlerts() {
-  const container = $('#alertsList');
-
-  if (state.alerts.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state small">
-        <span class="muted">Waiting for signals...</span>
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = state.alerts.map(alert => `
-    <div class="alert-item ${alert.direction.toLowerCase()}" data-symbol="${alert.symbol}">
-      <div class="alert-header">
-        <span class="alert-symbol">${alert.symbol}</span>
-        <span class="tag small ${alert.direction.toLowerCase()}">${alert.direction}</span>
-      </div>
-      <div class="alert-meta">
-        <span class="alert-conf">${alert.confidence}%</span>
-        <span class="alert-time">${getTimeAgo(alert.time)}</span>
-      </div>
-    </div>
-  `).join('');
-
-  // Add click handlers
-  container.querySelectorAll('.alert-item').forEach(item => {
-    item.addEventListener('click', () => {
-      state.selectedSymbol = item.dataset.symbol;
-      setView('charts');
-      renderAll();
-    });
-  });
-}
-
-// --- TradingView Integration ---
-function initTradingViewChart() {
-  const container = $('#tradingviewChart');
-  if (!container) return;
-
-  // Clear loading spinner
-  container.innerHTML = '';
-
+function loadTrades() {
   try {
-    state.tradingviewWidget = new TradingView.widget({
-      container_id: 'tradingviewChart',
-      symbol: `BINANCE:${state.selectedSymbol}.P`,
-      interval: state.currentTimeframe,
-      timezone: 'Etc/UTC',
-      theme: 'dark',
-      style: '1',
-      locale: 'en',
-      toolbar_bg: '#0f1624',
-      enable_publishing: false,
-      hide_side_toolbar: false,
-      allow_symbol_change: false,
-      studies: ['RSI@tv-basicstudies', 'MACD@tv-basicstudies', 'EMA@tv-basicstudies'],
-      overrides: {
-        'mainSeriesProperties.candleStyle.upColor': '#37d67a',
-        'mainSeriesProperties.candleStyle.downColor': '#ff5c77',
-        'mainSeriesProperties.candleStyle.wickUpColor': '#37d67a',
-        'mainSeriesProperties.candleStyle.wickDownColor': '#ff5c77',
-        'paneProperties.background': '#0f1624',
-        'paneProperties.vertGridProperties.color': 'rgba(255,255,255,0.05)',
-        'paneProperties.horzGridProperties.color': 'rgba(255,255,255,0.05)',
-      },
-      loading_screen: { backgroundColor: '#0f1624', foregroundColor: '#7c5cff' },
-      autosize: true,
-    });
-  } catch (error) {
-    console.error('Failed to init TradingView:', error);
-    container.innerHTML = `
-      <div class="chart-fallback">
-        <div class="chart-fallback-content">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="20" x2="18" y2="10"/>
-            <line x1="12" y1="20" x2="12" y2="4"/>
-            <line x1="6" y1="20" x2="6" y2="14"/>
-          </svg>
-          <div class="muted">TradingView chart for ${state.selectedSymbol}</div>
-          <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${state.selectedSymbol}.P" target="_blank" class="btn">
-            Open in TradingView
-          </a>
-        </div>
-      </div>
-    `;
-  }
-}
-
-function updateTradingViewSymbol() {
-  if (state.tradingviewWidget && state.tradingviewWidget.iframe) {
-    // Reinitialize with new symbol
-    initTradingViewChart();
-  }
-}
-
-// --- UI Rendering ---
-function renderMarkets(list) {
-  const el = $('#marketList');
-
-  if (!list || list.length === 0) {
-    el.innerHTML = `
-      <div class="loading-spinner">
-        <div class="spinner"></div>
-        <span>Loading markets...</span>
-      </div>
-    `;
-    return;
-  }
-
-  el.innerHTML = list.map(m => {
-    const signal = state.signals.find(s => s.symbol === m.symbol);
-    const hasSignal = signal && signal.confidence >= 70;
-
-    return `
-      <div class="market-item ${m.symbol === state.selectedSymbol ? 'active' : ''} ${hasSignal ? 'has-signal' : ''}"
-           role="option" data-symbol="${m.symbol}">
-        <div class="market-left">
-          <div class="market-symbol">
-            ${m.symbol.replace('USDT', '')}
-            ${hasSignal ? `<span class="signal-dot ${signal.direction.toLowerCase()}"></span>` : ''}
-          </div>
-          <div class="market-meta">Perp | Vol: ${formatVolume(m.volume)}</div>
-        </div>
-        <div class="market-right">
-          <div class="market-price">$${formatPrice(m.price)}</div>
-          <div class="market-chg ${m.priceChange >= 0 ? 'up' : 'down'}">
-            ${m.priceChange >= 0 ? '+' : ''}${m.priceChange.toFixed(2)}%
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Add click handlers
-  el.querySelectorAll('.market-item').forEach(item => {
-    item.addEventListener('click', () => {
-      state.selectedSymbol = item.dataset.symbol;
-      renderAll();
-      updateTradingViewSymbol();
-    });
-  });
-}
-
-function applyMarketSearch() {
-  const q = $('#marketSearch').value.trim().toUpperCase();
-  if (!q) return state.markets;
-  return state.markets.filter(m => m.symbol.includes(q));
-}
-
-function renderTopSignals() {
-  const tbody = $('#topSignalsTable tbody');
-  const top = state.signals.slice(0, 8);
-
-  if (top.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="5" class="empty-cell">
-          <div class="loading-spinner small">
-            <div class="spinner"></div>
-            <span>Analyzing markets...</span>
-          </div>
-        </td>
-      </tr>
-    `;
-    return;
-  }
-
-  tbody.innerHTML = top.map(s => `
-    <tr class="signal-row" data-symbol="${s.symbol}">
-      <td>
-        <strong>${s.symbol.replace('USDT', '')}</strong>
-        <span class="muted">/USDT</span>
-      </td>
-      <td><span class="tag ${s.direction.toLowerCase()}">${s.direction}</span></td>
-      <td><span class="tf-badge">${s.timeframe}</span></td>
-      <td><span class="conf ${confClass(s.confidence)}">${s.confidence}%</span></td>
-      <td class="muted truncate">${s.tldr[0]}</td>
-    </tr>
-  `).join('');
-
-  tbody.querySelectorAll('.signal-row').forEach(row => {
-    row.addEventListener('click', () => {
-      state.selectedSymbol = row.dataset.symbol;
-      setView('charts');
-      renderAll();
-    });
-  });
-}
-
-function renderSignalsTable() {
-  const tbody = $('#signalsTable tbody');
-  const filters = getFilters();
-  const list = applySignalFilters(filters);
-
-  // Update stats
-  $('#totalSignals').textContent = list.length;
-  $('#longSignals').textContent = list.filter(s => s.direction === 'LONG').length;
-  $('#shortSignals').textContent = list.filter(s => s.direction === 'SHORT').length;
-  $('#highConfSignals').textContent = list.filter(s => s.confidence >= 80).length;
-
-  if (list.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="6" class="empty-cell muted">
-          No signals match your filters. Try lowering the minimum confidence.
-        </td>
-      </tr>
-    `;
-    return;
-  }
-
-  tbody.innerHTML = list.map(s => `
-    <tr class="signal-row" data-symbol="${s.symbol}">
-      <td>
-        <strong>${s.symbol.replace('USDT', '')}</strong>
-        <span class="muted">/USDT</span>
-      </td>
-      <td><span class="tag ${s.direction.toLowerCase()}">${s.direction}</span></td>
-      <td><span class="tf-badge">${s.timeframe}</span></td>
-      <td><span class="conf ${confClass(s.confidence)}">${s.confidence}%</span></td>
-      <td>
-        <div class="tldr-list">
-          ${s.tldr.map(t => `<div class="tldr-item">${t}</div>`).join('')}
-        </div>
-      </td>
-      <td>
-        <button class="btn small" data-trade="${s.symbol}">Trade</button>
-      </td>
-    </tr>
-  `).join('');
-
-  tbody.querySelectorAll('.signal-row').forEach(row => {
-    row.addEventListener('click', (e) => {
-      if (e.target.tagName === 'BUTTON') return;
-      state.selectedSymbol = row.dataset.symbol;
-      setView('charts');
-      renderAll();
-    });
-  });
-
-  tbody.querySelectorAll('[data-trade]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const symbol = btn.dataset.trade;
-      const signal = state.signals.find(s => s.symbol === symbol);
-      if (signal) {
-        autoTrade(signal);
-      }
-    });
-  });
-}
-
-function applySignalFilters(filters) {
-  return state.signals.filter(s => {
-    const tfOk = filters.tf === 'all' || s.timeframe === filters.tf;
-    const dirOk = filters.dir === 'all' || s.direction.toLowerCase() === filters.dir;
-    const confOk = s.confidence >= filters.minConf;
-    return tfOk && dirOk && confOk;
-  });
-}
-
-function getFilters() {
-  return {
-    tf: $('#tfSelect').value,
-    dir: $('#dirSelect').value,
-    minConf: parseInt($('#minConf').value, 10),
-  };
-}
-
-function confClass(n) {
-  if (n >= 80) return 'high';
-  if (n >= 65) return 'mid';
-  return 'low';
-}
-
-function renderSelectedMarket() {
-  const market = state.markets.find(m => m.symbol === state.selectedSymbol);
-  const signal = state.signals.find(s => s.symbol === state.selectedSymbol);
-
-  $('#selectedSymbolBadge').textContent = state.selectedSymbol.replace('USDT', '/USDT');
-  $('#chartSymbol').textContent = state.selectedSymbol;
-
-  if (market) {
-    $('#selectedPrice').textContent = '$' + formatPrice(market.price);
-  }
-
-  if (signal) {
-    const trend = signal.direction === 'LONG' ? 'Bullish' : 'Bearish';
-    const trendIcon = signal.direction === 'LONG'
-      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>'
-      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>';
-
-    $('#selectedTrend').innerHTML = `
-      <span class="trend-icon ${signal.direction.toLowerCase()}">${trendIcon}</span>
-      ${trend}
-    `;
-    $('#selectedSignalDir').textContent = signal.direction;
-    $('#selectedSignalDir').className = 'signal-display ' + signal.direction.toLowerCase();
-    $('#selectedConfPill').textContent = signal.confidence + '%';
-    $('#selectedConfBar').style.width = signal.confidence + '%';
-    $('#selectedTldr').innerHTML = signal.tldr.map(t => `<li>${t}</li>`).join('');
-
-    // Update charts panel
-    updateChartsPanel(signal);
-  } else {
-    $('#selectedTrend').innerHTML = `<span class="muted">--</span>`;
-    $('#selectedSignalDir').textContent = '--';
-    $('#selectedConfPill').textContent = '--';
-    $('#selectedConfBar').style.width = '0%';
-    $('#selectedTldr').innerHTML = '<li class="muted">No signal detected. Waiting for next scan...</li>';
-  }
-}
-
-async function updateChartsPanel(signal) {
-  // Update indicators
-  $('#rsiVal').textContent = signal.rsi ? signal.rsi.toFixed(1) : '--';
-  $('#rsiFill').style.width = signal.rsi ? signal.rsi + '%' : '50%';
-
-  const rsiClass = signal.rsi > 70 ? 'overbought' : signal.rsi < 30 ? 'oversold' : 'neutral';
-  $('#rsiFill').className = 'indicator-fill rsi ' + rsiClass;
-
-  const emaStatus = signal.price > signal.ema200 ? 'Above' : 'Below';
-  $('#emaVal').textContent = emaStatus;
-  $('#emaStatus').innerHTML = `
-    <span class="status-dot ${signal.price > signal.ema200 ? 'bullish' : 'bearish'}"></span>
-    <span>${signal.price > signal.ema200 ? 'Bullish trend' : 'Bearish trend'}</span>
-  `;
-
-  const macdStatus = signal.macd.histogram > 0 ? 'Bullish' : 'Bearish';
-  $('#macdVal').textContent = macdStatus;
-  $('#macdStatus').innerHTML = `
-    <span class="status-dot ${signal.macd.histogram > 0 ? 'bullish' : 'bearish'}"></span>
-    <span>${signal.macd.crossUp ? 'Cross up!' : signal.macd.crossDown ? 'Cross down!' : 'Momentum ' + (signal.macd.histogram > 0 ? 'rising' : 'falling')}</span>
-  `;
-
-  // Update direction and confidence
-  $('#chartDirection').textContent = signal.direction;
-  $('#chartDirection').className = 'pill direction-pill ' + signal.direction.toLowerCase();
-  $('#chartConfPill').textContent = signal.confidence + '%';
-  $('#chartConfBar').style.width = signal.confidence + '%';
-  $('#chartTldr').innerHTML = signal.tldr.map(t => `<li>${t}</li>`).join('');
-
-  // Update levels
-  const price = signal.price;
-  $('#currentPrice').textContent = '$' + formatPrice(price);
-
-  if (signal.resistances.length >= 2) {
-    $('#r1Price').textContent = '$' + formatPrice(signal.resistances[0]);
-    $('#r2Price').textContent = '$' + formatPrice(signal.resistances[1]);
-  }
-
-  if (signal.supports.length >= 2) {
-    $('#s1Price').textContent = '$' + formatPrice(signal.supports[0]);
-    $('#s2Price').textContent = '$' + formatPrice(signal.supports[1]);
-  }
-}
-
-function renderRecentTrades() {
-  const tbody = $('#recentTradesTable tbody');
-  const recent = state.trades.slice(0, 5);
-
-  if (recent.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty-cell muted">No trades yet</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = recent.map(t => `
-    <tr>
-      <td class="muted">${getTimeAgo(t.openTime)}</td>
-      <td><strong>${t.symbol.replace('USDT', '')}</strong></td>
-      <td><span class="tag small ${t.direction.toLowerCase()}">${t.direction}</span></td>
-      <td class="${t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatPnL(t.pnl)}</td>
-    </tr>
-  `).join('');
-}
-
-function renderTradesTable() {
-  const tbody = $('#tradesTable tbody');
-  const filter = $('#tradeFilter')?.value || 'all';
-
-  let trades = state.trades;
-  if (filter === 'open') trades = trades.filter(t => t.status === 'OPEN');
-  if (filter === 'closed') trades = trades.filter(t => t.status === 'CLOSED');
-  if (filter === 'won') trades = trades.filter(t => t.status === 'CLOSED' && t.pnl > 0);
-  if (filter === 'lost') trades = trades.filter(t => t.status === 'CLOSED' && t.pnl < 0);
-
-  if (trades.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-cell muted">No trades match your filter.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = trades.map(t => `
-    <tr class="${t.status === 'OPEN' ? 'open-trade' : ''}">
-      <td class="muted">${t.openTime.toLocaleString()}</td>
-      <td><strong>${t.symbol.replace('USDT', '')}</strong></td>
-      <td><span class="tag small ${t.direction.toLowerCase()}">${t.direction}</span></td>
-      <td>${t.leverage}x</td>
-      <td>$${formatPrice(t.entry)}</td>
-      <td>${t.exit ? '$' + formatPrice(t.exit) : '--'}</td>
-      <td><span class="conf ${confClass(t.confidence)}">${t.confidence}%</span></td>
-      <td class="${t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${formatPnL(t.pnl)}</td>
-      <td>
-        <span class="status-badge ${t.status.toLowerCase()}">${t.status}</span>
-        ${t.status === 'OPEN' ? `<button class="btn ghost small close-trade" data-id="${t.id}">Close</button>` : ''}
-      </td>
-    </tr>
-  `).join('');
-
-  // Add close button handlers
-  tbody.querySelectorAll('.close-trade').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const trade = state.trades.find(t => t.id === parseInt(btn.dataset.id));
-      if (trade) {
-        const currentPrice = state.priceCache[trade.symbol] || trade.entry;
-        closeTrade(trade, currentPrice);
-        renderTradesTable();
-      }
-    });
-  });
-}
-
-function renderPnL() {
-  const stats = getTradeStats();
-
-  // Update all PnL displays
-  const balanceFormatted = '$' + state.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  $('#paperBalance').textContent = balanceFormatted;
-  $('#pnlBalance').textContent = balanceFormatted;
-  $('#openPositions').textContent = stats.openPositions;
-  $('#winRate').textContent = stats.winRate + '%';
-  $('#pnlWinRate').textContent = stats.winRate + '%';
-
-  const totalPnL = state.balance - CONFIG.STARTING_BALANCE;
-  const pnlPercent = ((totalPnL / CONFIG.STARTING_BALANCE) * 100).toFixed(2);
-  $('#pnlTotal').textContent = formatPnL(totalPnL);
-  $('#pnlTotal').className = 'big ' + (totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative');
-
-  $('#pnlChange').textContent = `${formatPnL(totalPnL)} (${pnlPercent}%)`;
-  $('#pnlChange').className = 'balance-change ' + (totalPnL >= 0 ? 'positive' : 'negative');
-
-  $('#pnlTotalTrades').textContent = stats.totalTrades;
-  $('#pnlDD').textContent = '-' + stats.maxDrawdown + '%';
-
-  // Update equity curve
-  updateEquityCurve();
-}
-
-function updateEquityCurve() {
-  if (state.equityHistory.length < 2) return;
-
-  const min = Math.min(...state.equityHistory);
-  const max = Math.max(...state.equityHistory);
-  const range = max - min || 1;
-
-  const points = state.equityHistory.map((eq, i) => {
-    const x = (i / (state.equityHistory.length - 1)) * 100;
-    const y = 40 - ((eq - min) / range) * 35;
-    return `${x},${y}`;
-  });
-
-  const path = 'M' + points.join(' L');
-  $('#equityPath')?.setAttribute('d', path);
-}
-
-function renderAll() {
-  renderMarkets(applyMarketSearch());
-  renderTopSignals();
-  renderSignalsTable();
-  renderSelectedMarket();
-  renderRecentTrades();
-  renderTradesTable();
-  renderPnL();
-  renderAlerts();
-  updateKPIs();
-}
-
-function updateKPIs() {
-  $('#kpiSetups').textContent = state.signals.length;
-  $('#kpiHigh').textContent = state.signals.filter(s => s.confidence >= 80).length;
-}
-
-// --- Timer & Status ---
-let scanCountdown = 120;
-
-function updateScanStatus(status) {
-  $('#scanStatus').innerHTML = status || `Next scan: <strong id="scanCountdown">${formatCountdown(scanCountdown)}</strong>`;
-}
-
-function formatCountdown(seconds) {
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-  const ss = String(seconds % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
-}
-
-function startScanTimer() {
-  setInterval(() => {
-    scanCountdown--;
-
-    if (scanCountdown <= 0) {
-      scanCountdown = 120;
-      runAIScan();
-    }
-
-    $('#scanCountdown').textContent = formatCountdown(scanCountdown);
-    $('#kpiNextScan').textContent = formatCountdown(scanCountdown);
-  }, 1000);
-}
-
-function updateLastUpdate() {
-  const now = new Date();
-  $('#lastUpdate').textContent = `Last update: ${now.toLocaleTimeString()}`;
-}
-
-// --- Navigation ---
-function setView(viewName) {
-  $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === viewName));
-  $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${viewName}`));
-
-  if (viewName === 'charts') {
-    setTimeout(initTradingViewChart, 100);
-  }
-}
-
-// --- State Persistence ---
-function saveState() {
-  try {
-    localStorage.setItem('perpSignals_balance', state.balance.toString());
-    localStorage.setItem('perpSignals_trades', JSON.stringify(state.trades));
-    localStorage.setItem('perpSignals_equity', JSON.stringify(state.equityHistory));
-  } catch (e) {
-    console.warn('Failed to save state:', e);
-  }
-}
-
-function loadState() {
-  try {
-    const balance = localStorage.getItem('perpSignals_balance');
-    const trades = localStorage.getItem('perpSignals_trades');
-    const equity = localStorage.getItem('perpSignals_equity');
-
+    const trades = localStorage.getItem('sentient_trades');
+    const balance = localStorage.getItem('sentient_balance');
+    const equity = localStorage.getItem('sentient_equity');
+
+    if (trades) state.trades = JSON.parse(trades);
     if (balance) state.balance = parseFloat(balance);
-    if (trades) {
-      state.trades = JSON.parse(trades).map(t => ({
-        ...t,
-        openTime: new Date(t.openTime),
-        closeTime: t.closeTime ? new Date(t.closeTime) : null,
-      }));
-    }
     if (equity) state.equityHistory = JSON.parse(equity);
   } catch (e) {
-    console.warn('Failed to load state:', e);
+    console.error('Failed to load saved data:', e);
   }
 }
 
-function resetPaperAccount() {
-  if (!confirm('Are you sure you want to reset your paper trading account? This will clear all trades and reset your balance to $2,000.')) {
-    return;
-  }
+// ============================================
+// EVENT LISTENERS
+// ============================================
 
-  state.balance = CONFIG.STARTING_BALANCE;
-  state.trades = [];
-  state.equityHistory = [CONFIG.STARTING_BALANCE];
-  state.maxBalance = CONFIG.STARTING_BALANCE;
-
-  saveState();
-  renderAll();
-}
-
-// --- Event Listeners ---
 function initEventListeners() {
   // Navigation
-  $$('.tab').forEach(btn => {
-    btn.addEventListener('click', () => setView(btn.dataset.view));
-  });
-
-  $$('[data-nav]').forEach(btn => {
-    btn.addEventListener('click', () => setView(btn.dataset.nav));
-  });
-
-  // Search
-  $('#marketSearch').addEventListener('input', () => renderMarkets(applyMarketSearch()));
-
-  // Filters
-  $('#minConf').addEventListener('input', (e) => {
-    $('#minConfPill').textContent = e.target.value + '%';
-  });
-
-  $('#applyFilters').addEventListener('click', () => {
-    renderSignalsTable();
-  });
-
-  // Force scan
-  $('#forceScanBtn').addEventListener('click', () => {
-    scanCountdown = 120;
-    runAIScan();
-  });
-
-  // Sound toggle
-  $('#soundToggle').addEventListener('change', (e) => {
-    state.soundEnabled = e.target.checked;
-  });
-
-  // Clear alerts
-  $('#clearAlerts').addEventListener('click', () => {
-    state.alerts = [];
-    renderAlerts();
-  });
-
-  // Chart timeframe
-  $$('.chip[data-chart-tf]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      $$('.chip[data-chart-tf]').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.currentTimeframe = chip.dataset.chartTf;
-      initTradingViewChart();
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const view = btn.dataset.view;
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      const viewEl = document.getElementById(`view-${view}`);
+      if (viewEl) viewEl.classList.add('active');
     });
   });
 
-  // Toggle drawings
-  $('#toggleDrawings')?.addEventListener('click', () => {
-    state.drawingsVisible = !state.drawingsVisible;
-    // TradingView handles its own drawings
+  // Timeframe buttons
+  document.querySelectorAll('.tf-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.currentTimeframe = btn.dataset.tf;
+      loadChartData();
+    });
   });
 
-  // Paper trading
-  $('#paperTradeBtn')?.addEventListener('click', () => {
-    const signal = state.signals.find(s => s.symbol === state.selectedSymbol);
-    if (signal) {
-      autoTrade(signal);
-    } else {
-      alert('No signal available for this symbol.');
-    }
-  });
-
-  $('#autoTradeBtn')?.addEventListener('click', () => {
-    const highConfSignals = state.signals.filter(s => s.confidence >= 80);
-    highConfSignals.forEach(signal => autoTrade(signal));
-    alert(`Opened ${highConfSignals.length} trades with 80%+ confidence.`);
-  });
-
-  $('#resetPaper').addEventListener('click', resetPaperAccount);
-
-  $('#manualTradeBtn')?.addEventListener('click', () => {
-    const signal = state.signals.find(s => s.symbol === state.selectedSymbol);
-    if (signal) {
-      autoTrade(signal);
-    } else {
-      alert('Select a market with an active signal first.');
-    }
-  });
-
-  // Trade filter
-  $('#tradeFilter')?.addEventListener('change', renderTradesTable);
-
-  // Export signals
-  $('#exportSignals')?.addEventListener('click', () => {
-    const data = state.signals.map(s => ({
-      symbol: s.symbol,
-      direction: s.direction,
-      timeframe: s.timeframe,
-      confidence: s.confidence,
-      reasons: s.tldr.join('; '),
-      price: s.price,
-      timestamp: new Date(s.timestamp).toISOString(),
-    }));
-
-    const csv = [
-      Object.keys(data[0] || {}).join(','),
-      ...data.map(row => Object.values(row).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `signals_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  });
-}
-
-// --- Price Updates (WebSocket) ---
-function initPriceWebSocket() {
-  // Connect to Binance WebSocket for real-time price updates
-  const symbols = state.markets.slice(0, 20).map(m => m.symbol.toLowerCase() + '@ticker');
-
-  if (symbols.length === 0) {
-    setTimeout(initPriceWebSocket, 5000);
-    return;
+  // Tool buttons
+  const toggleSR = document.getElementById('toggleSR');
+  if (toggleSR) {
+    toggleSR.addEventListener('click', (e) => {
+      e.target.classList.toggle('active');
+      state.showSR = e.target.classList.contains('active');
+      loadChartData();
+    });
   }
 
-  try {
-    const ws = new WebSocket(`wss://fstream.binance.com/stream?streams=${symbols.join('/')}`);
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.data && data.data.s) {
-        const symbol = data.data.s;
-        const price = parseFloat(data.data.c);
-
-        state.priceCache[symbol] = price;
-
-        // Update market list price
-        const market = state.markets.find(m => m.symbol === symbol);
-        if (market) {
-          market.price = price;
-          market.priceChange = parseFloat(data.data.P);
-        }
-
-        // Update open positions
-        updateOpenPositions();
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket closed, reconnecting...');
-      setTimeout(initPriceWebSocket, 5000);
-    };
-
-  } catch (error) {
-    console.error('Failed to init WebSocket:', error);
+  const toggleVolume = document.getElementById('toggleVolume');
+  if (toggleVolume) {
+    toggleVolume.addEventListener('click', (e) => {
+      e.target.classList.toggle('active');
+      state.showVolume = e.target.classList.contains('active');
+      if (state.volumeSeries) state.volumeSeries.applyOptions({ visible: state.showVolume });
+    });
   }
+
+  // Signal tabs
+  document.querySelectorAll('.signal-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+    });
+  });
+
+  // Signal filters
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.signalFilter = btn.dataset.filter;
+      renderSignals();
+    });
+  });
+
+  // Portfolio tabs
+  document.querySelectorAll('.portfolio-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.portfolio-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      const tabContent = document.getElementById(`tab-${tab.dataset.tab}`);
+      if (tabContent) tabContent.classList.add('active');
+    });
+  });
+
+  // Refresh button
+  const refreshBtn = document.getElementById('refreshBtn');
+  if (refreshBtn) refreshBtn.addEventListener('click', () => runScan());
 }
 
-// --- Initialization ---
+// ============================================
+// INITIALIZATION
+// ============================================
+
 async function init() {
-  console.log('Initializing AI Perp Signals...');
+  loadTrades();
 
-  // Load saved state
-  loadState();
+  state.markets = await fetchMarkets();
+  renderMarkets();
 
-  // Initialize event listeners
+  initChart();
+  initEquityChart();
+
+  if (state.markets.length > 0) selectMarket(state.markets[0].symbol);
+
+  initWebSocket();
   initEventListeners();
 
-  // Initial render
-  renderAll();
+  runScan();
 
-  // Fetch initial data
-  await getTop50Perps();
-  renderMarkets(state.markets);
+  setInterval(runScan, CONFIG.SCAN_INTERVAL);
+  setInterval(updateOpenPositions, CONFIG.PNL_UPDATE_INTERVAL);
+  setInterval(renderMarkets, 2000);
 
-  // Run initial scan
-  await runAIScan();
-
-  // Start timer
-  startScanTimer();
-
-  // Init WebSocket for live prices
-  setTimeout(initPriceWebSocket, 2000);
-
-  // Periodic position updates
-  setInterval(() => {
-    updateOpenPositions();
-    renderPnL();
-    renderRecentTrades();
-  }, 5000);
-
-  console.log('AI Perp Signals initialized successfully!');
+  console.log('Sentient Trader initialized');
 }
 
-// Start the application
 document.addEventListener('DOMContentLoaded', init);
