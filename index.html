@@ -20,14 +20,24 @@
   <!-- Signal Alert Notification -->
   <div class="notification-container" id="notificationContainer"></div>
 
-  <!-- HIGH CONFIDENCE ALERT BAR -->
+  <!-- HIGH CONFIDENCE ALERT BAR - AI POWERED -->
   <div class="alert-bar" id="alertBar">
     <div class="alert-bar-icon">
-      <span class="star-icon">★</span>
-      HIGH CONFIDENCE SETUPS
+      <div class="ai-badge">
+        <span>🧠</span>
+        <span>CLAUDE AI</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span class="star-icon">★</span>
+        TOP 2 PLAYS
+      </div>
     </div>
     <div class="alert-bar-signals" id="alertBarSignals">
-      <span class="muted">Scanning for signals...</span>
+      <span class="muted">AI analyzing markets...</span>
+    </div>
+    <div class="ai-status">
+      <span class="status-text">Next AI Scan</span>
+      <span class="next-scan" id="nextAiScan">--:--</span>
     </div>
   </div>
 
@@ -131,7 +141,8 @@
               </div>
               <div class="portfolio-balance">
                 <span class="label">START BAL:</span>
-                <span class="value" id="startBalance">2000</span>
+                <span class="value" id="startBalance">$2000</span>
+                <button class="reset-balance-btn" id="resetBalanceBtn" title="Reset to $2000">Reset</button>
               </div>
             </div>
 
@@ -199,6 +210,11 @@
               </div>
             </div>
             <div class="chart-body" id="tradingChart">
+              <div class="chart-legend">
+                <div class="legend-item"><span class="legend-dot ema20"></span>EMA 20</div>
+                <div class="legend-item"><span class="legend-dot ema50"></span>EMA 50</div>
+                <div class="legend-item"><span class="legend-dot ema200"></span>EMA 200</div>
+              </div>
               <div class="loading-state">
                 <div class="spinner"></div>
                 <span>Loading chart...</span>

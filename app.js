@@ -1,5 +1,6 @@
 /* ============================================
-   SENTIENT TRADER - AI Crypto Trading Intelligence v2.1
+   SENTIENT TRADER - AI Crypto Trading Intelligence v3.0
+   Powered by Claude AI
    ============================================ */
 
 // Configuration
@@ -7,7 +8,10 @@ const CONFIG = {
   BINANCE_API: 'https://fapi.binance.com',
   BYBIT_API: 'https://api.bybit.com',
   COINGECKO_API: 'https://api.coingecko.com/api/v3',
+  CLAUDE_API: 'https://api.anthropic.com/v1/messages',
+  CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
   SCAN_INTERVAL: 90000,
+  AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
   PNL_UPDATE_INTERVAL: 500,
   CACHE_TTL: 30000,
@@ -16,15 +20,46 @@ const CONFIG = {
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
-  TP_PERCENT: 2,
-  SL_PERCENT: 1
+  TP_PERCENT: 3, // Increased for better R/R
+  SL_PERCENT: 1,
+  MAX_OPEN_TRADES: 3, // Maximum concurrent AI trades
+  MAX_POSITION_SIZE_PERCENT: 25, // Max 25% of balance per trade
+  AI_MIN_CONFIDENCE: 75 // Minimum confidence for AI auto-trade
 };
+
+// Load API key from localStorage
+function loadApiKey() {
+  const savedKey = localStorage.getItem('claude_api_key');
+  if (savedKey) {
+    CONFIG.CLAUDE_API_KEY = savedKey;
+    return true;
+  }
+  return false;
+}
+
+// Prompt for API key
+function promptForApiKey() {
+  const key = prompt('Enter your Claude API Key to enable AI trading:\n\n(Get one at console.anthropic.com)\n\nLeave empty to skip AI features.');
+  if (key && key.trim().startsWith('sk-ant-')) {
+    CONFIG.CLAUDE_API_KEY = key.trim();
+    localStorage.setItem('claude_api_key', key.trim());
+    console.log('🔑 Claude API Key saved');
+    return true;
+  }
+  return false;
+}
+
+// Check if AI is configured
+function isAiConfigured() {
+  return CONFIG.CLAUDE_API_KEY && CONFIG.CLAUDE_API_KEY.startsWith('sk-ant-');
+}
 
 // State
 const state = {
   markets: [],
   signals: [],
   trades: [],
+  aiSignals: [], // AI-generated signals
   selectedSymbol: 'BTCUSDT',
   currentTimeframe: '240',
   balance: 2000,
@@ -34,6 +69,7 @@ const state = {
   klineCache: {},
   previousHighConfSignals: new Set(),
   isScanning: false,
+  isAiScanning: false,
   soundEnabled: true,
   showSR: true,
   showIndicators: false,
@@ -42,10 +78,14 @@ const state = {
   chart: null,
   candleSeries: null,
   volumeSeries: null,
+  srLines: [], // Support/Resistance price lines
   equityChart: null,
   equitySeries: null,
   wsConnection: null,
-  signalFilter: 'all'
+  signalFilter: 'all',
+  nextAiScanTime: null,
+  lastAiAnalysis: null,
+  aiAutoTradeEnabled: true
 };
 
 // Utility Functions
@@ -315,6 +355,411 @@ function findSupportResistance(candles, lookback = 50) {
   };
 
   return { supports: clusterLevels(swingLows), resistances: clusterLevels(swingHighs) };
+}
+
+// ============================================
+// CLAUDE AI SERVICE
+// ============================================
+
+async function callClaudeAPI(prompt) {
+  try {
+    const response = await fetch(CONFIG.CLAUDE_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CONFIG.CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      console.error('Claude API error:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.content[0].text;
+  } catch (error) {
+    console.error('Claude API call failed:', error);
+    return null;
+  }
+}
+
+function buildMarketAnalysisPrompt(marketData) {
+  return `You are an expert crypto perpetual futures trader. Analyze the following market data and provide trading recommendations.
+
+MARKET DATA:
+${marketData.map(m => `
+${m.symbol}:
+- Current Price: $${m.price}
+- 24h Change: ${m.change.toFixed(2)}%
+- 24h Volume: $${formatVolume(m.volume)}
+- RSI (14): ${m.rsi?.toFixed(1) || 'N/A'}
+- EMA20: $${m.ema20?.toFixed(2) || 'N/A'}
+- EMA50: $${m.ema50?.toFixed(2) || 'N/A'}
+- EMA200: $${m.ema200?.toFixed(2) || 'N/A'}
+- MACD Histogram: ${m.macdHistogram?.toFixed(4) || 'N/A'}
+- Bollinger Band Position: ${m.bbPosition || 'N/A'}
+- Support Levels: ${m.supports?.map(s => '$' + formatPrice(s)).join(', ') || 'N/A'}
+- Resistance Levels: ${m.resistances?.map(r => '$' + formatPrice(r)).join(', ') || 'N/A'}
+- ATR (14): ${m.atr?.toFixed(4) || 'N/A'}
+- Volume Trend: ${m.volumeTrend || 'N/A'}
+- Trend Direction: ${m.trend || 'N/A'}
+`).join('\n')}
+
+ANALYSIS REQUIREMENTS:
+1. Consider RSI extremes (oversold <30, overbought >70)
+2. Evaluate EMA alignments and crossovers
+3. Check MACD momentum and divergences
+4. Assess Bollinger Band breakouts or mean reversion
+5. Identify key support/resistance levels
+6. Consider volume confirmation
+7. Look for liquidation zones (typically 3-5% from current price in leveraged markets)
+8. Evaluate trend strength and potential reversals
+
+Respond ONLY with valid JSON in this exact format (no other text):
+{
+  "topPicks": [
+    {
+      "symbol": "SYMBOL",
+      "direction": "LONG or SHORT",
+      "confidence": 75-95,
+      "entry": price,
+      "takeProfit": price,
+      "stopLoss": price,
+      "reasoning": "Brief 1-2 sentence explanation",
+      "keyLevels": {
+        "majorSupport": price,
+        "majorResistance": price,
+        "liquidationZone": price
+      },
+      "riskScore": 1-10,
+      "timeHorizon": "4H to 1D"
+    }
+  ],
+  "marketSentiment": "BULLISH/BEARISH/NEUTRAL",
+  "marketCondition": "Brief market condition description",
+  "avoidList": ["symbols to avoid with reasons"]
+}
+
+Select the 2 BEST opportunities with highest probability setups. Be conservative with confidence scores.`;
+}
+
+async function runAiAnalysis() {
+  if (state.isAiScanning) return;
+
+  // Check if API key is configured
+  if (!isAiConfigured()) {
+    console.log('⚠️ Claude API key not configured. Skipping AI analysis.');
+    updateAiScanStatus('No API Key');
+    return;
+  }
+
+  state.isAiScanning = true;
+  console.log('🤖 Starting Claude AI market analysis...');
+  updateAiScanStatus('Analyzing...');
+
+  try {
+    // Gather enhanced market data for top 20 coins
+    const topMarkets = state.markets.slice(0, 20);
+    const enrichedData = [];
+
+    for (const market of topMarkets) {
+      const candles = await fetchKlines(market.symbol, '240', 200);
+      if (candles.length < 50) continue;
+
+      const closes = candles.map(c => c.close);
+      const rsi = calculateRSI(closes);
+      const ema20 = calculateEMA(closes, 20);
+      const ema50 = calculateEMA(closes, 50);
+      const ema200 = calculateEMA(closes, 200);
+      const macd = calculateMACD(closes);
+      const bb = calculateBollingerBands(closes);
+      const atr = calculateATR(candles);
+      const { supports, resistances } = findSupportResistance(candles);
+
+      // Volume analysis
+      const avgVolume = candles.slice(-20).reduce((a, c) => a + c.volume, 0) / 20;
+      const recentVolume = candles.slice(-5).reduce((a, c) => a + c.volume, 0) / 5;
+      const volumeTrend = recentVolume > avgVolume * 1.2 ? 'INCREASING' :
+                          recentVolume < avgVolume * 0.8 ? 'DECREASING' : 'STABLE';
+
+      // Trend analysis
+      const trend = ema20 > ema50 && ema50 > ema200 ? 'STRONG UPTREND' :
+                    ema20 < ema50 && ema50 < ema200 ? 'STRONG DOWNTREND' :
+                    ema20 > ema50 ? 'WEAK UPTREND' : 'WEAK DOWNTREND';
+
+      // BB position
+      const price = closes[closes.length - 1];
+      const bbPosition = price > bb.upper ? 'ABOVE UPPER' :
+                         price < bb.lower ? 'BELOW LOWER' :
+                         price > bb.middle ? 'UPPER HALF' : 'LOWER HALF';
+
+      enrichedData.push({
+        ...market,
+        rsi,
+        ema20,
+        ema50,
+        ema200,
+        macdHistogram: macd.histogram,
+        bb,
+        bbPosition,
+        atr,
+        supports,
+        resistances,
+        volumeTrend,
+        trend
+      });
+
+      await sleep(30); // Rate limiting
+    }
+
+    // Call Claude AI
+    const prompt = buildMarketAnalysisPrompt(enrichedData);
+    const aiResponse = await callClaudeAPI(prompt);
+
+    if (aiResponse) {
+      try {
+        // Parse JSON response
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const analysis = JSON.parse(jsonMatch[0]);
+          state.lastAiAnalysis = analysis;
+
+          // Convert AI picks to signals
+          if (analysis.topPicks && analysis.topPicks.length > 0) {
+            state.aiSignals = analysis.topPicks.map(pick => ({
+              symbol: pick.symbol,
+              direction: pick.direction,
+              confidence: pick.confidence,
+              entry: pick.entry,
+              tp: pick.takeProfit,
+              sl: pick.stopLoss,
+              riskReward: Math.abs(pick.takeProfit - pick.entry) / Math.abs(pick.entry - pick.stopLoss),
+              timeframe: 'AI',
+              reasons: [pick.reasoning],
+              isAiGenerated: true,
+              keyLevels: pick.keyLevels,
+              riskScore: pick.riskScore,
+              timestamp: Date.now()
+            }));
+
+            console.log('🤖 AI Analysis complete:', analysis.topPicks.length, 'picks');
+            console.log('📊 Market Sentiment:', analysis.marketSentiment);
+
+            // Auto-trade if enabled
+            if (state.aiAutoTradeEnabled) {
+              await executeAiTrades();
+            }
+          }
+        }
+      } catch (parseError) {
+        console.error('Failed to parse AI response:', parseError);
+      }
+    }
+  } catch (error) {
+    console.error('AI Analysis failed:', error);
+  }
+
+  state.isAiScanning = false;
+  state.nextAiScanTime = Date.now() + CONFIG.AI_SCAN_INTERVAL;
+  updateAiScanCountdown();
+  renderAlertBar();
+}
+
+async function executeAiTrades() {
+  const openTrades = state.trades.filter(t => t.status === 'open');
+
+  // Check if we can open more trades
+  if (openTrades.length >= CONFIG.MAX_OPEN_TRADES) {
+    console.log('🤖 Max open trades reached, skipping auto-trade');
+    return;
+  }
+
+  for (const signal of state.aiSignals) {
+    // Skip if already have a trade for this symbol
+    if (openTrades.some(t => t.symbol === signal.symbol)) continue;
+
+    // Only trade high confidence AI signals
+    if (signal.confidence < CONFIG.AI_MIN_CONFIDENCE) continue;
+
+    // Check if we have enough balance
+    const maxPositionSize = state.balance * CONFIG.MAX_POSITION_SIZE_PERCENT / 100;
+    const positionSize = Math.min(
+      (state.balance * CONFIG.RISK_PERCENT / 100) * CONFIG.LEVERAGE,
+      maxPositionSize * CONFIG.LEVERAGE
+    );
+
+    if (positionSize < 10) {
+      console.log('🤖 Insufficient balance for trade');
+      continue;
+    }
+
+    // Open the trade
+    const trade = {
+      id: Date.now(),
+      symbol: signal.symbol,
+      direction: signal.direction,
+      entry: signal.entry,
+      tp: signal.tp,
+      sl: signal.sl,
+      size: positionSize,
+      leverage: CONFIG.LEVERAGE,
+      timestamp: Date.now(),
+      status: 'open',
+      pnl: 0,
+      isAiTrade: true,
+      aiConfidence: signal.confidence,
+      aiReasoning: signal.reasons[0]
+    };
+
+    state.trades.push(trade);
+    console.log(`🤖 AI Auto-Trade opened: ${signal.direction} ${signal.symbol} @ $${formatPrice(signal.entry)}`);
+
+    showNotification({
+      ...signal,
+      isAutoTrade: true
+    });
+
+    saveTrades();
+
+    // Only open one trade per AI scan
+    break;
+  }
+
+  renderPositions();
+  renderHistory();
+  updatePortfolioStats();
+}
+
+function updateAiScanStatus(status) {
+  const scanEl = document.getElementById('nextAiScan');
+  if (scanEl) scanEl.textContent = status;
+}
+
+function updateAiScanCountdown() {
+  if (!state.nextAiScanTime) return;
+
+  const update = () => {
+    const remaining = Math.max(0, state.nextAiScanTime - Date.now());
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
+    const scanEl = document.getElementById('nextAiScan');
+    if (scanEl) {
+      scanEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+  };
+
+  update();
+  setInterval(update, 1000);
+}
+
+// ============================================
+// ADVANCED TECHNICAL ANALYSIS
+// ============================================
+
+function findTrendlines(candles, lookback = 50) {
+  if (candles.length < lookback) return { uptrends: [], downtrends: [] };
+
+  const recent = candles.slice(-lookback);
+  const highs = recent.map((c, i) => ({ price: c.high, index: i, time: c.time }));
+  const lows = recent.map((c, i) => ({ price: c.low, index: i, time: c.time }));
+
+  // Find swing highs and lows for trendlines
+  const swingHighs = [];
+  const swingLows = [];
+
+  for (let i = 2; i < recent.length - 2; i++) {
+    if (recent[i].high > recent[i-1].high && recent[i].high > recent[i-2].high &&
+        recent[i].high > recent[i+1].high && recent[i].high > recent[i+2].high) {
+      swingHighs.push({ price: recent[i].high, index: i, time: recent[i].time });
+    }
+    if (recent[i].low < recent[i-1].low && recent[i].low < recent[i-2].low &&
+        recent[i].low < recent[i+1].low && recent[i].low < recent[i+2].low) {
+      swingLows.push({ price: recent[i].low, index: i, time: recent[i].time });
+    }
+  }
+
+  // Calculate trendlines (slope between two most recent points)
+  const uptrends = [];
+  const downtrends = [];
+
+  if (swingLows.length >= 2) {
+    const recent2Lows = swingLows.slice(-2);
+    if (recent2Lows[1].price > recent2Lows[0].price) {
+      uptrends.push({
+        start: recent2Lows[0],
+        end: recent2Lows[1],
+        slope: (recent2Lows[1].price - recent2Lows[0].price) / (recent2Lows[1].index - recent2Lows[0].index)
+      });
+    }
+  }
+
+  if (swingHighs.length >= 2) {
+    const recent2Highs = swingHighs.slice(-2);
+    if (recent2Highs[1].price < recent2Highs[0].price) {
+      downtrends.push({
+        start: recent2Highs[0],
+        end: recent2Highs[1],
+        slope: (recent2Highs[1].price - recent2Highs[0].price) / (recent2Highs[1].index - recent2Highs[0].index)
+      });
+    }
+  }
+
+  return { uptrends, downtrends, swingHighs, swingLows };
+}
+
+function estimateLiquidationZones(price, leverage = 10) {
+  // Estimate liquidation zones for typical leveraged positions
+  // Long liquidation: price drops significantly
+  // Short liquidation: price rises significantly
+  const longLiquidation = price * (1 - (1 / leverage) * 0.9); // ~90% of liquidation price
+  const shortLiquidation = price * (1 + (1 / leverage) * 0.9);
+
+  return {
+    longLiquidationZone: { from: longLiquidation * 0.98, to: longLiquidation * 1.02 },
+    shortLiquidationZone: { from: shortLiquidation * 0.98, to: shortLiquidation * 1.02 }
+  };
+}
+
+function calculateVolumeProfile(candles, numBins = 20) {
+  if (candles.length < 10) return [];
+
+  const minPrice = Math.min(...candles.map(c => c.low));
+  const maxPrice = Math.max(...candles.map(c => c.high));
+  const binSize = (maxPrice - minPrice) / numBins;
+
+  const profile = [];
+  for (let i = 0; i < numBins; i++) {
+    profile.push({
+      priceFrom: minPrice + i * binSize,
+      priceTo: minPrice + (i + 1) * binSize,
+      volume: 0
+    });
+  }
+
+  for (const candle of candles) {
+    const avgPrice = (candle.high + candle.low) / 2;
+    const binIndex = Math.min(Math.floor((avgPrice - minPrice) / binSize), numBins - 1);
+    if (binIndex >= 0) {
+      profile[binIndex].volume += candle.volume;
+    }
+  }
+
+  // Find high volume nodes (HVN) and low volume nodes (LVN)
+  const maxVolume = Math.max(...profile.map(p => p.volume));
+  return profile.map(p => ({
+    ...p,
+    priceCenter: (p.priceFrom + p.priceTo) / 2,
+    isHVN: p.volume > maxVolume * 0.7,
+    isLVN: p.volume < maxVolume * 0.3
+  }));
 }
 
 // ============================================
@@ -657,6 +1102,40 @@ function initChart() {
     wickDownColor: '#f85149'
   });
 
+  // Add EMA lines (hidden by default, toggle with IND button)
+  state.ema20Series = state.chart.addLineSeries({
+    color: '#58a6ff',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    visible: false
+  });
+
+  state.ema50Series = state.chart.addLineSeries({
+    color: '#d29922',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    visible: false
+  });
+
+  state.ema200Series = state.chart.addLineSeries({
+    color: '#a371f7',
+    lineWidth: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    visible: false
+  });
+
+  // Hide legend by default
+  setTimeout(() => {
+    const legend = document.querySelector('.chart-legend');
+    if (legend) legend.style.display = 'none';
+  }, 100);
+
   state.volumeSeries = state.chart.addHistogramSeries({
     color: '#7c5cff',
     priceFormat: { type: 'volume' },
@@ -684,6 +1163,39 @@ async function loadChartData() {
     color: c.close >= c.open ? 'rgba(63, 185, 80, 0.3)' : 'rgba(248, 81, 73, 0.3)'
   })));
 
+  // Calculate and display EMAs
+  const closes = candles.map(c => c.close);
+
+  // EMA 20
+  const ema20Data = [];
+  let ema20 = closes.slice(0, 20).reduce((a, b) => a + b, 0) / 20;
+  for (let i = 20; i < candles.length; i++) {
+    ema20 = closes[i] * (2 / 21) + ema20 * (1 - 2 / 21);
+    ema20Data.push({ time: candles[i].time, value: ema20 });
+  }
+  if (state.ema20Series) state.ema20Series.setData(ema20Data);
+
+  // EMA 50
+  const ema50Data = [];
+  let ema50 = closes.slice(0, 50).reduce((a, b) => a + b, 0) / 50;
+  for (let i = 50; i < candles.length; i++) {
+    ema50 = closes[i] * (2 / 51) + ema50 * (1 - 2 / 51);
+    ema50Data.push({ time: candles[i].time, value: ema50 });
+  }
+  if (state.ema50Series) state.ema50Series.setData(ema50Data);
+
+  // EMA 200
+  const ema200Data = [];
+  if (closes.length >= 200) {
+    let ema200 = closes.slice(0, 200).reduce((a, b) => a + b, 0) / 200;
+    for (let i = 200; i < candles.length; i++) {
+      ema200 = closes[i] * (2 / 201) + ema200 * (1 - 2 / 201);
+      ema200Data.push({ time: candles[i].time, value: ema200 });
+    }
+    if (state.ema200Series) state.ema200Series.setData(ema200Data);
+  }
+
+  // Draw support/resistance lines
   if (state.showSR) {
     const { supports, resistances } = findSupportResistance(candles);
     updateChartLevels(supports, resistances, candles[candles.length - 1].close);
@@ -693,22 +1205,77 @@ async function loadChartData() {
 }
 
 function updateChartLevels(supports, resistances, currentPrice) {
+  // Update the side panel levels
   const container = document.getElementById('chartLevels');
-  if (!container) return;
-  container.innerHTML = '';
+  if (container) {
+    container.innerHTML = '';
 
-  const allLevels = [
-    ...resistances.map(p => ({ price: p, type: 'resistance' })),
-    { price: currentPrice, type: 'current' },
-    ...supports.map(p => ({ price: p, type: 'support' }))
-  ].sort((a, b) => b.price - a.price);
+    const allLevels = [
+      ...resistances.map(p => ({ price: p, type: 'resistance' })),
+      { price: currentPrice, type: 'current' },
+      ...supports.map(p => ({ price: p, type: 'support' }))
+    ].sort((a, b) => b.price - a.price);
 
-  for (const level of allLevels.slice(0, 5)) {
-    const marker = document.createElement('div');
-    marker.className = `level-marker ${level.type}`;
-    marker.textContent = formatPrice(level.price);
-    container.appendChild(marker);
+    for (const level of allLevels.slice(0, 5)) {
+      const marker = document.createElement('div');
+      marker.className = `level-marker ${level.type}`;
+      marker.textContent = formatPrice(level.price);
+      container.appendChild(marker);
+    }
   }
+
+  // Draw horizontal lines on the chart
+  drawSupportResistanceLines(supports, resistances);
+}
+
+function drawSupportResistanceLines(supports, resistances) {
+  if (!state.candleSeries) return;
+
+  // Remove existing price lines
+  if (state.srLines && state.srLines.length > 0) {
+    state.srLines.forEach(line => {
+      try {
+        state.candleSeries.removePriceLine(line);
+      } catch (e) {
+        // Line might already be removed
+      }
+    });
+  }
+  state.srLines = [];
+
+  if (!state.showSR) return;
+
+  // Draw resistance lines (red)
+  resistances.forEach((price, index) => {
+    const line = state.candleSeries.createPriceLine({
+      price: price,
+      color: '#f85149',
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `R${index + 1}`,
+      lineVisible: true,
+      axisLabelColor: '#f85149',
+      axisLabelTextColor: '#ffffff'
+    });
+    state.srLines.push(line);
+  });
+
+  // Draw support lines (green)
+  supports.forEach((price, index) => {
+    const line = state.candleSeries.createPriceLine({
+      price: price,
+      color: '#3fb950',
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `S${index + 1}`,
+      lineVisible: true,
+      axisLabelColor: '#3fb950',
+      axisLabelTextColor: '#ffffff'
+    });
+    state.srLines.push(line);
+  });
 }
 
 function updateChartPrice(price, change) {
@@ -853,19 +1420,27 @@ function renderAlertBar() {
   const container = document.getElementById('alertBarSignals');
   if (!container) return;
 
-  const highConfSignals = state.signals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE).slice(0, 5);
+  // Prioritize AI signals, then fall back to regular high confidence signals
+  let topSignals = [];
 
-  if (highConfSignals.length === 0) {
-    container.innerHTML = '<span class="muted">No high confidence signals</span>';
+  if (state.aiSignals && state.aiSignals.length > 0) {
+    topSignals = state.aiSignals.slice(0, 2);
+  } else {
+    topSignals = state.signals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE).slice(0, 2);
+  }
+
+  if (topSignals.length === 0) {
+    container.innerHTML = '<span class="muted">AI analyzing markets for top opportunities...</span>';
     return;
   }
 
-  container.innerHTML = highConfSignals.map(s => `
+  container.innerHTML = topSignals.map(s => `
     <div class="alert-signal" data-symbol="${s.symbol}">
       <span class="symbol">${s.symbol.replace('USDT', '')}</span>
       <span class="direction ${s.direction.toLowerCase()}">${s.direction}</span>
-      <span class="entry">Entry ${formatPrice(s.entry)}</span>
-      <span class="conf">Conf ${s.confidence}%</span>
+      <span class="entry">$${formatPrice(s.entry)}</span>
+      <span class="conf">${s.confidence}%</span>
+      ${s.isAiGenerated ? '<span class="ai-indicator">AI Pick</span>' : ''}
     </div>
   `).join('');
 
@@ -912,7 +1487,10 @@ function renderPositions() {
 
     return `
       <div class="position-item">
-        <span class="symbol">${t.symbol.replace('USDT', '')}</span>
+        <span class="symbol">
+          ${t.symbol.replace('USDT', '')}
+          ${t.isAiTrade ? '<span class="ai-trade-badge">🤖 AI</span>' : ''}
+        </span>
         <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
         <span class="entry">$${formatPrice(t.entry)}</span>
         <span class="current">$${formatPrice(currentPrice)}</span>
@@ -936,7 +1514,10 @@ function renderHistory() {
 
   container.innerHTML = closedTrades.map(t => `
     <div class="history-item">
-      <span class="symbol">${t.symbol.replace('USDT', '')}</span>
+      <span class="symbol">
+        ${t.symbol.replace('USDT', '')}
+        ${t.isAiTrade ? '<span class="ai-trade-badge">🤖</span>' : ''}
+      </span>
       <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
       <span class="entry">$${formatPrice(t.entry)}</span>
       <span class="exit">$${formatPrice(t.exitPrice)}</span>
@@ -1000,17 +1581,30 @@ function showNotification(signal) {
 
   const notification = document.createElement('div');
   notification.className = `notification ${signal.direction.toLowerCase()}`;
+
+  const isAutoTrade = signal.isAutoTrade || signal.isAiGenerated;
+  const icon = isAutoTrade ? '🤖' : (signal.direction === 'LONG' ? '📈' : '📉');
+  const title = isAutoTrade
+    ? `AI AUTO-TRADE: ${signal.symbol} ${signal.direction}`
+    : `${signal.symbol} ${signal.direction}`;
+
   notification.innerHTML = `
     <div class="notification-header">
-      <span class="notification-icon">${signal.direction === 'LONG' ? '📈' : '📉'}</span>
-      <span class="notification-title">${signal.symbol} ${signal.direction}</span>
+      <span class="notification-icon">${icon}</span>
+      <span class="notification-title">${title}</span>
       <button class="notification-close">&times;</button>
     </div>
     <div class="notification-body">
       <div class="notification-signal">
         <span class="notification-conf">Confidence: ${signal.confidence}%</span>
+        ${isAutoTrade ? '<span style="color: var(--purple); margin-left: 8px;">Position Opened</span>' : ''}
       </div>
-      <div class="notification-reason">${signal.reasons[0]}</div>
+      <div class="notification-reason">${signal.reasons ? signal.reasons[0] : 'AI Analysis'}</div>
+      ${isAutoTrade ? `
+        <div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">
+          Entry: $${formatPrice(signal.entry)} | TP: $${formatPrice(signal.tp)} | SL: $${formatPrice(signal.sl)}
+        </div>
+      ` : ''}
     </div>
   `;
 
@@ -1026,7 +1620,7 @@ function showNotification(signal) {
       notification.classList.add('closing');
       setTimeout(() => notification.remove(), 300);
     }
-  }, 8000);
+  }, isAutoTrade ? 12000 : 8000);
 }
 
 // ============================================
@@ -1051,6 +1645,36 @@ function loadTrades() {
   } catch (e) {
     console.error('Failed to load saved data:', e);
   }
+}
+
+function resetBalance() {
+  if (!confirm('Are you sure you want to reset your balance to $2000? This will close all open positions and clear trade history.')) {
+    return;
+  }
+
+  state.balance = 2000;
+  state.startBalance = 2000;
+  state.trades = [];
+  state.equityHistory = [{ time: Date.now(), value: 2000 }];
+  state.aiSignals = [];
+
+  saveTrades();
+  renderPositions();
+  renderHistory();
+  updatePortfolioStats();
+  updateEquityChart();
+
+  console.log('💰 Balance reset to $2000');
+
+  showNotification({
+    symbol: 'SYSTEM',
+    direction: 'LONG',
+    confidence: 100,
+    reasons: ['Balance reset to $2000. Ready to trade!'],
+    entry: 2000,
+    tp: 2000,
+    sl: 2000
+  });
 }
 
 // ============================================
@@ -1086,7 +1710,24 @@ function initEventListeners() {
     toggleSR.addEventListener('click', (e) => {
       e.target.classList.toggle('active');
       state.showSR = e.target.classList.contains('active');
-      loadChartData();
+
+      if (!state.showSR) {
+        // Remove S/R lines when toggled off
+        if (state.srLines && state.srLines.length > 0) {
+          state.srLines.forEach(line => {
+            try {
+              state.candleSeries.removePriceLine(line);
+            } catch (err) {}
+          });
+          state.srLines = [];
+        }
+        // Clear the level markers
+        const container = document.getElementById('chartLevels');
+        if (container) container.innerHTML = '';
+      } else {
+        // Reload chart data to show S/R lines
+        loadChartData();
+      }
     });
   }
 
@@ -1096,6 +1737,23 @@ function initEventListeners() {
       e.target.classList.toggle('active');
       state.showVolume = e.target.classList.contains('active');
       if (state.volumeSeries) state.volumeSeries.applyOptions({ visible: state.showVolume });
+    });
+  }
+
+  // Toggle indicators (EMAs)
+  const toggleIndicators = document.getElementById('toggleIndicators');
+  if (toggleIndicators) {
+    toggleIndicators.addEventListener('click', (e) => {
+      e.target.classList.toggle('active');
+      state.showIndicators = e.target.classList.contains('active');
+      const visible = state.showIndicators;
+      if (state.ema20Series) state.ema20Series.applyOptions({ visible });
+      if (state.ema50Series) state.ema50Series.applyOptions({ visible });
+      if (state.ema200Series) state.ema200Series.applyOptions({ visible });
+
+      // Toggle legend visibility
+      const legend = document.querySelector('.chart-legend');
+      if (legend) legend.style.display = visible ? 'flex' : 'none';
     });
   }
 
@@ -1130,7 +1788,50 @@ function initEventListeners() {
 
   // Refresh button
   const refreshBtn = document.getElementById('refreshBtn');
-  if (refreshBtn) refreshBtn.addEventListener('click', () => runScan());
+  if (refreshBtn) refreshBtn.addEventListener('click', () => {
+    runScan();
+    runAiAnalysis();
+  });
+
+  // Reset balance button
+  const resetBalanceBtn = document.getElementById('resetBalanceBtn');
+  if (resetBalanceBtn) resetBalanceBtn.addEventListener('click', resetBalance);
+
+  // Settings button - manage API key
+  const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      const currentKey = CONFIG.CLAUDE_API_KEY;
+      const hasKey = currentKey && currentKey.startsWith('sk-ant-');
+      const maskedKey = hasKey ? currentKey.slice(0, 12) + '...' + currentKey.slice(-4) : 'Not configured';
+
+      const action = prompt(
+        `Claude AI Settings\n\n` +
+        `Current API Key: ${maskedKey}\n` +
+        `AI Auto-Trade: ${state.aiAutoTradeEnabled ? 'Enabled' : 'Disabled'}\n\n` +
+        `Enter:\n` +
+        `- 'new' to enter a new API key\n` +
+        `- 'toggle' to toggle auto-trading\n` +
+        `- 'clear' to remove API key\n` +
+        `- Or press Cancel to close`
+      );
+
+      if (action === 'new') {
+        promptForApiKey();
+        if (isAiConfigured()) {
+          runAiAnalysis();
+        }
+      } else if (action === 'toggle') {
+        state.aiAutoTradeEnabled = !state.aiAutoTradeEnabled;
+        alert(`AI Auto-Trading: ${state.aiAutoTradeEnabled ? 'ENABLED' : 'DISABLED'}`);
+      } else if (action === 'clear') {
+        localStorage.removeItem('claude_api_key');
+        CONFIG.CLAUDE_API_KEY = '';
+        alert('API Key cleared. AI features disabled.');
+        updateAiScanStatus('No API Key');
+      }
+    });
+  }
 }
 
 // ============================================
@@ -1139,6 +1840,21 @@ function initEventListeners() {
 
 async function init() {
   loadTrades();
+
+  // Load or prompt for Claude API key
+  if (!loadApiKey()) {
+    console.log('⚠️ Claude API key not found. AI features will be disabled.');
+    // Prompt after a short delay so UI loads first
+    setTimeout(() => {
+      if (!isAiConfigured()) {
+        promptForApiKey();
+      }
+    }, 2000);
+  }
+
+  // Update balance display
+  const startBalEl = document.getElementById('startBalance');
+  if (startBalEl) startBalEl.textContent = '$' + state.startBalance.toFixed(0);
 
   state.markets = await fetchMarkets();
   renderMarkets();
@@ -1151,13 +1867,34 @@ async function init() {
   initWebSocket();
   initEventListeners();
 
+  // Run initial scans
   runScan();
 
+  // Start regular scan interval
   setInterval(runScan, CONFIG.SCAN_INTERVAL);
   setInterval(updateOpenPositions, CONFIG.PNL_UPDATE_INTERVAL);
   setInterval(renderMarkets, 2000);
 
-  console.log('Sentient Trader initialized');
+  // Initialize AI scanning with 10-minute interval
+  console.log('🤖 Claude AI Trading System initialized');
+  console.log('💰 Starting balance: $' + state.balance.toFixed(2));
+  console.log('📊 AI will scan every 10 minutes');
+
+  // Run first AI analysis after initial data is loaded
+  setTimeout(() => {
+    if (isAiConfigured()) {
+      runAiAnalysis();
+    }
+  }, 5000);
+
+  // Set up 10-minute AI scan interval
+  setInterval(runAiAnalysis, CONFIG.AI_SCAN_INTERVAL);
+
+  // Initialize countdown
+  state.nextAiScanTime = Date.now() + 5000; // First scan in 5 seconds
+  updateAiScanCountdown();
+
+  console.log('Sentient Trader v3.0 - AI Enhanced - initialized');
 }
 
 document.addEventListener('DOMContentLoaded', init);
