@@ -2908,3 +2908,147 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+
+/* ============================================
+   EXPORT BUTTONS
+   ============================================ */
+
+.export-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.export-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.export-btn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ============================================
+   RISK MANAGEMENT
+   ============================================ */
+
+.risk-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.risk-meter {
+  height: 8px;
+  background: var(--bg-dark);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.risk-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.risk-meter-fill.low { background: var(--green); }
+.risk-meter-fill.medium { background: var(--yellow); }
+.risk-meter-fill.high { background: var(--red); }
+
+.risk-limit {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.risk-limit .current { color: var(--text); font-weight: 600; }
+.risk-limit .limit { color: var(--text-secondary); }
+
+/* Signal Decay Warning */
+.signal-decay {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid var(--yellow);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 10px;
+  color: var(--yellow);
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.decay-icon { font-size: 12px; }
+.decay-text { flex: 1; }
+.decay-time { font-weight: 700; }
+
+/* Funding Rate Alert */
+.funding-alert {
+  background: rgba(57, 197, 207, 0.15);
+  border: 1px solid var(--cyan);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+
+.funding-alert.extreme-long {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: var(--red);
+}
+
+.funding-alert.extreme-short {
+  background: rgba(63, 185, 80, 0.15);
+  border-color: var(--green);
+}
+
+.funding-rate-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.funding-rate-value.positive { color: var(--green); }
+.funding-rate-value.negative { color: var(--red); }
+
+/* Market Regime Indicator */
+.regime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.regime-badge.trending-up {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.regime-badge.trending-down {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.regime-badge.ranging {
+  background: var(--yellow-dim);
+  color: var(--yellow);
+}
+
+.regime-badge.volatile {
+  background: var(--purple-dim);
+  color: var(--purple);
+}

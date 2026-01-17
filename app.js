@@ -2630,6 +2630,74 @@ function renderMarkets() {
   });
 }
 
+// Signal decay warning - shown when signal is getting old
+function getSignalDecayWarning(signal) {
+  const ageMinutes = (Date.now() - signal.timestamp) / 60000;
+
+  if (ageMinutes < 30) return '';
+
+  const decayLevel = ageMinutes < 60 ? 'moderate' : 'high';
+  const confReduction = ageMinutes < 60 ? '5-10%' : '15-25%';
+
+  return `
+    <div class="signal-decay ${decayLevel}">
+      <span class="decay-icon">⏳</span>
+      <span class="decay-text">Signal aging - confidence may be ${confReduction} lower</span>
+      <span class="decay-time">${Math.floor(ageMinutes)}m ago</span>
+    </div>
+  `;
+}
+
+// Funding rate alert - shown when funding is extreme
+function getFundingRateAlert(symbol) {
+  const fundingRate = state.fundingRates[symbol];
+  if (!fundingRate) return '';
+
+  const rate = parseFloat(fundingRate);
+  const isExtreme = Math.abs(rate) > 0.1; // 0.1% threshold
+
+  if (!isExtreme) return '';
+
+  const direction = rate > 0 ? 'extreme-long' : 'extreme-short';
+  const implication = rate > 0
+    ? '🔻 Longs paying shorts - potential short squeeze'
+    : '🔺 Shorts paying longs - potential long squeeze';
+
+  return `
+    <div class="funding-alert ${direction}">
+      <div class="funding-header">
+        <span class="funding-label">⚡ Extreme Funding</span>
+        <span class="funding-rate-value ${rate > 0 ? 'positive' : 'negative'}">${rate > 0 ? '+' : ''}${(rate * 100).toFixed(4)}%</span>
+      </div>
+      <div class="funding-implication">${implication}</div>
+    </div>
+  `;
+}
+
+// Market regime detection
+function detectMarketRegime(candles) {
+  if (!candles || candles.length < 50) return 'UNKNOWN';
+
+  const closes = candles.map(c => c.close);
+  const ema20 = calculateEMA(closes, 20);
+  const ema50 = calculateEMA(closes, 50);
+  const atr = calculateATR(candles);
+
+  const price = closes[closes.length - 1];
+  const avgPrice = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const volatility = (atr / avgPrice) * 100;
+
+  // High volatility = volatile market
+  if (volatility > 5) return 'VOLATILE';
+
+  // Strong trends
+  if (ema20 > ema50 * 1.02) return 'TRENDING_UP';
+  if (ema20 < ema50 * 0.98) return 'TRENDING_DOWN';
+
+  // Otherwise ranging
+  return 'RANGING';
+}
+
 function renderSignals() {
   const container = document.getElementById('signalsList');
   if (!container) return;
@@ -2816,12 +2884,14 @@ function renderSignals() {
         </div>
         ` : ''}
       </div>
+      ${getSignalDecayWarning(signal)}
+      ${getFundingRateAlert(signal.symbol)}
       <div class="signal-footer">
         <div class="footer-stat"><div class="label">Risk ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
         <div class="footer-stat"><div class="label">Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
         <div class="footer-stat">
           <div class="label">Status</div>
-          <div class="value ${hasOpenTrade ? 'green' : signal.isConsensus ? 'gold' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isConsensus ? '🎯 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
+          <div class="value ${hasOpenTrade ? 'green' : signal.isGoldConsensus ? 'gold' : signal.isSilverConsensus ? 'silver' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isGoldConsensus ? '🥇 Gold' : signal.isSilverConsensus ? '🥈 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
         </div>
       </div>
     </div>
@@ -3055,6 +3125,89 @@ function renderAiPredictions() {
       </div>
     `;
   }).join('');
+}
+
+// ============================================
+// TRADE JOURNAL EXPORT
+// ============================================
+
+function exportToCSV() {
+  const trades = state.trades;
+  const stats = state.performanceStats;
+
+  if (trades.length === 0) {
+    alert('No trades to export');
+    return;
+  }
+
+  // CSV header
+  const headers = [
+    'Date', 'Symbol', 'Direction', 'Entry', 'Exit', 'Size', 'PnL', 'PnL%',
+    'Status', 'AI Sources', 'Confidence', 'Gold Consensus', 'Reasoning'
+  ];
+
+  // CSV rows
+  const rows = trades.map(t => [
+    new Date(t.timestamp).toISOString(),
+    t.symbol,
+    t.direction,
+    t.entry,
+    t.exit || '',
+    t.size,
+    t.pnl?.toFixed(2) || '',
+    t.pnlPercent?.toFixed(2) || '',
+    t.status,
+    t.aiSources?.join('+') || 'manual',
+    t.confidence || '',
+    t.isGoldConsensus ? 'Yes' : 'No',
+    (t.reasons || []).join(' | ').replace(/,/g, ';')
+  ]);
+
+  // Add summary at the end
+  rows.push([]);
+  rows.push(['=== PERFORMANCE SUMMARY ===']);
+  rows.push(['Total Trades', stats.totalTrades]);
+  rows.push(['Win Rate', ((stats.winningTrades / stats.totalTrades) * 100 || 0).toFixed(1) + '%']);
+  rows.push(['Total PnL', '$' + stats.totalPnL.toFixed(2)]);
+  rows.push(['Claude Signals', stats.claudeSignals]);
+  rows.push(['OpenAI Signals', stats.openaiSignals]);
+  rows.push(['Grok Signals', stats.grokSignals]);
+  rows.push(['Gold Consensus', stats.goldConsensusSignals]);
+  rows.push(['Silver Consensus', stats.silverConsensusSignals]);
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  downloadFile(csv, 'sentient-trades-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv');
+}
+
+function exportToJSON() {
+  const data = {
+    exportDate: new Date().toISOString(),
+    trades: state.trades,
+    aiSignals: state.aiSignals,
+    aiPredictions: state.aiPredictions,
+    performanceStats: state.performanceStats,
+    config: {
+      minConfidence: CONFIG.AI_MIN_CONFIDENCE,
+      alertConfidence: CONFIG.ALERT_CONFIDENCE,
+      leverage: CONFIG.LEVERAGE,
+      riskPercent: CONFIG.RISK_PERCENT
+    }
+  };
+
+  const json = JSON.stringify(data, null, 2);
+  downloadFile(json, 'sentient-journal-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
+}
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ============================================
@@ -3638,6 +3791,10 @@ function initEventListeners() {
 
   // Settings modal handlers
   initSettingsModal();
+
+  // Export buttons
+  document.getElementById('exportCsvBtn')?.addEventListener('click', exportToCSV);
+  document.getElementById('exportJsonBtn')?.addEventListener('click', exportToJSON);
 }
 
 // ============================================
