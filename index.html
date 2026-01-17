@@ -3,32 +3,94 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Perp Signals — Prototype</title>
+  <title>AI Perp Signals - Crypto Trading Intelligence</title>
   <link rel="stylesheet" href="styles.css" />
+  <!-- TradingView Widget -->
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
+  <!-- Audio for alerts -->
+  <audio id="alertSound" preload="auto">
+    <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
+  </audio>
+
+  <!-- Signal Alert Notification -->
+  <div class="notification-container" id="notificationContainer"></div>
+
   <header class="topbar">
     <div class="brand">
-      <div class="logo">PS</div>
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
       <div class="brand-text">
-        <div class="brand-title">Perp Signals</div>
-        <div class="brand-sub">Top 50 perps • multi-timeframe • confidence scoring</div>
+        <div class="brand-title">AI Perp Signals</div>
+        <div class="brand-sub">Top 50 Perps | Multi-Timeframe | AI-Powered</div>
       </div>
     </div>
 
     <nav class="tabs" aria-label="Primary navigation">
-      <button class="tab active" data-view="dashboard">Dashboard</button>
-      <button class="tab" data-view="signals">Signals</button>
-      <button class="tab" data-view="charts">Charts</button>
-      <button class="tab" data-view="pnl">PnL</button>
+      <button class="tab active" data-view="dashboard">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        Dashboard
+      </button>
+      <button class="tab" data-view="signals">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        Signals
+      </button>
+      <button class="tab" data-view="charts">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+        Charts
+      </button>
+      <button class="tab" data-view="pnl">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="1" x2="12" y2="23"/>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+        PnL
+      </button>
     </nav>
 
     <div class="topbar-actions">
-      <div class="pill" title="Scan cadence (prototype)">
+      <div class="pill live-indicator" id="connectionStatus">
         <span class="dot live"></span>
-        <span id="scanStatus">Scanning every 2m</span>
+        <span>Live</span>
       </div>
-      <button class="btn ghost" id="mockRescanBtn">Mock Rescan</button>
+      <div class="pill" title="AI Scan Status">
+        <span class="dot scanning" id="scanDot"></span>
+        <span id="scanStatus">Next scan: <strong id="scanCountdown">02:00</strong></span>
+      </div>
+      <button class="btn" id="forceScanBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+        Force Scan
+      </button>
+      <label class="toggle-label">
+        <input type="checkbox" id="soundToggle" checked />
+        <span class="toggle-text">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+        </span>
+      </label>
     </div>
   </header>
 
@@ -38,29 +100,42 @@
       <div class="card">
         <div class="card-head">
           <div>
-            <h3 class="card-title">Markets (Top 50)</h3>
-            <p class="muted">Sorted by volume (mock)</p>
+            <h3 class="card-title">Top 50 Perps</h3>
+            <p class="muted">Live from Binance Futures</p>
           </div>
-          <span class="badge">50</span>
+          <span class="badge live-badge">
+            <span class="pulse-dot"></span>
+            LIVE
+          </span>
         </div>
 
         <div class="field">
-          <label class="label" for="marketSearch">Search</label>
-          <input id="marketSearch" class="input" placeholder="BTC, ETH, SOL…" />
+          <label class="label" for="marketSearch">Search Coins</label>
+          <div class="search-input-wrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input id="marketSearch" class="input search-input" placeholder="BTC, ETH, SOL..." />
+          </div>
         </div>
 
         <div class="market-list" id="marketList" role="listbox" aria-label="Market list">
-          <!-- injected by JS -->
+          <div class="loading-spinner">
+            <div class="spinner"></div>
+            <span>Loading markets...</span>
+          </div>
         </div>
       </div>
 
       <div class="card">
-        <h3 class="card-title">Filters</h3>
+        <h3 class="card-title">Signal Filters</h3>
 
         <div class="grid-2">
           <div class="field">
             <label class="label" for="tfSelect">Timeframe</label>
             <select id="tfSelect" class="select">
+              <option value="all">All TF</option>
               <option value="5m">5m</option>
               <option value="15m" selected>15m</option>
               <option value="1h">1h</option>
@@ -72,23 +147,47 @@
             <label class="label" for="dirSelect">Direction</label>
             <select id="dirSelect" class="select">
               <option value="all" selected>All</option>
-              <option value="long">Long</option>
-              <option value="short">Short</option>
+              <option value="long">Long Only</option>
+              <option value="short">Short Only</option>
             </select>
           </div>
         </div>
 
         <div class="field">
           <label class="label" for="minConf">Min Confidence</label>
-          <input id="minConf" class="range" type="range" min="0" max="100" value="70" />
+          <input id="minConf" class="range" type="range" min="0" max="100" value="60" />
           <div class="range-row">
-            <span class="muted">0</span>
-            <span class="pill" id="minConfPill">70%</span>
-            <span class="muted">100</span>
+            <span class="muted">0%</span>
+            <span class="pill conf-pill" id="minConfPill">60%</span>
+            <span class="muted">100%</span>
           </div>
         </div>
 
-        <button class="btn" id="applyFilters">Apply filters</button>
+        <button class="btn full-width" id="applyFilters">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+          </svg>
+          Apply Filters
+        </button>
+      </div>
+
+      <!-- Live Alerts Panel -->
+      <div class="card alerts-card">
+        <div class="card-head">
+          <h3 class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+            Live Alerts
+          </h3>
+          <button class="btn ghost small" id="clearAlerts">Clear</button>
+        </div>
+        <div class="alerts-list" id="alertsList">
+          <div class="empty-state small">
+            <span class="muted">Waiting for signals...</span>
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -98,65 +197,115 @@
       <div class="view active" id="view-dashboard">
         <div class="hero">
           <div class="hero-left">
-            <h1>Market Overview</h1>
+            <h1>AI Trading Dashboard</h1>
             <p class="muted">
-              Live prototype UI. Your backend will fill these cards with real perps,
-              indicator states, and setups found every scan cycle.
+              Real-time AI-powered analysis of top 50 perpetual futures.
+              Signals generated using RSI, MACD, EMA200, support/resistance levels.
             </p>
 
             <div class="kpis">
               <div class="kpi">
-                <div class="kpi-label">Active setups</div>
-                <div class="kpi-value" id="kpiSetups">12</div>
-                <div class="kpi-sub muted">Across all timeframes</div>
+                <div class="kpi-icon green">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                  </svg>
+                </div>
+                <div class="kpi-content">
+                  <div class="kpi-label">Active Setups</div>
+                  <div class="kpi-value" id="kpiSetups">0</div>
+                  <div class="kpi-sub muted">Across all timeframes</div>
+                </div>
               </div>
               <div class="kpi">
-                <div class="kpi-label">80%+ signals</div>
-                <div class="kpi-value" id="kpiHigh">4</div>
-                <div class="kpi-sub muted">Paper trade eligible</div>
+                <div class="kpi-icon purple">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
+                <div class="kpi-content">
+                  <div class="kpi-label">High Confidence (80%+)</div>
+                  <div class="kpi-value" id="kpiHigh">0</div>
+                  <div class="kpi-sub muted">Auto-trade eligible</div>
+                </div>
               </div>
               <div class="kpi">
-                <div class="kpi-label">Next scan</div>
-                <div class="kpi-value" id="kpiNextScan">01:34</div>
-                <div class="kpi-sub muted">Mock countdown</div>
+                <div class="kpi-icon blue">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </div>
+                <div class="kpi-content">
+                  <div class="kpi-label">Next AI Scan</div>
+                  <div class="kpi-value" id="kpiNextScan">02:00</div>
+                  <div class="kpi-sub muted">Scans every 2 minutes</div>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="hero-right card">
+          <div class="hero-right card selected-card">
             <div class="card-head">
               <h3 class="card-title">Selected Market</h3>
-              <span class="badge" id="selectedSymbolBadge">BTCUSDT</span>
+              <span class="badge symbol-badge" id="selectedSymbolBadge">BTCUSDT</span>
             </div>
             <div class="split">
               <div>
                 <div class="muted">Trend</div>
-                <div class="big" id="selectedTrend">Bullish</div>
+                <div class="trend-display" id="selectedTrend">
+                  <span class="trend-icon up">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="19" x2="12" y2="5"/>
+                      <polyline points="5 12 12 5 19 12"/>
+                    </svg>
+                  </span>
+                  Bullish
+                </div>
               </div>
               <div>
-                <div class="muted">Last signal</div>
-                <div class="big" id="selectedSignalDir">LONG</div>
+                <div class="muted">Signal</div>
+                <div class="signal-display long" id="selectedSignalDir">LONG</div>
+              </div>
+              <div>
+                <div class="muted">Price</div>
+                <div class="price-display" id="selectedPrice">$0.00</div>
               </div>
             </div>
 
             <div class="mini">
               <div class="mini-row">
                 <span class="muted">Confidence</span>
-                <span class="pill" id="selectedConfPill">84%</span>
+                <span class="pill conf-display" id="selectedConfPill">0%</span>
               </div>
               <div class="progress" aria-label="Confidence bar">
-                <div class="progress-bar" id="selectedConfBar" style="width:84%"></div>
+                <div class="progress-bar" id="selectedConfBar" style="width:0%"></div>
               </div>
 
-              <ul class="bullets" id="selectedTldr">
-                <li>Price above EMA200 on 1h</li>
-                <li>MACD cross up, momentum building</li>
-                <li>Reclaimed prior resistance → support</li>
-              </ul>
+              <div class="tldr-section">
+                <div class="tldr-label">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                  </svg>
+                  Why this signal?
+                </div>
+                <ul class="bullets" id="selectedTldr">
+                  <li>Waiting for analysis...</li>
+                </ul>
+              </div>
 
               <div class="cta-row">
-                <button class="btn" data-nav="charts">Open Chart</button>
-                <button class="btn ghost" data-nav="signals">View Signals</button>
+                <button class="btn" data-nav="charts">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"/>
+                    <line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/>
+                  </svg>
+                  Open Chart
+                </button>
+                <button class="btn ghost" data-nav="signals">View All Signals</button>
               </div>
             </div>
           </div>
@@ -165,22 +314,34 @@
         <div class="grid-2-wide">
           <div class="card">
             <div class="card-head">
-              <h3 class="card-title">Top Signals (by confidence)</h3>
-              <button class="btn ghost small" data-nav="signals">All signals</button>
+              <h3 class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+                Top Signals by Confidence
+              </h3>
+              <button class="btn ghost small" data-nav="signals">View All</button>
             </div>
             <div class="table-wrap">
               <table class="table" id="topSignalsTable">
                 <thead>
                   <tr>
                     <th>Coin</th>
-                    <th>Dir</th>
-                    <th>TF</th>
-                    <th>Conf</th>
-                    <th>Why</th>
+                    <th>Direction</th>
+                    <th>Timeframe</th>
+                    <th>Confidence</th>
+                    <th>Key Reason</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <!-- injected -->
+                  <tr>
+                    <td colspan="5" class="empty-cell">
+                      <div class="loading-spinner small">
+                        <div class="spinner"></div>
+                        <span>Analyzing markets...</span>
+                      </div>
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -188,27 +349,41 @@
 
           <div class="card">
             <div class="card-head">
-              <h3 class="card-title">Paper Account Snapshot</h3>
-              <button class="btn ghost small" data-nav="pnl">PnL tab</button>
+              <h3 class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"/>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+                Paper Trading Account
+              </h3>
+              <button class="btn ghost small" data-nav="pnl">Full PnL</button>
             </div>
 
             <div class="pnl-cards">
-              <div class="pnl-card">
+              <div class="pnl-card balance">
+                <div class="pnl-icon">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                    <line x1="1" y1="10" x2="23" y2="10"/>
+                  </svg>
+                </div>
                 <div class="muted">Balance</div>
-                <div class="big" id="paperBalance">$2,143.20</div>
+                <div class="big" id="paperBalance">$2,000.00</div>
               </div>
               <div class="pnl-card">
-                <div class="muted">Open positions</div>
-                <div class="big" id="openPositions">2</div>
+                <div class="muted">Open Positions</div>
+                <div class="big" id="openPositions">0</div>
               </div>
               <div class="pnl-card">
-                <div class="muted">Win rate</div>
-                <div class="big" id="winRate">57%</div>
+                <div class="muted">Win Rate</div>
+                <div class="big" id="winRate">0%</div>
               </div>
             </div>
 
-            <div class="muted" style="margin-top:10px;">Recent trades (mock)</div>
-            <div class="table-wrap">
+            <div class="divider"></div>
+
+            <div class="muted" style="margin-bottom:8px;">Recent Trades</div>
+            <div class="table-wrap compact">
               <table class="table compact" id="recentTradesTable">
                 <thead>
                   <tr>
@@ -219,7 +394,9 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <!-- injected -->
+                  <tr>
+                    <td colspan="4" class="empty-cell muted">No trades yet</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -231,12 +408,52 @@
       <div class="view" id="view-signals">
         <div class="view-head">
           <div>
-            <h2>Signals</h2>
-            <p class="muted">Filtered list of setups detected on the last scan cycle.</p>
+            <h2>AI Trading Signals</h2>
+            <p class="muted">Real-time signals from AI analysis. Updated every 2 minutes.</p>
           </div>
           <div class="view-actions">
-            <button class="btn ghost" id="exportMock">Export (mock)</button>
-            <button class="btn" id="paperTradeMock">Paper trade 80%+</button>
+            <button class="btn ghost" id="exportSignals">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export
+            </button>
+            <button class="btn" id="autoTradeBtn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+              Auto-Trade 80%+
+            </button>
+          </div>
+        </div>
+
+        <div class="signals-stats">
+          <div class="stat-pill">
+            <span class="muted">Total Signals:</span>
+            <strong id="totalSignals">0</strong>
+          </div>
+          <div class="stat-pill long">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="19" x2="12" y2="5"/>
+              <polyline points="5 12 12 5 19 12"/>
+            </svg>
+            Long: <strong id="longSignals">0</strong>
+          </div>
+          <div class="stat-pill short">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <polyline points="19 12 12 19 5 12"/>
+            </svg>
+            Short: <strong id="shortSignals">0</strong>
+          </div>
+          <div class="stat-pill high-conf">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            80%+: <strong id="highConfSignals">0</strong>
           </div>
         </div>
 
@@ -247,14 +464,21 @@
                 <tr>
                   <th>Coin</th>
                   <th>Direction</th>
-                  <th>TF</th>
+                  <th>Timeframe</th>
                   <th>Confidence</th>
-                  <th>TL;DR</th>
-                  <th></th>
+                  <th>Analysis Summary</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                <!-- injected -->
+                <tr>
+                  <td colspan="6" class="empty-cell">
+                    <div class="loading-spinner">
+                      <div class="spinner"></div>
+                      <span>Scanning for signals...</span>
+                    </div>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -265,92 +489,146 @@
       <div class="view" id="view-charts">
         <div class="view-head">
           <div>
-            <h2>Charts</h2>
-            <p class="muted">
-              Chart panel placeholder. Your backend will feed candles + computed drawings
-              (S/R lines, trendlines) per timeframe.
-            </p>
+            <h2>Interactive Charts</h2>
+            <p class="muted">TradingView charts with AI-detected support/resistance levels.</p>
           </div>
           <div class="view-actions">
-            <div class="pill">
-              <span class="dot"></span>
+            <div class="pill symbol-pill">
+              <span class="pulse-dot"></span>
               <span id="chartSymbol">BTCUSDT</span>
             </div>
-            <button class="btn ghost" id="toggleDrawings">Toggle drawings</button>
+            <button class="btn ghost" id="toggleDrawings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              Toggle Levels
+            </button>
           </div>
         </div>
 
-        <div class="grid-2-wide">
-          <div class="card chart-card">
-            <div class="chart-top">
-              <div class="chart-tabs">
-                <button class="chip active" data-chart-tf="15m">15m</button>
-                <button class="chip" data-chart-tf="1h">1h</button>
-                <button class="chip" data-chart-tf="4h">4h</button>
-              </div>
-              <div class="chart-legend">
-                <span class="legend-item"><span class="swatch"></span> Support</span>
-                <span class="legend-item"><span class="swatch"></span> Resistance</span>
-                <span class="legend-item"><span class="swatch"></span> Trendline</span>
-              </div>
-            </div>
-
-            <div class="chart-placeholder" id="chartPlaceholder" aria-label="Chart placeholder">
-              <div class="chart-grid">
-                <div class="line h"></div><div class="line h"></div><div class="line h"></div>
-                <div class="line v"></div><div class="line v"></div><div class="line v"></div>
-              </div>
-
-              <div class="overlay" id="drawingsOverlay">
-                <div class="sr-line resistance" style="top:18%"></div>
-                <div class="sr-line resistance" style="top:32%"></div>
-                <div class="sr-line support" style="top:68%"></div>
-                <div class="trendline" style="left:18%; top:70%; width:60%; transform:rotate(-18deg)"></div>
-
-                <div class="signal-marker long" style="left:64%; top:52%">
-                  <span>LONG 84%</span>
+        <div class="chart-layout">
+          <div class="chart-main">
+            <div class="card chart-card">
+              <div class="chart-top">
+                <div class="chart-tabs">
+                  <button class="chip active" data-chart-tf="15">15m</button>
+                  <button class="chip" data-chart-tf="60">1H</button>
+                  <button class="chip" data-chart-tf="240">4H</button>
+                  <button class="chip" data-chart-tf="D">1D</button>
+                </div>
+                <div class="chart-legend">
+                  <span class="legend-item"><span class="swatch support"></span> Support</span>
+                  <span class="legend-item"><span class="swatch resistance"></span> Resistance</span>
+                  <span class="legend-item"><span class="swatch ema"></span> EMA 200</span>
                 </div>
               </div>
 
-              <div class="chart-center">
-                <div class="muted">TradingView / Lightweight Charts goes here</div>
-                <div class="big">Chart Placeholder</div>
+              <div class="tradingview-container" id="tradingviewChart">
+                <div class="loading-spinner">
+                  <div class="spinner"></div>
+                  <span>Loading TradingView chart...</span>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="stack">
+          <div class="chart-sidebar">
             <div class="card">
-              <h3 class="card-title">Indicator Snapshot</h3>
-              <div class="kv">
-                <div class="kv-row">
-                  <span class="muted">RSI</span>
-                  <strong id="rsiVal">58.2</strong>
+              <h3 class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                Technical Indicators
+              </h3>
+              <div class="indicators-grid">
+                <div class="indicator-item">
+                  <div class="indicator-label">RSI (14)</div>
+                  <div class="indicator-value" id="rsiVal">--</div>
+                  <div class="indicator-bar">
+                    <div class="indicator-fill rsi" id="rsiFill" style="width:50%"></div>
+                    <div class="indicator-markers">
+                      <span class="marker" style="left:30%">30</span>
+                      <span class="marker" style="left:70%">70</span>
+                    </div>
+                  </div>
                 </div>
-                <div class="kv-row">
-                  <span class="muted">EMA200</span>
-                  <strong id="emaVal">Above</strong>
+                <div class="indicator-item">
+                  <div class="indicator-label">EMA 200</div>
+                  <div class="indicator-value" id="emaVal">--</div>
+                  <div class="indicator-status" id="emaStatus">
+                    <span class="status-dot"></span>
+                    <span>Calculating...</span>
+                  </div>
                 </div>
-                <div class="kv-row">
-                  <span class="muted">MACD</span>
-                  <strong id="macdVal">Cross Up</strong>
+                <div class="indicator-item">
+                  <div class="indicator-label">MACD</div>
+                  <div class="indicator-value" id="macdVal">--</div>
+                  <div class="indicator-status" id="macdStatus">
+                    <span class="status-dot"></span>
+                    <span>Calculating...</span>
+                  </div>
                 </div>
               </div>
             </div>
 
             <div class="card">
-              <h3 class="card-title">Setup Explanation</h3>
-              <div class="pill-row">
-                <span class="pill green">Bullish</span>
-                <span class="pill">Conf: <span id="chartConf">84%</span></span>
-                <span class="pill">TF: <span id="chartTF">15m</span></span>
+              <h3 class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="16" x2="12" y2="12"/>
+                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                AI Analysis
+              </h3>
+              <div class="analysis-header">
+                <span class="pill direction-pill" id="chartDirection">LONG</span>
+                <span class="pill conf-pill" id="chartConfPill">0%</span>
               </div>
-              <ul class="bullets" id="chartTldr">
-                <li>Price holding above EMA200 (1h)</li>
-                <li>MACD histogram rising, momentum improving</li>
-                <li>Re-test of resistance turned support</li>
-              </ul>
-              <button class="btn" id="addWatchMock">Add to watchlist (mock)</button>
+              <div class="progress" style="margin:10px 0;">
+                <div class="progress-bar" id="chartConfBar" style="width:0%"></div>
+              </div>
+              <div class="tldr-section">
+                <div class="tldr-label">Signal Reasoning:</div>
+                <ul class="bullets" id="chartTldr">
+                  <li>Waiting for analysis...</li>
+                </ul>
+              </div>
+              <button class="btn full-width" id="paperTradeBtn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"/>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+                Paper Trade This Signal
+              </button>
+            </div>
+
+            <div class="card">
+              <h3 class="card-title">Key Levels</h3>
+              <div class="levels-list" id="levelsList">
+                <div class="level-item resistance">
+                  <span class="level-type">R2</span>
+                  <span class="level-price" id="r2Price">--</span>
+                </div>
+                <div class="level-item resistance">
+                  <span class="level-type">R1</span>
+                  <span class="level-price" id="r1Price">--</span>
+                </div>
+                <div class="level-item current">
+                  <span class="level-type">NOW</span>
+                  <span class="level-price" id="currentPrice">--</span>
+                </div>
+                <div class="level-item support">
+                  <span class="level-type">S1</span>
+                  <span class="level-price" id="s1Price">--</span>
+                </div>
+                <div class="level-item support">
+                  <span class="level-type">S2</span>
+                  <span class="level-price" id="s2Price">--</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -360,57 +638,100 @@
       <div class="view" id="view-pnl">
         <div class="view-head">
           <div>
-            <h2>PnL Tracker</h2>
+            <h2>Paper Trading PnL</h2>
             <p class="muted">
-              Paper-only. Shows trades taken when confidence ≥ 80% (mock).
+              Simulated trading with $2,000 starting balance. Auto-trades signals with 80%+ confidence.
             </p>
           </div>
           <div class="view-actions">
-            <button class="btn ghost" id="resetPaper">Reset paper balance</button>
-            <button class="btn" id="newTradeMock">Create mock trade</button>
+            <button class="btn ghost" id="resetPaper">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              Reset Account
+            </button>
+            <button class="btn" id="manualTradeBtn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Manual Trade
+            </button>
           </div>
         </div>
 
-        <div class="grid-3">
-          <div class="card">
-            <div class="muted">Paper Balance</div>
-            <div class="big" id="pnlBalance">$2,143.20</div>
-            <div class="muted">Start: $2,000.00</div>
+        <div class="pnl-overview">
+          <div class="pnl-main-card">
+            <div class="pnl-balance-section">
+              <div class="muted">Current Balance</div>
+              <div class="balance-amount" id="pnlBalance">$2,000.00</div>
+              <div class="balance-change positive" id="pnlChange">+$0.00 (0.00%)</div>
+            </div>
+            <div class="pnl-chart-mini" id="equityCurve">
+              <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+                <path id="equityPath" d="M0,20 L100,20" fill="none" stroke="url(#equityGradient)" stroke-width="2"/>
+                <defs>
+                  <linearGradient id="equityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" style="stop-color:#7c5cff"/>
+                    <stop offset="100%" style="stop-color:#37d67a"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
           </div>
-          <div class="card">
-            <div class="muted">Total PnL</div>
-            <div class="big" id="pnlTotal">+$143.20</div>
-            <div class="muted">All trades combined</div>
-          </div>
-          <div class="card">
-            <div class="muted">Max Drawdown</div>
-            <div class="big" id="pnlDD">-4.3%</div>
-            <div class="muted">Mock number</div>
+          <div class="pnl-stats-grid">
+            <div class="card pnl-stat">
+              <div class="muted">Total PnL</div>
+              <div class="big pnl-positive" id="pnlTotal">$0.00</div>
+            </div>
+            <div class="card pnl-stat">
+              <div class="muted">Win Rate</div>
+              <div class="big" id="pnlWinRate">0%</div>
+            </div>
+            <div class="card pnl-stat">
+              <div class="muted">Total Trades</div>
+              <div class="big" id="pnlTotalTrades">0</div>
+            </div>
+            <div class="card pnl-stat">
+              <div class="muted">Max Drawdown</div>
+              <div class="big pnl-negative" id="pnlDD">0%</div>
+            </div>
           </div>
         </div>
 
         <div class="card">
           <div class="card-head">
-            <h3 class="card-title">Trades</h3>
-            <div class="pill">Auto-trade threshold: <strong>80%</strong></div>
+            <h3 class="card-title">Trade History</h3>
+            <div class="trade-filters">
+              <select id="tradeFilter" class="select small">
+                <option value="all">All Trades</option>
+                <option value="open">Open Only</option>
+                <option value="closed">Closed Only</option>
+                <option value="won">Winners</option>
+                <option value="lost">Losers</option>
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="table" id="tradesTable">
               <thead>
                 <tr>
-                  <th>Opened</th>
+                  <th>Time</th>
                   <th>Coin</th>
-                  <th>Dir</th>
+                  <th>Direction</th>
                   <th>Leverage</th>
                   <th>Entry</th>
                   <th>Exit</th>
-                  <th>Conf</th>
+                  <th>Confidence</th>
                   <th>PnL</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                <!-- injected -->
+                <tr>
+                  <td colspan="9" class="empty-cell muted">No trades yet. Start by auto-trading 80%+ signals or manually entering trades.</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -418,8 +739,12 @@
       </div>
 
       <footer class="footer">
-        <span class="muted">Prototype UI • Plug backend later • No real trading here</span>
-        <span class="muted">v0.1</span>
+        <span class="muted">AI Perp Signals v1.0 - Paper Trading Only - Not Financial Advice</span>
+        <div class="footer-stats">
+          <span class="muted" id="lastUpdate">Last update: --</span>
+          <span class="muted">|</span>
+          <span class="muted" id="dataSource">Data: Binance Futures</span>
+        </div>
       </footer>
     </section>
   </main>
