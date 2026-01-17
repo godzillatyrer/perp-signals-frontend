@@ -16,6 +16,10 @@ const CONFIG = {
   OPENAI_API: 'https://api.openai.com/v1/chat/completions',
   OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
   OPENAI_MODEL: 'gpt-4o', // Using GPT-4o for best analysis
+  // Grok API (xAI)
+  GROK_API: 'https://api.x.ai/v1/chat/completions',
+  GROK_API_KEY: '', // Will be loaded from localStorage or prompted
+  GROK_MODEL: 'grok-beta', // Using Grok for analysis
   // LunarCrush API (Social Sentiment)
   LUNARCRUSH_API: 'https://lunarcrush.com/api4/public',
   LUNARCRUSH_API_KEY: '', // Get free key at lunarcrush.com/developers
@@ -50,17 +54,20 @@ const CONFIG = {
 function loadApiKeys() {
   const claudeKey = localStorage.getItem('claude_api_key');
   const openaiKey = localStorage.getItem('openai_api_key');
+  const grokKey = localStorage.getItem('grok_api_key');
   const lunarcrushKey = localStorage.getItem('lunarcrush_api_key');
   const coinglassKey = localStorage.getItem('coinglass_api_key');
 
   if (claudeKey) CONFIG.CLAUDE_API_KEY = claudeKey;
   if (openaiKey) CONFIG.OPENAI_API_KEY = openaiKey;
+  if (grokKey) CONFIG.GROK_API_KEY = grokKey;
   if (lunarcrushKey) CONFIG.LUNARCRUSH_API_KEY = lunarcrushKey;
   if (coinglassKey) CONFIG.COINGLASS_API_KEY = coinglassKey;
 
   return {
     claude: !!claudeKey,
     openai: !!openaiKey,
+    grok: !!grokKey,
     lunarcrush: !!lunarcrushKey,
     coinglass: !!coinglassKey
   };
@@ -111,9 +118,23 @@ function isOpenAIConfigured() {
   return CONFIG.OPENAI_API_KEY && CONFIG.OPENAI_API_KEY.startsWith('sk-');
 }
 
+// Check if Grok is configured
+function isGrokConfigured() {
+  return CONFIG.GROK_API_KEY && CONFIG.GROK_API_KEY.startsWith('xai-');
+}
+
 // Check if any AI is configured
 function isAnyAiConfigured() {
-  return isClaudeConfigured() || isOpenAIConfigured();
+  return isClaudeConfigured() || isOpenAIConfigured() || isGrokConfigured();
+}
+
+// Count how many AIs are configured
+function countConfiguredAIs() {
+  let count = 0;
+  if (isClaudeConfigured()) count++;
+  if (isOpenAIConfigured()) count++;
+  if (isGrokConfigured()) count++;
+  return count;
 }
 
 // Legacy function
@@ -163,10 +184,22 @@ function setApiKeyManually(provider, key) {
       console.error('❌ Invalid Coinglass API key.');
       return false;
     }
+  } else if (provider === 'grok' || provider === 'xai') {
+    if (key && key.startsWith('xai-')) {
+      CONFIG.GROK_API_KEY = key;
+      localStorage.setItem('grok_api_key', key);
+      console.log('✅ Grok API key saved successfully!');
+      return true;
+    } else {
+      console.error('❌ Invalid Grok API key. It should start with "xai-"');
+      return false;
+    }
   } else {
-    console.error('❌ Unknown provider. Use "claude", "openai", "lunarcrush", or "coinglass"');
+    console.error('❌ Unknown provider. Use "claude", "openai", "grok", "lunarcrush", or "coinglass"');
     console.log('Examples:');
+    console.log('   setApiKey("claude", "sk-ant-...")');
     console.log('   setApiKey("openai", "sk-proj-...")');
+    console.log('   setApiKey("grok", "xai-...")');
     console.log('   setApiKey("lunarcrush", "your-api-key")');
     console.log('   setApiKey("coinglass", "your-api-key")');
     return false;
@@ -251,16 +284,31 @@ const state = {
     totalPnL: 0,
     claudeWins: 0,
     claudeLosses: 0,
+    claudeSignals: 0,
+    claudeTotalConf: 0,
     openaiWins: 0,
     openaiLosses: 0,
+    openaiSignals: 0,
+    openaiTotalConf: 0,
+    grokWins: 0,
+    grokLosses: 0,
+    grokSignals: 0,
+    grokTotalConf: 0,
     consensusWins: 0,
     consensusLosses: 0,
+    goldConsensusWins: 0,
+    goldConsensusLosses: 0,
+    goldConsensusSignals: 0,
+    silverConsensusWins: 0,
+    silverConsensusLosses: 0,
+    silverConsensusSignals: 0,
     largestWin: 0,
     largestLoss: 0,
     currentStreak: 0,
     maxDrawdown: 0,
     peakBalance: 2000
   },
+  aiPredictions: [], // Track individual AI predictions for stats view
   soundEnabled: true,
   notificationsEnabled: false
 };
@@ -1120,6 +1168,41 @@ async function callOpenAIAPI(prompt) {
   }
 }
 
+async function callGrokAPI(prompt) {
+  try {
+    const response = await fetch(CONFIG.GROK_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CONFIG.GROK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: CONFIG.GROK_MODEL,
+        max_tokens: 2048,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert crypto perpetual futures trader. Always respond with valid JSON only.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      console.error('Grok API error:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('Grok API call failed:', error);
+    return null;
+  }
+}
+
 function buildMarketAnalysisPrompt(marketData) {
   return `You are an expert crypto perpetual futures trader. Analyze the following market data and provide trading recommendations.
 
@@ -1229,8 +1312,16 @@ async function runAiAnalysis() {
   state.isAiScanning = true;
   const aiNames = [];
   if (isClaudeConfigured()) aiNames.push('Claude');
-  if (isOpenAIConfigured()) aiNames.push('ChatGPT');
+  if (isOpenAIConfigured()) aiNames.push('GPT-4o');
+  if (isGrokConfigured()) aiNames.push('Grok');
   console.log(`🤖 Starting ${aiNames.join(' + ')} AI market analysis...`);
+
+  // Check if we have at least 2 AIs for consensus (required for signals)
+  const configuredAIs = countConfiguredAIs();
+  if (configuredAIs < 2) {
+    console.log('⚠️ At least 2 AI services required for consensus signals. Configure more APIs in Settings.');
+    updateAiScanStatus('Need 2+ AIs');
+  }
   updateAiScanStatus('Fetching data...');
 
   try {
@@ -1319,7 +1410,7 @@ async function runAiAnalysis() {
     // Build prompt
     const prompt = buildMarketAnalysisPrompt(enrichedData);
 
-    // Call both AIs in parallel if both are configured
+    // Call all configured AIs in parallel
     const apiPromises = [];
     if (isClaudeConfigured()) {
       apiPromises.push(callClaudeAPI(prompt).then(r => ({ source: 'claude', response: r })));
@@ -1327,14 +1418,19 @@ async function runAiAnalysis() {
     if (isOpenAIConfigured()) {
       apiPromises.push(callOpenAIAPI(prompt).then(r => ({ source: 'openai', response: r })));
     }
+    if (isGrokConfigured()) {
+      apiPromises.push(callGrokAPI(prompt).then(r => ({ source: 'grok', response: r })));
+    }
 
     const results = await Promise.allSettled(apiPromises);
 
     // Parse responses from each AI
     const claudePicks = [];
     const openaiPicks = [];
+    const grokPicks = [];
     let claudeAnalysis = null;
     let openaiAnalysis = null;
+    let grokAnalysis = null;
 
     for (const result of results) {
       if (result.status === 'fulfilled' && result.value.response) {
@@ -1346,10 +1442,21 @@ async function runAiAnalysis() {
               claudeAnalysis = analysis;
               if (analysis.topPicks) claudePicks.push(...analysis.topPicks);
               console.log('✅ Claude analysis received:', analysis.topPicks?.length || 0, 'picks');
-            } else {
+              // Track AI performance stats
+              state.performanceStats.claudeSignals += analysis.topPicks?.length || 0;
+              analysis.topPicks?.forEach(p => { state.performanceStats.claudeTotalConf += p.confidence || 0; });
+            } else if (result.value.source === 'openai') {
               openaiAnalysis = analysis;
               if (analysis.topPicks) openaiPicks.push(...analysis.topPicks);
-              console.log('✅ ChatGPT analysis received:', analysis.topPicks?.length || 0, 'picks');
+              console.log('✅ GPT-4o analysis received:', analysis.topPicks?.length || 0, 'picks');
+              state.performanceStats.openaiSignals += analysis.topPicks?.length || 0;
+              analysis.topPicks?.forEach(p => { state.performanceStats.openaiTotalConf += p.confidence || 0; });
+            } else if (result.value.source === 'grok') {
+              grokAnalysis = analysis;
+              if (analysis.topPicks) grokPicks.push(...analysis.topPicks);
+              console.log('✅ Grok analysis received:', analysis.topPicks?.length || 0, 'picks');
+              state.performanceStats.grokSignals += analysis.topPicks?.length || 0;
+              analysis.topPicks?.forEach(p => { state.performanceStats.grokTotalConf += p.confidence || 0; });
             }
           }
         } catch (parseError) {
@@ -1358,113 +1465,138 @@ async function runAiAnalysis() {
       }
     }
 
-    // Find consensus signals (both AIs agree on symbol AND direction)
-    const consensusSignals = [];
-    for (const claudePick of claudePicks) {
-      const matchingOpenai = openaiPicks.find(
-        op => op.symbol === claudePick.symbol && op.direction === claudePick.direction
-      );
-      if (matchingOpenai) {
-        // CONSENSUS FOUND! Average the confidence and boost it
-        const avgConfidence = Math.min(95, Math.round((claudePick.confidence + matchingOpenai.confidence) / 2 + 5));
-        consensusSignals.push({
-          symbol: claudePick.symbol,
-          direction: claudePick.direction,
-          confidence: avgConfidence,
-          entry: (claudePick.entry + matchingOpenai.entry) / 2,
-          tp: Math.max(claudePick.takeProfit, matchingOpenai.takeProfit),
-          sl: claudePick.direction === 'LONG'
-            ? Math.max(claudePick.stopLoss, matchingOpenai.stopLoss)
-            : Math.min(claudePick.stopLoss, matchingOpenai.stopLoss),
-          isConsensus: true,
-          claudeReasoning: claudePick.reasoning,
-          openaiReasoning: matchingOpenai.reasoning,
-          claudeModel: CONFIG.CLAUDE_MODEL,
-          openaiModel: CONFIG.OPENAI_MODEL
-        });
-        console.log(`🎯 CONSENSUS: Both AIs agree on ${claudePick.symbol} ${claudePick.direction}!`);
+    // Helper function to check if two entry prices are within wiggle room (2%)
+    const isEntryMatch = (entry1, entry2) => {
+      const diff = Math.abs(entry1 - entry2) / Math.max(entry1, entry2) * 100;
+      return diff <= 2; // 2% wiggle room
+    };
+
+    // Collect all picks with their source
+    const allPicks = [
+      ...claudePicks.map(p => ({ ...p, source: 'claude', aiModel: CONFIG.CLAUDE_MODEL })),
+      ...openaiPicks.map(p => ({ ...p, source: 'openai', aiModel: CONFIG.OPENAI_MODEL })),
+      ...grokPicks.map(p => ({ ...p, source: 'grok', aiModel: CONFIG.GROK_MODEL }))
+    ];
+
+    // Group picks by symbol and direction
+    const picksBySymbolDirection = {};
+    for (const pick of allPicks) {
+      const key = `${pick.symbol}_${pick.direction}`;
+      if (!picksBySymbolDirection[key]) {
+        picksBySymbolDirection[key] = [];
       }
+      picksBySymbolDirection[key].push(pick);
     }
 
-    // Combine all signals
+    // Find consensus signals (2+ AIs agree on symbol AND direction with entry wiggle room)
     const allSignals = [];
 
-    // Add consensus signals first (highest priority)
-    for (const cs of consensusSignals) {
-      allSignals.push({
-        symbol: cs.symbol,
-        direction: cs.direction,
-        confidence: cs.confidence,
-        entry: cs.entry,
-        tp: cs.tp,
-        sl: cs.sl,
-        riskReward: Math.abs(cs.tp - cs.entry) / Math.abs(cs.entry - cs.sl),
-        timeframe: 'AI',
-        reasons: [`Claude: ${cs.claudeReasoning}`, `ChatGPT: ${cs.openaiReasoning}`],
-        isAiGenerated: true,
-        isConsensus: true,
-        aiSources: ['claude', 'openai'],
-        claudeModel: cs.claudeModel,
-        openaiModel: cs.openaiModel,
-        timestamp: Date.now(),
-        marketSentiment: claudeAnalysis?.marketSentiment || openaiAnalysis?.marketSentiment || 'NEUTRAL'
-      });
-    }
+    for (const [key, picks] of Object.entries(picksBySymbolDirection)) {
+      // Check for matches considering entry price wiggle room
+      const matchingPicks = [];
+      for (const pick of picks) {
+        // Find other picks that match this one (same direction, similar entry)
+        const matches = picks.filter(p =>
+          p.source !== pick.source &&
+          isEntryMatch(p.entry, pick.entry)
+        );
+        if (matches.length > 0 && !matchingPicks.some(m => m.source === pick.source)) {
+          matchingPicks.push(pick);
+          matches.forEach(m => {
+            if (!matchingPicks.some(mp => mp.source === m.source)) {
+              matchingPicks.push(m);
+            }
+          });
+        }
+      }
 
-    // Add non-consensus Claude picks
-    for (const pick of claudePicks) {
-      if (!consensusSignals.some(cs => cs.symbol === pick.symbol && cs.direction === pick.direction)) {
-        allSignals.push({
-          symbol: pick.symbol,
-          direction: pick.direction,
-          confidence: pick.confidence,
-          entry: pick.entry,
-          tp: pick.takeProfit,
-          sl: pick.stopLoss,
-          riskReward: Math.abs(pick.takeProfit - pick.entry) / Math.abs(pick.entry - pick.stopLoss),
+      // Only create signal if 2+ AIs agree
+      if (matchingPicks.length >= 2) {
+        const isGoldConsensus = matchingPicks.length >= 3;
+        const isSilverConsensus = matchingPicks.length === 2;
+
+        // Average the values from matching picks
+        const avgEntry = matchingPicks.reduce((sum, p) => sum + p.entry, 0) / matchingPicks.length;
+        const avgConf = matchingPicks.reduce((sum, p) => sum + p.confidence, 0) / matchingPicks.length;
+        const direction = matchingPicks[0].direction;
+
+        // Boost confidence based on consensus level
+        const boostedConf = Math.min(98, Math.round(avgConf + (isGoldConsensus ? 10 : 5)));
+
+        // Use most aggressive TP from all matching picks
+        const bestTP = direction === 'LONG'
+          ? Math.max(...matchingPicks.map(p => p.takeProfit))
+          : Math.min(...matchingPicks.map(p => p.takeProfit));
+
+        // Use safest SL from all matching picks
+        const safestSL = direction === 'LONG'
+          ? Math.max(...matchingPicks.map(p => p.stopLoss))
+          : Math.min(...matchingPicks.map(p => p.stopLoss));
+
+        const aiSources = matchingPicks.map(p => p.source);
+        const reasons = matchingPicks.map(p => `${p.source.charAt(0).toUpperCase() + p.source.slice(1)}: ${p.reasoning}`);
+
+        const signal = {
+          symbol: matchingPicks[0].symbol,
+          direction: direction,
+          confidence: boostedConf,
+          entry: avgEntry,
+          tp: bestTP,
+          sl: safestSL,
+          riskReward: Math.abs(bestTP - avgEntry) / Math.abs(avgEntry - safestSL),
           timeframe: 'AI',
-          reasons: [pick.reasoning],
+          reasons: reasons,
           isAiGenerated: true,
-          isConsensus: false,
-          aiSources: ['claude'],
-          claudeModel: CONFIG.CLAUDE_MODEL,
-          keyLevels: pick.keyLevels,
-          riskScore: pick.riskScore,
+          isConsensus: true,
+          isGoldConsensus: isGoldConsensus,
+          isSilverConsensus: isSilverConsensus,
+          aiSources: aiSources,
+          claudeModel: aiSources.includes('claude') ? CONFIG.CLAUDE_MODEL : null,
+          openaiModel: aiSources.includes('openai') ? CONFIG.OPENAI_MODEL : null,
+          grokModel: aiSources.includes('grok') ? CONFIG.GROK_MODEL : null,
+          keyLevels: matchingPicks[0].keyLevels,
           timestamp: Date.now(),
-          marketSentiment: claudeAnalysis?.marketSentiment || 'NEUTRAL'
+          marketSentiment: claudeAnalysis?.marketSentiment || openaiAnalysis?.marketSentiment || grokAnalysis?.marketSentiment || 'NEUTRAL'
+        };
+
+        allSignals.push(signal);
+
+        // Track consensus stats
+        if (isGoldConsensus) {
+          state.performanceStats.goldConsensusSignals++;
+          console.log(`🥇 GOLD CONSENSUS: All 3 AIs agree on ${signal.symbol} ${signal.direction}!`);
+        } else {
+          state.performanceStats.silverConsensusSignals++;
+          console.log(`🥈 SILVER CONSENSUS: ${aiSources.join(' + ')} agree on ${signal.symbol} ${signal.direction}!`);
+        }
+
+        // Track prediction for stats
+        state.aiPredictions.unshift({
+          symbol: signal.symbol,
+          direction: signal.direction,
+          confidence: boostedConf,
+          entry: avgEntry,
+          tp: bestTP,
+          aiSources: aiSources,
+          isGoldConsensus: isGoldConsensus,
+          timestamp: Date.now(),
+          status: 'pending'
         });
+        state.aiPredictions = state.aiPredictions.slice(0, 50); // Keep last 50
       }
     }
 
-    // Add non-consensus OpenAI picks
-    for (const pick of openaiPicks) {
-      if (!consensusSignals.some(cs => cs.symbol === pick.symbol && cs.direction === pick.direction)) {
-        allSignals.push({
-          symbol: pick.symbol,
-          direction: pick.direction,
-          confidence: pick.confidence,
-          entry: pick.entry,
-          tp: pick.takeProfit,
-          sl: pick.stopLoss,
-          riskReward: Math.abs(pick.takeProfit - pick.entry) / Math.abs(pick.entry - pick.stopLoss),
-          timeframe: 'AI',
-          reasons: [pick.reasoning],
-          isAiGenerated: true,
-          isConsensus: false,
-          aiSources: ['openai'],
-          openaiModel: CONFIG.OPENAI_MODEL,
-          keyLevels: pick.keyLevels,
-          riskScore: pick.riskScore,
-          timestamp: Date.now(),
-          marketSentiment: openaiAnalysis?.marketSentiment || 'NEUTRAL'
-        });
-      }
+    // Log if no consensus found but individual AIs had picks
+    if (allSignals.length === 0 && allPicks.length > 0) {
+      console.log(`⚠️ No consensus: ${allPicks.length} individual picks but no 2+ AI agreement`);
     }
 
-    // Sort by consensus first, then confidence
+    // Sort by gold consensus first, then silver, then confidence
     allSignals.sort((a, b) => {
-      if (a.isConsensus && !b.isConsensus) return -1;
-      if (!a.isConsensus && b.isConsensus) return 1;
+      if (a.isGoldConsensus && !b.isGoldConsensus) return -1;
+      if (!a.isGoldConsensus && b.isGoldConsensus) return 1;
+      if (a.isSilverConsensus && !b.isSilverConsensus) return -1;
+      if (!a.isSilverConsensus && b.isSilverConsensus) return 1;
       return b.confidence - a.confidence;
     });
 
@@ -1492,7 +1624,7 @@ async function runAiAnalysis() {
     });
 
     if (filteredSignals.length > 0) {
-      state.lastAiAnalysis = { claudeAnalysis, openaiAnalysis };
+      state.lastAiAnalysis = { claudeAnalysis, openaiAnalysis, grokAnalysis };
 
       // Add to signal history (only filtered signals with good TP%)
       for (const signal of filteredSignals) {
@@ -1510,12 +1642,14 @@ async function runAiAnalysis() {
 
       state.aiSignals = filteredSignals;
 
-      const consensusCount = filteredSignals.filter(s => s.isConsensus).length;
-      console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${consensusCount} consensus, ${allSignals.length - filteredSignals.length} filtered for small TP%)`);
+      const goldCount = filteredSignals.filter(s => s.isGoldConsensus).length;
+      const silverCount = filteredSignals.filter(s => s.isSilverConsensus).length;
+      console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${goldCount} gold 🥇, ${silverCount} silver 🥈)`);
 
-      // Show consensus notification
-      if (consensusSignals.length > 0) {
-        showConsensusNotification(consensusSignals);
+      // Show consensus notification for high-confidence signals (85%+)
+      const highConfSignals = filteredSignals.filter(s => s.confidence >= CONFIG.ALERT_CONFIDENCE);
+      if (highConfSignals.length > 0) {
+        showConsensusNotification(highConfSignals);
       }
 
       // Auto-trade if enabled (prioritize consensus signals)
@@ -1544,21 +1678,26 @@ function showConsensusNotification(consensusSignals) {
     // Play consensus sound
     playAlertSound('consensus');
 
+    const isGold = signal.isGoldConsensus;
+    const aiList = signal.aiSources.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' + ');
+    const emoji = isGold ? '🥇' : '🥈';
+    const label = isGold ? 'GOLD CONSENSUS' : 'CONSENSUS';
+
     // Show in-app notification
     showNotification({
-      type: 'consensus',
-      title: '🎯 AI CONSENSUS ALERT',
+      type: isGold ? 'gold-consensus' : 'consensus',
+      title: `${emoji} ${label} ALERT`,
       symbol: signal.symbol,
       direction: signal.direction,
       confidence: signal.confidence,
-      message: `Both Claude & ChatGPT agree: ${signal.symbol} ${signal.direction}`,
-      reasons: [`Claude: ${signal.claudeReasoning}`, `ChatGPT: ${signal.openaiReasoning}`]
+      message: `${aiList} agree: ${signal.symbol} ${signal.direction}`,
+      reasons: signal.reasons
     });
 
     // Send browser notification
     sendBrowserNotification(
-      '🎯 AI CONSENSUS: ' + signal.symbol,
-      `Both AIs agree: ${signal.direction} with ${signal.confidence}% confidence`,
+      `${emoji} ${label}: ${signal.symbol}`,
+      `${signal.aiSources.length} AIs agree: ${signal.direction} with ${signal.confidence}% confidence`,
       { symbol: signal.symbol, important: true, tag: 'consensus-' + signal.symbol }
     );
   }
@@ -2491,6 +2630,74 @@ function renderMarkets() {
   });
 }
 
+// Signal decay warning - shown when signal is getting old
+function getSignalDecayWarning(signal) {
+  const ageMinutes = (Date.now() - signal.timestamp) / 60000;
+
+  if (ageMinutes < 30) return '';
+
+  const decayLevel = ageMinutes < 60 ? 'moderate' : 'high';
+  const confReduction = ageMinutes < 60 ? '5-10%' : '15-25%';
+
+  return `
+    <div class="signal-decay ${decayLevel}">
+      <span class="decay-icon">⏳</span>
+      <span class="decay-text">Signal aging - confidence may be ${confReduction} lower</span>
+      <span class="decay-time">${Math.floor(ageMinutes)}m ago</span>
+    </div>
+  `;
+}
+
+// Funding rate alert - shown when funding is extreme
+function getFundingRateAlert(symbol) {
+  const fundingRate = state.fundingRates[symbol];
+  if (!fundingRate) return '';
+
+  const rate = parseFloat(fundingRate);
+  const isExtreme = Math.abs(rate) > 0.1; // 0.1% threshold
+
+  if (!isExtreme) return '';
+
+  const direction = rate > 0 ? 'extreme-long' : 'extreme-short';
+  const implication = rate > 0
+    ? '🔻 Longs paying shorts - potential short squeeze'
+    : '🔺 Shorts paying longs - potential long squeeze';
+
+  return `
+    <div class="funding-alert ${direction}">
+      <div class="funding-header">
+        <span class="funding-label">⚡ Extreme Funding</span>
+        <span class="funding-rate-value ${rate > 0 ? 'positive' : 'negative'}">${rate > 0 ? '+' : ''}${(rate * 100).toFixed(4)}%</span>
+      </div>
+      <div class="funding-implication">${implication}</div>
+    </div>
+  `;
+}
+
+// Market regime detection
+function detectMarketRegime(candles) {
+  if (!candles || candles.length < 50) return 'UNKNOWN';
+
+  const closes = candles.map(c => c.close);
+  const ema20 = calculateEMA(closes, 20);
+  const ema50 = calculateEMA(closes, 50);
+  const atr = calculateATR(candles);
+
+  const price = closes[closes.length - 1];
+  const avgPrice = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const volatility = (atr / avgPrice) * 100;
+
+  // High volatility = volatile market
+  if (volatility > 5) return 'VOLATILE';
+
+  // Strong trends
+  if (ema20 > ema50 * 1.02) return 'TRENDING_UP';
+  if (ema20 < ema50 * 0.98) return 'TRENDING_DOWN';
+
+  // Otherwise ranging
+  return 'RANGING';
+}
+
 function renderSignals() {
   const container = document.getElementById('signalsList');
   if (!container) return;
@@ -2526,7 +2733,12 @@ function renderSignals() {
           </p>
         </div>`;
     } else {
-      container.innerHTML = '<div class="empty-state">Waiting for AI analysis... Next scan in a few minutes.</div>';
+      const aiCount = countConfiguredAIs();
+      if (aiCount < 2) {
+        container.innerHTML = '<div class="empty-state">⚠️ Configure at least 2 AI services for consensus signals.<br><br>Go to Settings (⚙️) to add API keys.</div>';
+      } else {
+        container.innerHTML = '<div class="empty-state">Waiting for AI consensus... Next scan in a few minutes.<br><br>🥇 Gold = All 3 AIs agree<br>🥈 Silver = 2 AIs agree</div>';
+      }
     }
     return;
   }
@@ -2545,18 +2757,35 @@ function renderSignals() {
     // Build AI source badge
     let aiSourceBadge = '';
     if (signal.isAiGenerated) {
-      const hasClaude = signal.aiSources?.includes('claude') || signal.claudeModel;
-      const hasOpenAI = signal.aiSources?.includes('openai') || signal.openaiModel;
+      const hasClaude = signal.aiSources?.includes('claude');
+      const hasOpenAI = signal.aiSources?.includes('openai');
+      const hasGrok = signal.aiSources?.includes('grok');
 
-      if (signal.isConsensus || (hasClaude && hasOpenAI)) {
-        // Consensus signal - both AIs agree
+      if (signal.isGoldConsensus) {
+        // GOLD consensus - all 3 AIs agree
         aiSourceBadge = `
-          <div class="ai-consensus-badge">
-            <span class="consensus-icon">🎯</span>
-            <span class="consensus-label">AI CONSENSUS</span>
+          <div class="gold-consensus-badge">
+            <span class="gold-icon">🥇</span>
+            <span class="gold-label">GOLD CONSENSUS</span>
+            <div class="ai-trio">
+              <span class="claude">Claude</span>
+              <span class="openai">GPT-4o</span>
+              <span class="grok">Grok</span>
+            </div>
+          </div>`;
+      } else if (signal.isSilverConsensus || signal.isConsensus) {
+        // Silver consensus - 2 AIs agree
+        const aiModels = [];
+        if (hasClaude) aiModels.push('<span class="ai-model claude">Claude</span>');
+        if (hasOpenAI) aiModels.push('<span class="ai-model openai">GPT-4o</span>');
+        if (hasGrok) aiModels.push('<span class="ai-model grok">Grok</span>');
+
+        aiSourceBadge = `
+          <div class="silver-consensus-badge">
+            <span class="silver-icon">🥈</span>
+            <span class="silver-label">CONSENSUS</span>
             <div class="ai-models">
-              <span class="ai-model claude">Claude</span>
-              <span class="ai-model openai">GPT-4o</span>
+              ${aiModels.join('')}
             </div>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
@@ -2576,6 +2805,13 @@ function renderSignals() {
             <span class="model-name">${modelShort}</span>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
+      } else if (hasGrok) {
+        aiSourceBadge = `
+          <div class="grok-model-badge">
+            <span class="model-icon">⚡</span>
+            <span class="model-name">Grok</span>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>`;
       } else {
         // Fallback for AI signals without specific source info
         aiSourceBadge = `
@@ -2587,14 +2823,18 @@ function renderSignals() {
       }
     }
 
+    const consensusClass = signal.isGoldConsensus ? 'gold-consensus' : (signal.isSilverConsensus ? 'silver-consensus' : (signal.isConsensus ? 'consensus-signal' : ''));
+    const consensusBadge = signal.isGoldConsensus ? '<span class="gold-badge">🥇 GOLD</span>' :
+                           (signal.isSilverConsensus ? '<span class="silver-badge">🥈 CONSENSUS</span>' : '');
+
     return `
-    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''} ${signal.isConsensus ? 'consensus-signal' : ''}" data-symbol="${signal.symbol}">
+    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''} ${consensusClass}" data-symbol="${signal.symbol}">
       <div class="signal-header">
         <div class="signal-symbol-info">
           <span class="signal-symbol">${signal.symbol.replace('USDT', '')}</span>
           <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
-          ${signal.isConsensus ? '<span class="consensus-badge">🎯 CONSENSUS</span>' : ''}
-          ${isNew && !signal.isConsensus ? '<span class="new-badge">NEW</span>' : ''}
+          ${consensusBadge}
+          ${isNew && !signal.isConsensus && !signal.isGoldConsensus && !signal.isSilverConsensus ? '<span class="new-badge">NEW</span>' : ''}
           ${signal.isUpdated ? '<span class="updated-badge">UPDATED</span>' : ''}
           ${hasOpenTrade ? '<span class="trading-badge">TRADING</span>' : ''}
         </div>
@@ -2644,12 +2884,14 @@ function renderSignals() {
         </div>
         ` : ''}
       </div>
+      ${getSignalDecayWarning(signal)}
+      ${getFundingRateAlert(signal.symbol)}
       <div class="signal-footer">
         <div class="footer-stat"><div class="label">Risk ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
         <div class="footer-stat"><div class="label">Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
         <div class="footer-stat">
           <div class="label">Status</div>
-          <div class="value ${hasOpenTrade ? 'green' : signal.isConsensus ? 'gold' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isConsensus ? '🎯 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
+          <div class="value ${hasOpenTrade ? 'green' : signal.isGoldConsensus ? 'gold' : signal.isSilverConsensus ? 'silver' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isGoldConsensus ? '🥇 Gold' : signal.isSilverConsensus ? '🥈 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
         </div>
       </div>
     </div>
@@ -2789,12 +3031,193 @@ function renderSentimentData() {
 }
 
 // ============================================
+// AI STATS VIEW
+// ============================================
+
+function renderStatsView() {
+  const stats = state.performanceStats;
+
+  // Calculate win rates for each AI
+  const claudeWinRate = stats.claudeSignals > 0
+    ? Math.round((stats.claudeWins / (stats.claudeWins + stats.claudeLosses)) * 100) || 0
+    : 0;
+  const openaiWinRate = stats.openaiSignals > 0
+    ? Math.round((stats.openaiWins / (stats.openaiWins + stats.openaiLosses)) * 100) || 0
+    : 0;
+  const grokWinRate = stats.grokSignals > 0
+    ? Math.round((stats.grokWins / (stats.grokWins + stats.grokLosses)) * 100) || 0
+    : 0;
+
+  // Calculate average confidence
+  const claudeAvgConf = stats.claudeSignals > 0
+    ? Math.round(stats.claudeTotalConf / stats.claudeSignals)
+    : 0;
+  const openaiAvgConf = stats.openaiSignals > 0
+    ? Math.round(stats.openaiTotalConf / stats.openaiSignals)
+    : 0;
+  const grokAvgConf = stats.grokSignals > 0
+    ? Math.round(stats.grokTotalConf / stats.grokSignals)
+    : 0;
+
+  // Calculate consensus win rates
+  const goldWinRate = stats.goldConsensusSignals > 0
+    ? Math.round((stats.goldConsensusWins / (stats.goldConsensusWins + stats.goldConsensusLosses)) * 100) || 0
+    : 0;
+  const silverWinRate = stats.silverConsensusSignals > 0
+    ? Math.round((stats.silverConsensusWins / (stats.silverConsensusWins + stats.silverConsensusLosses)) * 100) || 0
+    : 0;
+
+  // Update UI elements
+  const updateEl = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+
+  updateEl('claudeWinRate', claudeWinRate + '%');
+  updateEl('claudeTotalTrades', stats.claudeSignals);
+  updateEl('claudeAvgConf', claudeAvgConf + '%');
+  updateEl('claudePerfBar', null);
+  document.getElementById('claudePerfBar')?.style.setProperty('width', claudeWinRate + '%');
+
+  updateEl('openaiWinRate', openaiWinRate + '%');
+  updateEl('openaiTotalTrades', stats.openaiSignals);
+  updateEl('openaiAvgConf', openaiAvgConf + '%');
+  document.getElementById('openaiPerfBar')?.style.setProperty('width', openaiWinRate + '%');
+
+  updateEl('grokWinRate', grokWinRate + '%');
+  updateEl('grokTotalTrades', stats.grokSignals);
+  updateEl('grokAvgConf', grokAvgConf + '%');
+  document.getElementById('grokPerfBar')?.style.setProperty('width', grokWinRate + '%');
+
+  updateEl('goldConsensusRate', goldWinRate + '%');
+  updateEl('goldConsensusCount', stats.goldConsensusSignals + ' signals');
+  updateEl('silverConsensusRate', silverWinRate + '%');
+  updateEl('silverConsensusCount', stats.silverConsensusSignals + ' signals');
+
+  // Render recent predictions
+  renderAiPredictions();
+}
+
+function renderAiPredictions() {
+  const container = document.getElementById('aiPredictionsList');
+  if (!container) return;
+
+  if (state.aiPredictions.length === 0) {
+    container.innerHTML = '<div class="empty-state">No predictions recorded yet</div>';
+    return;
+  }
+
+  container.innerHTML = state.aiPredictions.slice(0, 20).map(pred => {
+    const statusClass = pred.status === 'win' ? 'win' : (pred.status === 'loss' ? 'loss' : 'pending');
+    const resultText = pred.status === 'win' ? '+' + (pred.pnlPercent || '?') + '%' :
+                       pred.status === 'loss' ? (pred.pnlPercent || '?') + '%' : 'Pending';
+
+    return `
+      <div class="prediction-item ${statusClass}">
+        <span class="prediction-symbol">${pred.symbol.replace('USDT', '')}</span>
+        <span class="prediction-direction ${pred.direction.toLowerCase()}">${pred.direction}</span>
+        <div class="prediction-ais">
+          ${pred.aiSources.includes('claude') ? '<span class="prediction-ai claude">🧠</span>' : ''}
+          ${pred.aiSources.includes('openai') ? '<span class="prediction-ai openai">🤖</span>' : ''}
+          ${pred.aiSources.includes('grok') ? '<span class="prediction-ai grok">⚡</span>' : ''}
+        </div>
+        <span class="prediction-result ${statusClass}">${resultText}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// ============================================
+// TRADE JOURNAL EXPORT
+// ============================================
+
+function exportToCSV() {
+  const trades = state.trades;
+  const stats = state.performanceStats;
+
+  if (trades.length === 0) {
+    alert('No trades to export');
+    return;
+  }
+
+  // CSV header
+  const headers = [
+    'Date', 'Symbol', 'Direction', 'Entry', 'Exit', 'Size', 'PnL', 'PnL%',
+    'Status', 'AI Sources', 'Confidence', 'Gold Consensus', 'Reasoning'
+  ];
+
+  // CSV rows
+  const rows = trades.map(t => [
+    new Date(t.timestamp).toISOString(),
+    t.symbol,
+    t.direction,
+    t.entry,
+    t.exit || '',
+    t.size,
+    t.pnl?.toFixed(2) || '',
+    t.pnlPercent?.toFixed(2) || '',
+    t.status,
+    t.aiSources?.join('+') || 'manual',
+    t.confidence || '',
+    t.isGoldConsensus ? 'Yes' : 'No',
+    (t.reasons || []).join(' | ').replace(/,/g, ';')
+  ]);
+
+  // Add summary at the end
+  rows.push([]);
+  rows.push(['=== PERFORMANCE SUMMARY ===']);
+  rows.push(['Total Trades', stats.totalTrades]);
+  rows.push(['Win Rate', ((stats.winningTrades / stats.totalTrades) * 100 || 0).toFixed(1) + '%']);
+  rows.push(['Total PnL', '$' + stats.totalPnL.toFixed(2)]);
+  rows.push(['Claude Signals', stats.claudeSignals]);
+  rows.push(['OpenAI Signals', stats.openaiSignals]);
+  rows.push(['Grok Signals', stats.grokSignals]);
+  rows.push(['Gold Consensus', stats.goldConsensusSignals]);
+  rows.push(['Silver Consensus', stats.silverConsensusSignals]);
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  downloadFile(csv, 'sentient-trades-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv');
+}
+
+function exportToJSON() {
+  const data = {
+    exportDate: new Date().toISOString(),
+    trades: state.trades,
+    aiSignals: state.aiSignals,
+    aiPredictions: state.aiPredictions,
+    performanceStats: state.performanceStats,
+    config: {
+      minConfidence: CONFIG.AI_MIN_CONFIDENCE,
+      alertConfidence: CONFIG.ALERT_CONFIDENCE,
+      leverage: CONFIG.LEVERAGE,
+      riskPercent: CONFIG.RISK_PERCENT
+    }
+  };
+
+  const json = JSON.stringify(data, null, 2);
+  downloadFile(json, 'sentient-journal-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
+}
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================
 // AI BADGE UPDATES
 // ============================================
 
 function updateAiBadges() {
   const claudeBadge = document.getElementById('claudeBadge');
   const openaiBadge = document.getElementById('openaiBadge');
+  const grokBadge = document.getElementById('grokBadge');
 
   if (claudeBadge) {
     claudeBadge.style.display = isClaudeConfigured() ? 'flex' : 'none';
@@ -2802,10 +3225,13 @@ function updateAiBadges() {
   if (openaiBadge) {
     openaiBadge.style.display = isOpenAIConfigured() ? 'flex' : 'none';
   }
+  if (grokBadge) {
+    grokBadge.style.display = isGrokConfigured() ? 'flex' : 'none';
+  }
 
   // If no AI configured, show a placeholder
   const badgesContainer = document.getElementById('aiActiveBadges');
-  if (badgesContainer && !isClaudeConfigured() && !isOpenAIConfigured()) {
+  if (badgesContainer && !isAnyAiConfigured()) {
     badgesContainer.innerHTML = `
       <div class="ai-badge" style="background: var(--bg-hover); opacity: 0.7;">
         <span>⚠️</span>
@@ -3303,15 +3729,21 @@ function initEventListeners() {
       document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
 
-      const tabType = tab.dataset.signalTab; // 'new', 'all', or 'data'
+      const tabType = tab.dataset.signalTab; // 'new', 'all', 'data', or 'stats'
 
       // Handle sidebar view switching
+      // Hide all views first
+      document.getElementById('signalsView')?.classList.remove('active');
+      document.getElementById('dataView')?.classList.remove('active');
+      document.getElementById('statsView')?.classList.remove('active');
+
       if (tabType === 'data') {
-        document.getElementById('signalsView')?.classList.remove('active');
         document.getElementById('dataView')?.classList.add('active');
         renderDataView();
+      } else if (tabType === 'stats') {
+        document.getElementById('statsView')?.classList.add('active');
+        renderStatsView();
       } else {
-        document.getElementById('dataView')?.classList.remove('active');
         document.getElementById('signalsView')?.classList.add('active');
         state.signalTab = tabType;
         renderSignals();
@@ -3359,6 +3791,10 @@ function initEventListeners() {
 
   // Settings modal handlers
   initSettingsModal();
+
+  // Export buttons
+  document.getElementById('exportCsvBtn')?.addEventListener('click', exportToCSV);
+  document.getElementById('exportJsonBtn')?.addEventListener('click', exportToJSON);
 }
 
 // ============================================
@@ -3372,6 +3808,7 @@ function openSettingsModal() {
   // Load current values into inputs
   document.getElementById('claudeApiKey').value = CONFIG.CLAUDE_API_KEY || '';
   document.getElementById('openaiApiKey').value = CONFIG.OPENAI_API_KEY || '';
+  document.getElementById('grokApiKey').value = CONFIG.GROK_API_KEY || '';
   document.getElementById('lunarcrushApiKey').value = CONFIG.LUNARCRUSH_API_KEY || '';
   document.getElementById('coinglassApiKey').value = CONFIG.COINGLASS_API_KEY || '';
 
@@ -3397,12 +3834,15 @@ function updateSettingsApiStatus() {
 
   const claudeInput = document.getElementById('claudeApiKey');
   const openaiInput = document.getElementById('openaiApiKey');
+  const grokInput = document.getElementById('grokApiKey');
 
   const claudeKey = claudeInput?.value || '';
   const openaiKey = openaiInput?.value || '';
+  const grokKey = grokInput?.value || '';
 
   const claudeValid = claudeKey.startsWith('sk-ant-');
   const openaiValid = openaiKey.startsWith('sk-');
+  const grokValid = grokKey.startsWith('xai-');
 
   // Update input visual states
   if (claudeInput) {
@@ -3413,19 +3853,31 @@ function updateSettingsApiStatus() {
     openaiInput.classList.toggle('valid', openaiValid && openaiKey.length > 20);
     openaiInput.classList.toggle('invalid', openaiKey && !openaiValid);
   }
+  if (grokInput) {
+    grokInput.classList.toggle('valid', grokValid && grokKey.length > 20);
+    grokInput.classList.toggle('invalid', grokKey && !grokValid);
+  }
+
+  // Count valid AIs
+  const validCount = [claudeValid, openaiValid, grokValid].filter(Boolean).length;
+  const validNames = [];
+  if (claudeValid) validNames.push('Claude');
+  if (openaiValid) validNames.push('GPT-4o');
+  if (grokValid) validNames.push('Grok');
 
   // Update status indicator
-  if (claudeValid || openaiValid) {
-    if (claudeValid && openaiValid) {
-      statusEl.className = 'api-status connected';
-      statusEl.querySelector('.status-text').textContent = 'Both AIs configured';
-    } else {
-      statusEl.className = 'api-status partial';
-      statusEl.querySelector('.status-text').textContent = claudeValid ? 'Claude configured' : 'OpenAI configured';
-    }
+  if (validCount >= 3) {
+    statusEl.className = 'api-status connected gold';
+    statusEl.querySelector('.status-text').textContent = '🥇 All 3 AIs configured - Gold consensus enabled!';
+  } else if (validCount === 2) {
+    statusEl.className = 'api-status connected';
+    statusEl.querySelector('.status-text').textContent = '🥈 ' + validNames.join(' + ') + ' - Consensus enabled';
+  } else if (validCount === 1) {
+    statusEl.className = 'api-status partial';
+    statusEl.querySelector('.status-text').textContent = '⚠️ ' + validNames[0] + ' only - Add 1 more AI for consensus';
   } else {
     statusEl.className = 'api-status disconnected';
-    statusEl.querySelector('.status-text').textContent = 'No AI configured';
+    statusEl.querySelector('.status-text').textContent = '❌ Configure at least 2 AIs for consensus signals';
   }
 }
 
@@ -3433,6 +3885,7 @@ function saveSettings() {
   // Get values from inputs
   const claudeKey = document.getElementById('claudeApiKey')?.value?.trim() || '';
   const openaiKey = document.getElementById('openaiApiKey')?.value?.trim() || '';
+  const grokKey = document.getElementById('grokApiKey')?.value?.trim() || '';
   const lunarcrushKey = document.getElementById('lunarcrushApiKey')?.value?.trim() || '';
   const coinglassKey = document.getElementById('coinglassApiKey')?.value?.trim() || '';
 
@@ -3462,6 +3915,20 @@ function saveSettings() {
   } else {
     CONFIG.OPENAI_API_KEY = '';
     localStorage.removeItem('openai_api_key');
+  }
+
+  // Validate and save Grok API key
+  if (grokKey) {
+    if (grokKey.startsWith('xai-')) {
+      CONFIG.GROK_API_KEY = grokKey;
+      localStorage.setItem('grok_api_key', grokKey);
+      console.log('✅ Grok API key saved');
+    } else if (grokKey.length > 0) {
+      console.warn('⚠️ Invalid Grok API key format');
+    }
+  } else {
+    CONFIG.GROK_API_KEY = '';
+    localStorage.removeItem('grok_api_key');
   }
 
   // Save LunarCrush API key (no specific format validation)
@@ -3547,7 +4014,7 @@ function initSettingsModal() {
   });
 
   // Real-time validation on input
-  ['claudeApiKey', 'openaiApiKey'].forEach(id => {
+  ['claudeApiKey', 'openaiApiKey', 'grokApiKey'].forEach(id => {
     const input = document.getElementById(id);
     if (input) {
       input.addEventListener('input', updateSettingsApiStatus);

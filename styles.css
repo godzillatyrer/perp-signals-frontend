@@ -2486,3 +2486,569 @@ body {
 .settings-save-btn:active {
   transform: translateY(0);
 }
+
+/* ============================================
+   GROK AI BADGE
+   ============================================ */
+
+.alert-bar-icon .ai-badge.grok {
+  background: linear-gradient(135deg, #1a1a2e, #16213e);
+  border: 1px solid #e94560;
+}
+
+.grok-model-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, rgba(233, 69, 96, 0.15), rgba(26, 26, 46, 0.15));
+  border: 1px solid #e94560;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.grok-model-badge .model-icon {
+  font-size: 14px;
+}
+
+.grok-model-badge .model-name {
+  color: #e94560;
+  font-weight: 700;
+}
+
+/* ============================================
+   AI PERFORMANCE STATS TAB
+   ============================================ */
+
+.ai-performance-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.perf-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  transition: all var(--transition);
+}
+
+.perf-card:hover {
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.perf-card.claude-perf {
+  border-left: 3px solid var(--purple);
+}
+
+.perf-card.openai-perf {
+  border-left: 3px solid #10a37f;
+}
+
+.perf-card.grok-perf {
+  border-left: 3px solid #e94560;
+}
+
+.perf-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.perf-icon {
+  font-size: 16px;
+}
+
+.perf-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.perf-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.perf-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+.perf-stat .stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.perf-stat .stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.perf-bar-container {
+  height: 6px;
+  background: var(--bg-dark);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.perf-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.perf-bar.claude-bar {
+  background: linear-gradient(90deg, var(--purple), #a371f7);
+}
+
+.perf-bar.openai-bar {
+  background: linear-gradient(90deg, #10a37f, #1ed89e);
+}
+
+.perf-bar.grok-bar {
+  background: linear-gradient(90deg, #e94560, #f76c6c);
+}
+
+/* Consensus Stats */
+.consensus-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.consensus-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+}
+
+.consensus-type {
+  font-weight: 700;
+  font-size: 12px;
+  min-width: 100px;
+}
+
+.consensus-type.gold {
+  color: #ffd700;
+}
+
+.consensus-type.silver {
+  color: #c0c0c0;
+}
+
+.consensus-rate {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--green);
+  margin-left: auto;
+}
+
+.consensus-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 70px;
+  text-align: right;
+}
+
+/* AI Predictions List */
+.ai-predictions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.prediction-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--border);
+}
+
+.prediction-item.win {
+  border-left-color: var(--green);
+}
+
+.prediction-item.loss {
+  border-left-color: var(--red);
+}
+
+.prediction-item.pending {
+  border-left-color: var(--yellow);
+}
+
+.prediction-symbol {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 80px;
+}
+
+.prediction-direction {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.prediction-direction.long {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.prediction-direction.short {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.prediction-ais {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.prediction-ai {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.prediction-ai.claude { background: var(--purple-dim); }
+.prediction-ai.openai { background: rgba(16, 163, 127, 0.2); }
+.prediction-ai.grok { background: rgba(233, 69, 96, 0.2); }
+
+.prediction-result {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.prediction-result.win { color: var(--green); }
+.prediction-result.loss { color: var(--red); }
+.prediction-result.pending { color: var(--yellow); }
+
+/* ============================================
+   GOLD CONSENSUS (3-AI AGREEMENT)
+   ============================================ */
+
+.signal-card.gold-consensus {
+  border: 2px solid #ffd700;
+  background: linear-gradient(135deg, var(--bg-card), rgba(255, 215, 0, 0.08));
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.15);
+}
+
+.signal-card.gold-consensus:hover {
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.25);
+}
+
+.gold-consensus-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(255, 165, 0, 0.15));
+  border: 2px solid #ffd700;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  animation: gold-glow 2s infinite;
+}
+
+@keyframes gold-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 215, 0, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.5); }
+}
+
+.gold-consensus-badge .gold-icon {
+  font-size: 20px;
+}
+
+.gold-consensus-badge .gold-label {
+  color: #ffd700;
+  font-weight: 800;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+}
+
+.gold-consensus-badge .ai-trio {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.gold-consensus-badge .ai-trio span {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.gold-consensus-badge .ai-trio .claude {
+  background: var(--purple-dim);
+  color: var(--purple);
+}
+
+.gold-consensus-badge .ai-trio .openai {
+  background: rgba(16, 163, 127, 0.2);
+  color: #10a37f;
+}
+
+.gold-consensus-badge .ai-trio .grok {
+  background: rgba(233, 69, 96, 0.2);
+  color: #e94560;
+}
+
+/* Silver Consensus (2-AI Agreement) */
+.signal-card.silver-consensus {
+  border: 2px solid #c0c0c0;
+  background: linear-gradient(135deg, var(--bg-card), rgba(192, 192, 192, 0.05));
+}
+
+.silver-consensus-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(192, 192, 192, 0.15), rgba(169, 169, 169, 0.1));
+  border: 1px solid #c0c0c0;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+
+.silver-consensus-badge .silver-icon {
+  font-size: 18px;
+}
+
+.silver-consensus-badge .silver-label {
+  color: #c0c0c0;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.silver-consensus-badge .ai-models {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.silver-consensus-badge .ai-model {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.silver-consensus-badge .ai-model.claude {
+  background: var(--purple-dim);
+  color: var(--purple);
+}
+
+.silver-consensus-badge .ai-model.openai {
+  background: rgba(16, 163, 127, 0.2);
+  color: #10a37f;
+}
+
+.silver-consensus-badge .ai-model.grok {
+  background: rgba(233, 69, 96, 0.2);
+  color: #e94560;
+}
+
+/* Signal header badges */
+.gold-badge {
+  background: linear-gradient(135deg, #ffd700, #ffb800);
+  color: #1a1a1a;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  animation: gold-pulse 2s infinite;
+}
+
+@keyframes gold-pulse {
+  0%, 100% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.5); }
+  50% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.8); }
+}
+
+.silver-badge {
+  background: linear-gradient(135deg, #c0c0c0, #a0a0a0);
+  color: #1a1a1a;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ============================================
+   EXPORT BUTTONS
+   ============================================ */
+
+.export-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.export-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.export-btn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ============================================
+   RISK MANAGEMENT
+   ============================================ */
+
+.risk-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.risk-meter {
+  height: 8px;
+  background: var(--bg-dark);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.risk-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.risk-meter-fill.low { background: var(--green); }
+.risk-meter-fill.medium { background: var(--yellow); }
+.risk-meter-fill.high { background: var(--red); }
+
+.risk-limit {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.risk-limit .current { color: var(--text); font-weight: 600; }
+.risk-limit .limit { color: var(--text-secondary); }
+
+/* Signal Decay Warning */
+.signal-decay {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid var(--yellow);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 10px;
+  color: var(--yellow);
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.decay-icon { font-size: 12px; }
+.decay-text { flex: 1; }
+.decay-time { font-weight: 700; }
+
+/* Funding Rate Alert */
+.funding-alert {
+  background: rgba(57, 197, 207, 0.15);
+  border: 1px solid var(--cyan);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+
+.funding-alert.extreme-long {
+  background: rgba(248, 81, 73, 0.15);
+  border-color: var(--red);
+}
+
+.funding-alert.extreme-short {
+  background: rgba(63, 185, 80, 0.15);
+  border-color: var(--green);
+}
+
+.funding-rate-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.funding-rate-value.positive { color: var(--green); }
+.funding-rate-value.negative { color: var(--red); }
+
+/* Market Regime Indicator */
+.regime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.regime-badge.trending-up {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.regime-badge.trending-down {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.regime-badge.ranging {
+  background: var(--yellow-dim);
+  color: var(--yellow);
+}
+
+.regime-badge.volatile {
+  background: var(--purple-dim);
+  color: var(--purple);
+}
