@@ -15,7 +15,13 @@ const CONFIG = {
   // OpenAI API
   OPENAI_API: 'https://api.openai.com/v1/chat/completions',
   OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
-  OPENAI_MODEL: 'gpt-4o', // Using GPT-4o for best analysis (change to 'o1-preview' for reasoning model)
+  OPENAI_MODEL: 'gpt-4o', // Using GPT-4o for best analysis
+  // LunarCrush API (Social Sentiment)
+  LUNARCRUSH_API: 'https://lunarcrush.com/api4/public',
+  LUNARCRUSH_API_KEY: '', // Get free key at lunarcrush.com/developers
+  // Coinglass API (Liquidation & Derivatives Data)
+  COINGLASS_API: 'https://open-api.coinglass.com/public/v2',
+  COINGLASS_API_KEY: '', // Get free key at coinglass.com/api
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
@@ -38,15 +44,20 @@ const CONFIG = {
 function loadApiKeys() {
   const claudeKey = localStorage.getItem('claude_api_key');
   const openaiKey = localStorage.getItem('openai_api_key');
+  const lunarcrushKey = localStorage.getItem('lunarcrush_api_key');
+  const coinglassKey = localStorage.getItem('coinglass_api_key');
 
-  if (claudeKey) {
-    CONFIG.CLAUDE_API_KEY = claudeKey;
-  }
-  if (openaiKey) {
-    CONFIG.OPENAI_API_KEY = openaiKey;
-  }
+  if (claudeKey) CONFIG.CLAUDE_API_KEY = claudeKey;
+  if (openaiKey) CONFIG.OPENAI_API_KEY = openaiKey;
+  if (lunarcrushKey) CONFIG.LUNARCRUSH_API_KEY = lunarcrushKey;
+  if (coinglassKey) CONFIG.COINGLASS_API_KEY = coinglassKey;
 
-  return { claude: !!claudeKey, openai: !!openaiKey };
+  return {
+    claude: !!claudeKey,
+    openai: !!openaiKey,
+    lunarcrush: !!lunarcrushKey,
+    coinglass: !!coinglassKey
+  };
 }
 
 // Legacy function for backwards compatibility
@@ -126,22 +137,63 @@ function setApiKeyManually(provider, key) {
       console.error('❌ Invalid OpenAI API key. It should start with "sk-"');
       return false;
     }
+  } else if (provider === 'lunarcrush' || provider === 'lunar') {
+    if (key && key.length > 10) {
+      CONFIG.LUNARCRUSH_API_KEY = key;
+      localStorage.setItem('lunarcrush_api_key', key);
+      console.log('✅ LunarCrush API key saved successfully!');
+      return true;
+    } else {
+      console.error('❌ Invalid LunarCrush API key.');
+      return false;
+    }
+  } else if (provider === 'coinglass' || provider === 'cg') {
+    if (key && key.length > 10) {
+      CONFIG.COINGLASS_API_KEY = key;
+      localStorage.setItem('coinglass_api_key', key);
+      console.log('✅ Coinglass API key saved successfully!');
+      return true;
+    } else {
+      console.error('❌ Invalid Coinglass API key.');
+      return false;
+    }
   } else {
-    console.error('❌ Unknown provider. Use "claude" or "openai"');
-    console.log('Example: setApiKey("openai", "sk-proj-...")');
+    console.error('❌ Unknown provider. Use "claude", "openai", "lunarcrush", or "coinglass"');
+    console.log('Examples:');
+    console.log('   setApiKey("openai", "sk-proj-...")');
+    console.log('   setApiKey("lunarcrush", "your-api-key")');
+    console.log('   setApiKey("coinglass", "your-api-key")');
     return false;
   }
+}
+
+// Check if LunarCrush is configured
+function isLunarCrushConfigured() {
+  return CONFIG.LUNARCRUSH_API_KEY && CONFIG.LUNARCRUSH_API_KEY.length > 10;
+}
+
+// Check if Coinglass is configured
+function isCoinglassConfigured() {
+  return CONFIG.COINGLASS_API_KEY && CONFIG.COINGLASS_API_KEY.length > 10;
 }
 
 // Show API key status
 function showApiKeyStatus() {
   console.log('🔑 API Key Status:');
+  console.log('   ');
+  console.log('   AI Services:');
   console.log('   Claude:', isClaudeConfigured() ? '✅ Configured' : '❌ Not configured');
   console.log('   OpenAI:', isOpenAIConfigured() ? '✅ Configured' : '❌ Not configured');
+  console.log('   ');
+  console.log('   Data Providers:');
+  console.log('   LunarCrush:', isLunarCrushConfigured() ? '✅ Configured' : '⚪ Optional (social sentiment)');
+  console.log('   Coinglass:', isCoinglassConfigured() ? '✅ Configured' : '⚪ Optional (liquidation data)');
   console.log('');
   console.log('To add/update keys, run:');
   console.log('   setApiKey("claude", "sk-ant-...")');
   console.log('   setApiKey("openai", "sk-...")');
+  console.log('   setApiKey("lunarcrush", "your-api-key")  // Get at: lunarcrush.com/developers');
+  console.log('   setApiKey("coinglass", "your-api-key")   // Get at: coinglass.com/api');
 }
 
 // State
@@ -184,6 +236,8 @@ const state = {
   // Enhanced features
   fundingRates: {}, // Symbol -> funding rate
   openInterest: {}, // Symbol -> OI data
+  socialSentiment: {}, // Symbol -> LunarCrush data
+  liquidationData: {}, // Symbol -> Coinglass liquidation data
   performanceStats: {
     totalTrades: 0,
     winningTrades: 0,
@@ -309,6 +363,209 @@ async function fetchOpenInterest(symbol) {
     console.error(`Failed to fetch OI for ${symbol}:`, error);
     return null;
   }
+}
+
+// ============================================
+// LUNARCRUSH API (SOCIAL SENTIMENT)
+// ============================================
+
+async function fetchSocialSentiment(symbol) {
+  if (!isLunarCrushConfigured()) {
+    return null;
+  }
+
+  try {
+    // Convert symbol format (e.g., BTCUSDT -> BTC)
+    const coin = symbol.replace('USDT', '').toLowerCase();
+
+    const response = await fetch(`${CONFIG.LUNARCRUSH_API}/coins/${coin}/v1`, {
+      headers: {
+        'Authorization': `Bearer ${CONFIG.LUNARCRUSH_API_KEY}`
+      }
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        console.warn('LunarCrush rate limited');
+        return null;
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data || !data.data) {
+      return null;
+    }
+
+    const coinData = data.data;
+
+    state.socialSentiment[symbol] = {
+      galaxyScore: coinData.galaxy_score || 0, // 0-100, overall score
+      altRank: coinData.alt_rank || 999, // Lower is better
+      socialVolume: coinData.social_volume_24h || 0,
+      socialScore: coinData.social_score || 0,
+      sentiment: coinData.average_sentiment || 50, // 0-100
+      socialDominance: coinData.social_dominance || 0,
+      newsVolume: coinData.news_24h || 0,
+      marketDominance: coinData.market_dominance || 0,
+      correlationRank: coinData.correlation_rank || 0,
+      volatility: coinData.volatility || 0,
+      // Calculated sentiment label
+      sentimentLabel: coinData.average_sentiment > 65 ? 'BULLISH' :
+                      coinData.average_sentiment < 35 ? 'BEARISH' : 'NEUTRAL',
+      timestamp: Date.now()
+    };
+
+    return state.socialSentiment[symbol];
+  } catch (error) {
+    console.error(`Failed to fetch LunarCrush data for ${symbol}:`, error);
+    return null;
+  }
+}
+
+async function fetchBatchSocialSentiment(symbols) {
+  if (!isLunarCrushConfigured()) {
+    console.log('⚪ LunarCrush not configured - skipping social sentiment');
+    return {};
+  }
+
+  console.log('🌙 Fetching social sentiment data...');
+
+  // Fetch for top 10 symbols only to avoid rate limits
+  const topSymbols = symbols.slice(0, 10);
+
+  for (const symbol of topSymbols) {
+    await fetchSocialSentiment(symbol);
+    await sleep(100); // Rate limiting
+  }
+
+  console.log(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins`);
+  return state.socialSentiment;
+}
+
+// ============================================
+// COINGLASS API (LIQUIDATION DATA)
+// ============================================
+
+async function fetchLiquidationData(symbol) {
+  if (!isCoinglassConfigured()) {
+    return null;
+  }
+
+  try {
+    // Convert symbol format for Coinglass
+    const cleanSymbol = symbol.replace('USDT', '');
+
+    // Fetch liquidation data
+    const response = await fetch(`${CONFIG.COINGLASS_API}/liquidation_chart?symbol=${cleanSymbol}&interval=h1`, {
+      headers: {
+        'coinglassSecret': CONFIG.COINGLASS_API_KEY
+      }
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        console.warn('Coinglass rate limited');
+        return null;
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data || data.code !== '0' || !data.data) {
+      return null;
+    }
+
+    // Get most recent hour data
+    const recentData = data.data.slice(-24);
+    const totalLongLiq = recentData.reduce((sum, d) => sum + (d.longLiquidationUsd || 0), 0);
+    const totalShortLiq = recentData.reduce((sum, d) => sum + (d.shortLiquidationUsd || 0), 0);
+
+    state.liquidationData[symbol] = {
+      longLiquidations24h: totalLongLiq,
+      shortLiquidations24h: totalShortLiq,
+      totalLiquidations24h: totalLongLiq + totalShortLiq,
+      liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0, // > 1 means more shorts liquidated
+      dominantSide: totalLongLiq > totalShortLiq ? 'LONGS_LIQUIDATED' : 'SHORTS_LIQUIDATED',
+      // If longs are being liquidated, might be near bottom. If shorts, might be near top.
+      priceImplication: totalLongLiq > totalShortLiq * 1.5 ? 'POTENTIAL_BOTTOM' :
+                        totalShortLiq > totalLongLiq * 1.5 ? 'POTENTIAL_TOP' : 'NEUTRAL',
+      timestamp: Date.now()
+    };
+
+    return state.liquidationData[symbol];
+  } catch (error) {
+    console.error(`Failed to fetch Coinglass data for ${symbol}:`, error);
+    return null;
+  }
+}
+
+async function fetchLongShortRatio(symbol) {
+  if (!isCoinglassConfigured()) {
+    return null;
+  }
+
+  try {
+    const cleanSymbol = symbol.replace('USDT', '');
+
+    const response = await fetch(`${CONFIG.COINGLASS_API}/long_short?symbol=${cleanSymbol}&interval=h1`, {
+      headers: {
+        'coinglassSecret': CONFIG.COINGLASS_API_KEY
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (!data || data.code !== '0' || !data.data || !data.data.length) {
+      return null;
+    }
+
+    // Get most recent data
+    const recent = data.data[data.data.length - 1];
+
+    // Add to existing liquidation data
+    if (!state.liquidationData[symbol]) {
+      state.liquidationData[symbol] = { timestamp: Date.now() };
+    }
+
+    state.liquidationData[symbol].longShortRatio = recent.longRate / recent.shortRate;
+    state.liquidationData[symbol].longPercent = recent.longRate;
+    state.liquidationData[symbol].shortPercent = recent.shortRate;
+    state.liquidationData[symbol].crowdBias = recent.longRate > 55 ? 'CROWDED_LONG' :
+                                               recent.shortRate > 55 ? 'CROWDED_SHORT' : 'BALANCED';
+
+    return state.liquidationData[symbol];
+  } catch (error) {
+    console.error(`Failed to fetch long/short ratio for ${symbol}:`, error);
+    return null;
+  }
+}
+
+async function fetchBatchLiquidationData(symbols) {
+  if (!isCoinglassConfigured()) {
+    console.log('⚪ Coinglass not configured - skipping liquidation data');
+    return {};
+  }
+
+  console.log('💧 Fetching liquidation data...');
+
+  // Fetch for top 10 symbols only to avoid rate limits
+  const topSymbols = symbols.slice(0, 10);
+
+  for (const symbol of topSymbols) {
+    await fetchLiquidationData(symbol);
+    await fetchLongShortRatio(symbol);
+    await sleep(150); // Rate limiting
+  }
+
+  console.log(`💧 Liquidation data loaded for ${Object.keys(state.liquidationData).length} coins`);
+  return state.liquidationData;
 }
 
 // ============================================
@@ -864,6 +1121,8 @@ MARKET DATA:
 ${marketData.map(m => {
   const funding = state.fundingRates[m.symbol];
   const oi = state.openInterest[m.symbol];
+  const social = state.socialSentiment[m.symbol];
+  const liq = state.liquidationData[m.symbol];
   return `
 ${m.symbol}:
 - Current Price: $${m.price}
@@ -882,7 +1141,12 @@ ${m.symbol}:
 - ATR (14): ${m.atr?.toFixed(4) || 'N/A'}
 - Volume Trend: ${m.volumeTrend || 'N/A'}
 - Trend Direction: ${m.trend || 'N/A'}
-- MTF Confluence: ${m.mtfAnalysis?.confluence || 'N/A'} (${m.mtfAnalysis?.confluenceScore?.toFixed(0) || 0}%)`;
+- MTF Confluence: ${m.mtfAnalysis?.confluence || 'N/A'} (${m.mtfAnalysis?.confluenceScore?.toFixed(0) || 0}%)
+- Social Sentiment: ${social ? `${social.sentimentLabel} (Score: ${social.sentiment}/100, Galaxy: ${social.galaxyScore})` : 'N/A'}
+- Social Volume: ${social ? formatVolume(social.socialVolume) : 'N/A'}
+- Long/Short Ratio: ${liq?.longShortRatio ? liq.longShortRatio.toFixed(2) : 'N/A'} ${liq?.crowdBias ? `(${liq.crowdBias})` : ''}
+- 24h Liquidations: ${liq ? `Longs: $${formatVolume(liq.longLiquidations24h || 0)} | Shorts: $${formatVolume(liq.shortLiquidations24h || 0)}` : 'N/A'}
+- Liquidation Signal: ${liq?.priceImplication || 'N/A'}`;
 }).join('\n')}
 
 ANALYSIS REQUIREMENTS:
@@ -897,6 +1161,9 @@ ANALYSIS REQUIREMENTS:
 9. **FUNDING RATE ANALYSIS**: High positive funding (>0.01%) suggests overleveraged longs - consider shorts. High negative funding suggests overleveraged shorts - consider longs.
 10. **OPEN INTEREST**: Rising OI with price = trend continuation. Rising OI against price = potential reversal.
 11. **MULTI-TIMEFRAME**: Prefer setups where multiple timeframes align (higher confluence score = stronger signal)
+12. **SOCIAL SENTIMENT**: High Galaxy Score (>70) with bullish sentiment = strong conviction. Bearish sentiment divergence from price = potential reversal.
+13. **LONG/SHORT RATIO**: CROWDED_LONG (>55% longs) often leads to long squeeze - favor shorts. CROWDED_SHORT favors longs.
+14. **LIQUIDATION DATA**: Heavy long liquidations = potential bottom (buy). Heavy short liquidations = potential top (sell).
 
 Respond ONLY with valid JSON in this exact format (no other text):
 {
@@ -916,15 +1183,22 @@ Respond ONLY with valid JSON in this exact format (no other text):
       },
       "riskScore": 1-10,
       "timeHorizon": "4H to 1D",
-      "fundingBias": "FAVORABLE/UNFAVORABLE/NEUTRAL"
+      "fundingBias": "FAVORABLE/UNFAVORABLE/NEUTRAL",
+      "socialSentiment": "BULLISH/BEARISH/NEUTRAL",
+      "crowdPositioning": "CROWDED_LONG/CROWDED_SHORT/BALANCED"
     }
   ],
   "marketSentiment": "BULLISH/BEARISH/NEUTRAL",
-  "marketCondition": "Brief market condition description",
+  "marketCondition": "Brief market condition description including social/liquidation insights",
   "avoidList": ["symbols to avoid with reasons"]
 }
 
-Select the 2-3 BEST opportunities with highest probability setups. Prioritize setups where funding rate supports the direction. Be conservative with confidence scores.`;
+Select the 2-3 BEST opportunities with highest probability setups. Prioritize:
+1. Setups where funding rate supports the direction
+2. Sentiment aligned with technical direction
+3. Crowd positioning that favors the trade (fade the crowd)
+4. Strong liquidation signals (POTENTIAL_BOTTOM for longs, POTENTIAL_TOP for shorts)
+Be conservative with confidence scores.`;
 }
 
 async function runAiAnalysis() {
@@ -945,12 +1219,21 @@ async function runAiAnalysis() {
   updateAiScanStatus('Fetching data...');
 
   try {
+    // Fetch all data sources in parallel for efficiency
+    console.log('📊 Fetching market intelligence...');
+    const topMarkets = state.markets.slice(0, 20);
+    const topSymbols = topMarkets.map(m => m.symbol);
+
     // Fetch funding rates first (important for analysis)
-    console.log('📊 Fetching funding rates...');
     await fetchFundingRates();
 
+    // Fetch social sentiment and liquidation data (if APIs are configured)
+    await Promise.all([
+      fetchBatchSocialSentiment(topSymbols),
+      fetchBatchLiquidationData(topSymbols)
+    ]);
+
     // Gather enhanced market data for top 20 coins
-    const topMarkets = state.markets.slice(0, 20);
     const enrichedData = [];
 
     updateAiScanStatus('Analyzing markets...');
@@ -2257,6 +2540,31 @@ function renderSignals() {
           <div class="level-item target"><div class="level-label">Target</div><div class="level-value">${formatPrice(signal.tp)}</div></div>
           <div class="level-item stop"><div class="level-label">Stop</div><div class="level-value">${formatPrice(signal.sl)}</div></div>
         </div>
+        ${(state.socialSentiment[signal.symbol] || state.liquidationData[signal.symbol]) ? `
+        <div class="signal-intel">
+          ${state.socialSentiment[signal.symbol] ? `
+          <div class="intel-item sentiment-${state.socialSentiment[signal.symbol].sentimentLabel.toLowerCase()}">
+            <span class="intel-icon">🌙</span>
+            <span class="intel-label">Sentiment</span>
+            <span class="intel-value">${state.socialSentiment[signal.symbol].sentimentLabel} (${state.socialSentiment[signal.symbol].sentiment})</span>
+          </div>
+          ` : ''}
+          ${state.liquidationData[signal.symbol]?.crowdBias ? `
+          <div class="intel-item crowd-${state.liquidationData[signal.symbol].crowdBias.toLowerCase().replace('_', '-')}">
+            <span class="intel-icon">👥</span>
+            <span class="intel-label">Crowd</span>
+            <span class="intel-value">${state.liquidationData[signal.symbol].crowdBias.replace('_', ' ')}</span>
+          </div>
+          ` : ''}
+          ${state.liquidationData[signal.symbol]?.priceImplication && state.liquidationData[signal.symbol].priceImplication !== 'NEUTRAL' ? `
+          <div class="intel-item liq-${state.liquidationData[signal.symbol].priceImplication.toLowerCase().replace('_', '-')}">
+            <span class="intel-icon">💧</span>
+            <span class="intel-label">Liqs</span>
+            <span class="intel-value">${state.liquidationData[signal.symbol].priceImplication.replace('_', ' ')}</span>
+          </div>
+          ` : ''}
+        </div>
+        ` : ''}
       </div>
       <div class="signal-footer">
         <div class="footer-stat"><div class="label">Risk ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>

@@ -1540,6 +1540,107 @@ body {
 .level-item.stop .level-value { color: var(--red); }
 .level-item.rr .level-value { color: var(--cyan); }
 
+/* Signal Intelligence (Social/Liquidation Data) */
+.signal-intel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.05) 0%, rgba(57, 197, 207, 0.05) 100%);
+  border-radius: var(--radius);
+  border: 1px solid rgba(124, 92, 255, 0.15);
+  margin-top: 8px;
+}
+
+.intel-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+}
+
+.intel-icon {
+  font-size: 11px;
+}
+
+.intel-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 8px;
+  letter-spacing: 0.5px;
+}
+
+.intel-value {
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Sentiment colors */
+.intel-item.sentiment-bullish {
+  border-left: 2px solid var(--green);
+}
+.intel-item.sentiment-bullish .intel-value {
+  color: var(--green);
+}
+
+.intel-item.sentiment-bearish {
+  border-left: 2px solid var(--red);
+}
+.intel-item.sentiment-bearish .intel-value {
+  color: var(--red);
+}
+
+.intel-item.sentiment-neutral {
+  border-left: 2px solid var(--yellow);
+}
+.intel-item.sentiment-neutral .intel-value {
+  color: var(--yellow);
+}
+
+/* Crowd positioning colors */
+.intel-item.crowd-crowded-long {
+  border-left: 2px solid var(--red);
+}
+.intel-item.crowd-crowded-long .intel-value {
+  color: var(--red);
+}
+
+.intel-item.crowd-crowded-short {
+  border-left: 2px solid var(--green);
+}
+.intel-item.crowd-crowded-short .intel-value {
+  color: var(--green);
+}
+
+.intel-item.crowd-balanced {
+  border-left: 2px solid var(--blue);
+}
+.intel-item.crowd-balanced .intel-value {
+  color: var(--blue);
+}
+
+/* Liquidation signal colors */
+.intel-item.liq-potential-bottom {
+  border-left: 2px solid var(--green);
+  background: rgba(63, 185, 80, 0.1);
+}
+.intel-item.liq-potential-bottom .intel-value {
+  color: var(--green);
+}
+
+.intel-item.liq-potential-top {
+  border-left: 2px solid var(--red);
+  background: rgba(248, 81, 73, 0.1);
+}
+.intel-item.liq-potential-top .intel-value {
+  color: var(--red);
+}
+
 .signal-footer {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
