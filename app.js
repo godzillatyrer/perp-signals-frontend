@@ -104,6 +104,46 @@ function isAiConfigured() {
   return isAnyAiConfigured();
 }
 
+// Manual API key setting (callable from console)
+function setApiKeyManually(provider, key) {
+  if (provider === 'claude' || provider === 'anthropic') {
+    if (key && key.startsWith('sk-ant-')) {
+      CONFIG.CLAUDE_API_KEY = key;
+      localStorage.setItem('claude_api_key', key);
+      console.log('✅ Claude API key saved successfully!');
+      return true;
+    } else {
+      console.error('❌ Invalid Claude API key. It should start with "sk-ant-"');
+      return false;
+    }
+  } else if (provider === 'openai' || provider === 'chatgpt') {
+    if (key && key.startsWith('sk-')) {
+      CONFIG.OPENAI_API_KEY = key;
+      localStorage.setItem('openai_api_key', key);
+      console.log('✅ OpenAI API key saved successfully!');
+      return true;
+    } else {
+      console.error('❌ Invalid OpenAI API key. It should start with "sk-"');
+      return false;
+    }
+  } else {
+    console.error('❌ Unknown provider. Use "claude" or "openai"');
+    console.log('Example: setApiKey("openai", "sk-proj-...")');
+    return false;
+  }
+}
+
+// Show API key status
+function showApiKeyStatus() {
+  console.log('🔑 API Key Status:');
+  console.log('   Claude:', isClaudeConfigured() ? '✅ Configured' : '❌ Not configured');
+  console.log('   OpenAI:', isOpenAIConfigured() ? '✅ Configured' : '❌ Not configured');
+  console.log('');
+  console.log('To add/update keys, run:');
+  console.log('   setApiKey("claude", "sk-ant-...")');
+  console.log('   setApiKey("openai", "sk-...")');
+}
+
 // State
 const state = {
   markets: [],
@@ -2373,16 +2413,21 @@ function initEventListeners() {
 async function init() {
   loadTrades();
 
-  // Load or prompt for Claude API key
-  if (!loadApiKey()) {
-    console.log('⚠️ Claude API key not found. AI features will be disabled.');
-    // Prompt after a short delay so UI loads first
+  // Load API keys from localStorage
+  const keysLoaded = loadApiKeys();
+  console.log('🔑 API Keys loaded:', keysLoaded.claude ? 'Claude ✓' : 'Claude ✗', keysLoaded.openai ? 'OpenAI ✓' : 'OpenAI ✗');
+
+  // Prompt for missing API keys after UI loads
+  if (!keysLoaded.claude || !keysLoaded.openai) {
     setTimeout(() => {
-      if (!isAiConfigured()) {
-        promptForApiKey();
-      }
+      promptForApiKeys();
     }, 2000);
   }
+
+  // Expose functions to manage API keys from console
+  window.setApiKey = setApiKeyManually;
+  window.showApiStatus = showApiKeyStatus;
+  console.log('💡 Tip: Run setApiKey("openai", "sk-...") to add OpenAI key, or showApiStatus() to check status');
 
   // Update balance display
   const startBalEl = document.getElementById('startBalance');
