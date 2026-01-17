@@ -1129,6 +1129,68 @@ body {
 .signal-card.long { border-left: 3px solid var(--green); }
 .signal-card.short { border-left: 3px solid var(--red); }
 
+/* New Signal Animation */
+.signal-card.new-signal {
+  animation: pulse-new 2s ease-in-out infinite;
+  border-color: var(--cyan);
+}
+
+@keyframes pulse-new {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(57, 197, 207, 0.4); }
+  50% { box-shadow: 0 0 15px 5px rgba(57, 197, 207, 0.2); }
+}
+
+/* New and Updated Badges */
+.new-badge {
+  padding: 2px 6px;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 4px;
+  animation: badge-pulse 1.5s infinite;
+}
+
+.updated-badge {
+  padding: 2px 6px;
+  background: linear-gradient(135deg, var(--yellow), var(--accent));
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 4px;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Take Trade Button */
+.take-trade-btn {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  border: none;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.take-trade-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 15px rgba(124, 92, 255, 0.4);
+}
+
+.take-trade-btn:disabled,
+.take-trade-btn.traded {
+  background: var(--green);
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
 .signal-header {
   display: flex;
   justify-content: space-between;
