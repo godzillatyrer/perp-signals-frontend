@@ -28,7 +28,8 @@ const CONFIG = {
   PNL_UPDATE_INTERVAL: 500,
   CACHE_TTL: 30000,
   MIN_CONFIDENCE: 65,
-  HIGH_CONFIDENCE: 75, // Lowered for AI auto-trade
+  HIGH_CONFIDENCE: 85, // Alert threshold - only notify for 85%+
+  ALERT_CONFIDENCE: 85, // Minimum confidence for alerts/notifications
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
@@ -36,7 +37,7 @@ const CONFIG = {
   SL_PERCENT: 2, // Stop loss
   MAX_OPEN_TRADES: 5, // Increased for more trades
   MAX_POSITION_SIZE_PERCENT: 20, // 20% of balance per trade
-  AI_MIN_CONFIDENCE: 70, // Lower threshold for AI auto-trade
+  AI_MIN_CONFIDENCE: 85, // Only auto-trade 85%+ confidence signals
   CHART_HISTORY_LIMIT: 1000, // More candles for longer history
   // Minimum move requirements by market cap
   MIN_TP_PERCENT_BTC_ETH: 3, // BTC/ETH need at least 3% move
@@ -1521,6 +1522,11 @@ async function runAiAnalysis() {
       if (state.aiAutoTradeEnabled) {
         await executeAiTrades();
       }
+
+      // Update UI elements with new data
+      updateAiBadges();
+      renderDataView();
+      updateAllSRFromAISignals();
     }
   } catch (error) {
     console.error('AI Analysis failed:', error);
@@ -2674,6 +2680,203 @@ function renderSignals() {
   });
 }
 
+// ============================================
+// DATA VIEW RENDERING (Coinglass/LunarCrush)
+// ============================================
+
+function renderDataView() {
+  renderLiquidationData();
+  renderLongShortRatio();
+  renderSentimentData();
+}
+
+function renderLiquidationData() {
+  const container = document.getElementById('liquidationList');
+  if (!container) return;
+
+  const data = Object.entries(state.liquidationData).slice(0, 10);
+
+  if (data.length === 0 || !isCoinglassConfigured()) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <p>Configure Coinglass API in Settings</p>
+        <p class="hint">Get key at coinglass.com/api</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = data.map(([symbol, liq]) => {
+    const signalClass = liq.priceImplication === 'POTENTIAL_BOTTOM' ? 'bottom' :
+                        liq.priceImplication === 'POTENTIAL_TOP' ? 'top' : '';
+    return `
+      <div class="liq-item">
+        <span class="symbol">${symbol.replace('USDT', '')}</span>
+        <div class="data">
+          <span class="longs">L: $${formatVolume(liq.longLiquidations24h || 0)}</span>
+          <span class="shorts">S: $${formatVolume(liq.shortLiquidations24h || 0)}</span>
+          ${signalClass ? `<span class="signal ${signalClass}">${liq.priceImplication?.replace('POTENTIAL_', '')}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Update timestamp
+  const updateEl = document.getElementById('liqDataUpdate');
+  if (updateEl && data.length > 0) {
+    const lastUpdate = data[0][1].timestamp;
+    updateEl.textContent = lastUpdate ? timeAgo(lastUpdate) : '--';
+  }
+}
+
+function renderLongShortRatio() {
+  const container = document.getElementById('lsRatioList');
+  if (!container) return;
+
+  const data = Object.entries(state.liquidationData)
+    .filter(([_, d]) => d.longPercent && d.shortPercent)
+    .slice(0, 8);
+
+  if (data.length === 0) {
+    container.innerHTML = '<div class="empty-state">No data available</div>';
+    return;
+  }
+
+  container.innerHTML = data.map(([symbol, d]) => {
+    const longPct = d.longPercent || 50;
+    const shortPct = d.shortPercent || 50;
+    return `
+      <div class="ls-item">
+        <span class="symbol">${symbol.replace('USDT', '')}</span>
+        <span class="pct long">${longPct.toFixed(0)}%</span>
+        <div class="ratio-bar">
+          <div class="long-fill" style="width: ${longPct}%"></div>
+          <div class="short-fill" style="width: ${shortPct}%"></div>
+        </div>
+        <span class="pct short">${shortPct.toFixed(0)}%</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSentimentData() {
+  const container = document.getElementById('sentimentList');
+  if (!container) return;
+
+  const data = Object.entries(state.socialSentiment).slice(0, 8);
+
+  if (data.length === 0 || !isLunarCrushConfigured()) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <p>Configure LunarCrush API in Settings</p>
+        <p class="hint">Get key at lunarcrush.com/developers</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = data.map(([symbol, s]) => {
+    const galaxyClass = s.galaxyScore >= 70 ? 'high' : s.galaxyScore >= 40 ? 'medium' : 'low';
+    const moodClass = s.sentimentLabel?.toLowerCase() || 'neutral';
+    return `
+      <div class="sentiment-item">
+        <span class="symbol">${symbol.replace('USDT', '')}</span>
+        <div class="score">
+          <span class="galaxy ${galaxyClass}">${s.galaxyScore || 0}</span>
+          <span class="mood ${moodClass}">${s.sentimentLabel || 'NEUTRAL'}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ============================================
+// AI BADGE UPDATES
+// ============================================
+
+function updateAiBadges() {
+  const claudeBadge = document.getElementById('claudeBadge');
+  const openaiBadge = document.getElementById('openaiBadge');
+
+  if (claudeBadge) {
+    claudeBadge.style.display = isClaudeConfigured() ? 'flex' : 'none';
+  }
+  if (openaiBadge) {
+    openaiBadge.style.display = isOpenAIConfigured() ? 'flex' : 'none';
+  }
+
+  // If no AI configured, show a placeholder
+  const badgesContainer = document.getElementById('aiActiveBadges');
+  if (badgesContainer && !isClaudeConfigured() && !isOpenAIConfigured()) {
+    badgesContainer.innerHTML = `
+      <div class="ai-badge" style="background: var(--bg-hover); opacity: 0.7;">
+        <span>⚠️</span>
+        <span>No AI</span>
+      </div>
+    `;
+  }
+}
+
+// ============================================
+// AI S/R LINE UPDATES
+// ============================================
+
+function updateSRLinesFromAI(signal) {
+  if (!signal || !signal.keyLevels) return;
+
+  const { majorSupport, majorResistance, liquidationZone } = signal.keyLevels;
+
+  // Clear existing AI-generated S/R lines
+  state.srLines = state.srLines.filter(line => !line.isAiGenerated);
+
+  // Add new AI-generated levels
+  if (majorSupport && state.candleSeries) {
+    const supportLine = state.candleSeries.createPriceLine({
+      price: majorSupport,
+      color: '#3fb950',
+      lineWidth: 2,
+      lineStyle: 0, // Solid
+      axisLabelVisible: true,
+      title: 'AI Support',
+    });
+    state.srLines.push({ line: supportLine, isAiGenerated: true, type: 'support' });
+  }
+
+  if (majorResistance && state.candleSeries) {
+    const resistanceLine = state.candleSeries.createPriceLine({
+      price: majorResistance,
+      color: '#f85149',
+      lineWidth: 2,
+      lineStyle: 0,
+      axisLabelVisible: true,
+      title: 'AI Resistance',
+    });
+    state.srLines.push({ line: resistanceLine, isAiGenerated: true, type: 'resistance' });
+  }
+
+  if (liquidationZone && state.candleSeries) {
+    const liqLine = state.candleSeries.createPriceLine({
+      price: liquidationZone,
+      color: '#d29922',
+      lineWidth: 1,
+      lineStyle: 2, // Dashed
+      axisLabelVisible: true,
+      title: 'Liq Zone',
+    });
+    state.srLines.push({ line: liqLine, isAiGenerated: true, type: 'liquidation' });
+  }
+
+  console.log('📍 Updated AI S/R lines for', signal.symbol);
+}
+
+function updateAllSRFromAISignals() {
+  // Find the signal for the currently selected symbol
+  const currentSignal = state.aiSignals.find(s => s.symbol === state.selectedSymbol) ||
+                        state.signalHistory.find(s => s.symbol === state.selectedSymbol && s.isAiGenerated);
+
+  if (currentSignal) {
+    updateSRLinesFromAI(currentSignal);
+  }
+}
+
 function renderAlertBar() {
   const container = document.getElementById('alertBarSignals');
   if (!container) return;
@@ -2841,6 +3044,9 @@ function selectMarket(symbol) {
   }
 
   loadChartData();
+
+  // Update S/R lines from AI analysis for the new symbol
+  updateAllSRFromAISignals();
 }
 
 function updateScanStatus(current, found) {
@@ -3096,8 +3302,20 @@ function initEventListeners() {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      state.signalTab = tab.dataset.signalTab; // 'new' or 'all'
-      renderSignals();
+
+      const tabType = tab.dataset.signalTab; // 'new', 'all', or 'data'
+
+      // Handle sidebar view switching
+      if (tabType === 'data') {
+        document.getElementById('signalsView')?.classList.remove('active');
+        document.getElementById('dataView')?.classList.add('active');
+        renderDataView();
+      } else {
+        document.getElementById('dataView')?.classList.remove('active');
+        document.getElementById('signalsView')?.classList.add('active');
+        state.signalTab = tabType;
+        renderSignals();
+      }
     });
   });
 
@@ -3297,6 +3515,9 @@ function saveSettings() {
 
   // Re-render signals panel
   renderSignals();
+
+  // Update AI badges to reflect current configuration
+  updateAiBadges();
 }
 
 function initSettingsModal() {
@@ -3399,6 +3620,9 @@ async function init() {
 
   initWebSocket();
   initEventListeners();
+
+  // Update AI badges based on loaded API keys
+  updateAiBadges();
 
   // Run initial scans
   runScan();
