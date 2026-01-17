@@ -60,6 +60,7 @@ const state = {
   signals: [],
   trades: [],
   aiSignals: [], // AI-generated signals
+  signalHistory: [], // Track all signals with timestamps for "New" tab
   selectedSymbol: 'BTCUSDT',
   currentTimeframe: '240',
   balance: 2000,
@@ -83,6 +84,7 @@ const state = {
   equitySeries: null,
   wsConnection: null,
   signalFilter: 'all',
+  signalTab: 'new', // 'new' or 'all'
   nextAiScanTime: null,
   lastAiAnalysis: null,
   aiAutoTradeEnabled: true
@@ -885,6 +887,23 @@ async function runScan() {
   newSignals.sort((a, b) => b.confidence - a.confidence);
   state.signals = newSignals;
 
+  // Add new signals to history (keep last 100)
+  for (const signal of newSignals) {
+    const existingIdx = state.signalHistory.findIndex(
+      s => s.symbol === signal.symbol && s.direction === signal.direction
+    );
+    if (existingIdx === -1) {
+      // New signal - add to history
+      state.signalHistory.unshift({ ...signal, isNew: true });
+    } else if (state.signalHistory[existingIdx].confidence !== signal.confidence) {
+      // Signal updated - move to top
+      state.signalHistory.splice(existingIdx, 1);
+      state.signalHistory.unshift({ ...signal, isNew: true, isUpdated: true });
+    }
+  }
+  // Keep only last 100 signals in history
+  state.signalHistory = state.signalHistory.slice(0, 100);
+
   const highConfSignals = newSignals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE);
   for (const signal of highConfSignals) {
     const key = `${signal.symbol}_${signal.direction}_${signal.timeframe}`;
@@ -1157,9 +1176,21 @@ function initChart() {
 
 async function loadChartData() {
   const candles = await fetchKlines(state.selectedSymbol, state.currentTimeframe, 300);
-  if (candles.length === 0 || !state.candleSeries) return;
+  if (candles.length === 0 || !state.candleSeries || !state.chart) return;
 
+  // CRITICAL: Reset price scale to auto-scale for new data range
+  state.chart.priceScale('right').applyOptions({
+    autoScale: true,
+    scaleMargins: { top: 0.1, bottom: 0.2 }
+  });
+
+  // Reset time scale before loading new data
+  state.chart.timeScale().resetTimeScale();
+
+  // Set candle data
   state.candleSeries.setData(candles);
+
+  // Set volume data
   state.volumeSeries.setData(candles.map(c => ({
     time: c.time,
     value: c.volume,
@@ -1171,19 +1202,23 @@ async function loadChartData() {
 
   // EMA 20
   const ema20Data = [];
-  let ema20 = closes.slice(0, 20).reduce((a, b) => a + b, 0) / 20;
-  for (let i = 20; i < candles.length; i++) {
-    ema20 = closes[i] * (2 / 21) + ema20 * (1 - 2 / 21);
-    ema20Data.push({ time: candles[i].time, value: ema20 });
+  if (closes.length >= 20) {
+    let ema20 = closes.slice(0, 20).reduce((a, b) => a + b, 0) / 20;
+    for (let i = 20; i < candles.length; i++) {
+      ema20 = closes[i] * (2 / 21) + ema20 * (1 - 2 / 21);
+      ema20Data.push({ time: candles[i].time, value: ema20 });
+    }
   }
   if (state.ema20Series) state.ema20Series.setData(ema20Data);
 
   // EMA 50
   const ema50Data = [];
-  let ema50 = closes.slice(0, 50).reduce((a, b) => a + b, 0) / 50;
-  for (let i = 50; i < candles.length; i++) {
-    ema50 = closes[i] * (2 / 51) + ema50 * (1 - 2 / 51);
-    ema50Data.push({ time: candles[i].time, value: ema50 });
+  if (closes.length >= 50) {
+    let ema50 = closes.slice(0, 50).reduce((a, b) => a + b, 0) / 50;
+    for (let i = 50; i < candles.length; i++) {
+      ema50 = closes[i] * (2 / 51) + ema50 * (1 - 2 / 51);
+      ema50Data.push({ time: candles[i].time, value: ema50 });
+    }
   }
   if (state.ema50Series) state.ema50Series.setData(ema50Data);
 
@@ -1195,8 +1230,8 @@ async function loadChartData() {
       ema200 = closes[i] * (2 / 201) + ema200 * (1 - 2 / 201);
       ema200Data.push({ time: candles[i].time, value: ema200 });
     }
-    if (state.ema200Series) state.ema200Series.setData(ema200Data);
   }
+  if (state.ema200Series) state.ema200Series.setData(ema200Data);
 
   // Draw support/resistance lines
   if (state.showSR) {
@@ -1204,7 +1239,12 @@ async function loadChartData() {
     updateChartLevels(supports, resistances, candles[candles.length - 1].close);
   }
 
-  state.chart.timeScale().fitContent();
+  // Fit content with a small delay to ensure data is rendered
+  setTimeout(() => {
+    if (state.chart) {
+      state.chart.timeScale().fitContent();
+    }
+  }, 50);
 }
 
 function updateChartLevels(supports, resistances, currentPrice) {
@@ -1369,7 +1409,9 @@ function renderSignals() {
   const container = document.getElementById('signalsList');
   if (!container) return;
 
-  let signals = state.signals;
+  // Use signal history for "new" tab, regular signals for "all" tab
+  let signals = state.signalTab === 'new' ? state.signalHistory : state.signals;
+
   if (state.signalFilter === 'longs') signals = signals.filter(s => s.direction === 'LONG');
   else if (state.signalFilter === 'shorts') signals = signals.filter(s => s.direction === 'SHORT');
 
@@ -1378,16 +1420,27 @@ function renderSignals() {
     return;
   }
 
-  container.innerHTML = signals.map(signal => `
-    <div class="signal-card ${signal.direction.toLowerCase()}" data-symbol="${signal.symbol}">
+  // For "new" tab, show recent signals first (already sorted by time)
+  // For "all" tab, sort by confidence
+  if (state.signalTab === 'all') {
+    signals = [...signals].sort((a, b) => b.confidence - a.confidence);
+  }
+
+  container.innerHTML = signals.map(signal => {
+    const isRecent = Date.now() - signal.timestamp < 300000; // 5 minutes
+    const isNew = signal.isNew && isRecent;
+
+    return `
+    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''}" data-symbol="${signal.symbol}">
       <div class="signal-header">
         <div class="signal-symbol-info">
           <span class="signal-symbol">${signal.symbol.replace('USDT', '')}</span>
           <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
-          <span class="signal-leverage">LEV ${CONFIG.LEVERAGE}x</span>
+          ${isNew ? '<span class="new-badge">NEW</span>' : ''}
+          ${signal.isUpdated ? '<span class="updated-badge">UPDATED</span>' : ''}
         </div>
         <div class="signal-confidence">
-          <span class="conf-label">Total Conf:</span>
+          <span class="conf-label">Confidence:</span>
           <span class="conf-value">${signal.confidence}%</span>
           <span class="signal-time">${timeAgo(signal.timestamp)}</span>
         </div>
@@ -1407,15 +1460,37 @@ function renderSignals() {
         </div>
       </div>
       <div class="signal-footer">
-        <div class="footer-stat"><div class="label">Risk Amount ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
-        <div class="footer-stat"><div class="label">SL Distance</div><div class="value red">${CONFIG.SL_PERCENT}%</div></div>
-        <div class="footer-stat"><div class="label">Position Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
+        <div class="footer-stat"><div class="label">Risk ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
+        <div class="footer-stat"><div class="label">Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
+        <button class="take-trade-btn" data-symbol="${signal.symbol}" data-direction="${signal.direction}">
+          Take Trade
+        </button>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   container.querySelectorAll('.signal-card').forEach(el => {
-    el.addEventListener('click', () => selectMarket(el.dataset.symbol));
+    el.addEventListener('click', (e) => {
+      // Don't navigate if clicking the trade button
+      if (e.target.classList.contains('take-trade-btn')) return;
+      selectMarket(el.dataset.symbol);
+    });
+  });
+
+  // Take Trade button handlers
+  container.querySelectorAll('.take-trade-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const symbol = btn.dataset.symbol;
+      const direction = btn.dataset.direction;
+      const signal = signals.find(s => s.symbol === symbol && s.direction === direction);
+      if (signal) {
+        openTrade(signal);
+        btn.textContent = '✓ Opened';
+        btn.disabled = true;
+        btn.classList.add('traded');
+      }
+    });
   });
 }
 
@@ -1788,11 +1863,13 @@ function initEventListeners() {
     });
   }
 
-  // Signal tabs
+  // Signal tabs (New/All)
   document.querySelectorAll('.signal-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
+      state.signalTab = tab.dataset.signalTab; // 'new' or 'all'
+      renderSignals();
     });
   });
 
