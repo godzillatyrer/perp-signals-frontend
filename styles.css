@@ -1420,23 +1420,66 @@ body {
 }
 
 /* ============================================
-   GROWTH VIEW
+   GROWTH VIEW - Portfolio Simulator
    ============================================ */
 .growth-content {
   padding: 24px;
+  height: 100%;
+  overflow-y: auto;
 }
 
-.growth-content h2 {
-  margin: 0 0 8px;
-  font-size: 24px;
-  font-weight: 800;
-}
-
-.growth-chart {
-  height: 400px;
-  background: var(--bg-card);
+.portfolio-panel-growth {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  margin-top: 20px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.portfolio-panel-growth .portfolio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.portfolio-panel-growth .portfolio-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.portfolio-panel-growth .equity-chart {
+  height: 200px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.portfolio-panel-growth .positions-list,
+.portfolio-panel-growth .history-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Fullscreen Chart */
+.chart-fullscreen {
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-fullscreen .chart-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-fullscreen .chart-body {
+  flex: 1;
+  min-height: 500px;
 }
 
 /* ============================================
