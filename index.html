@@ -211,10 +211,136 @@
 
       <!-- GROWTH VIEW -->
       <div class="view" id="view-growth">
-        <div class="growth-content">
-          <h2>Portfolio Growth Analytics</h2>
-          <p class="muted">Track your portfolio performance over time</p>
-          <div class="growth-chart" id="growthChart"></div>
+        <div class="growth-container">
+          <!-- Stats Row -->
+          <div class="growth-stats-row">
+            <div class="growth-stat-card">
+              <div class="stat-icon green">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"/>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Starting Balance</span>
+                <span class="stat-value">$2,000.00</span>
+              </div>
+            </div>
+            <div class="growth-stat-card">
+              <div class="stat-icon purple">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                  <polyline points="17 6 23 6 23 12"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Current Equity</span>
+                <span class="stat-value" id="growthEquity">$2,000.00</span>
+              </div>
+            </div>
+            <div class="growth-stat-card">
+              <div class="stat-icon" id="growthPnlIcon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Total P&L</span>
+                <span class="stat-value" id="growthTotalPnl">$0.00</span>
+              </div>
+            </div>
+            <div class="growth-stat-card">
+              <div class="stat-icon cyan">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+              </div>
+              <div class="stat-info">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value" id="growthWinRate">0%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Main Chart -->
+          <div class="growth-chart-section">
+            <div class="growth-chart-header">
+              <h3>Equity Curve</h3>
+              <div class="growth-chart-actions">
+                <button class="growth-period-btn active" data-period="all">All</button>
+                <button class="growth-period-btn" data-period="7d">7D</button>
+                <button class="growth-period-btn" data-period="30d">30D</button>
+                <button class="reset-btn" id="resetAccountBtn">Reset Account</button>
+              </div>
+            </div>
+            <div class="growth-chart" id="growthChart"></div>
+          </div>
+
+          <!-- Trade Statistics and History -->
+          <div class="growth-bottom-row">
+            <!-- Statistics Panel -->
+            <div class="growth-statistics">
+              <h4>Trading Statistics</h4>
+              <div class="stats-grid">
+                <div class="stat-row">
+                  <span class="stat-name">Total Trades</span>
+                  <span class="stat-val" id="growthTotalTrades">0</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Winning Trades</span>
+                  <span class="stat-val green" id="growthWinTrades">0</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Losing Trades</span>
+                  <span class="stat-val red" id="growthLossTrades">0</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Avg Win</span>
+                  <span class="stat-val green" id="growthAvgWin">$0.00</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Avg Loss</span>
+                  <span class="stat-val red" id="growthAvgLoss">$0.00</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Max Drawdown</span>
+                  <span class="stat-val red" id="growthMaxDD">0.0%</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Profit Factor</span>
+                  <span class="stat-val" id="growthProfitFactor">0.00</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-name">Open Positions</span>
+                  <span class="stat-val" id="growthOpenPos">0</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Trade History Table -->
+            <div class="growth-history">
+              <h4>Trade History</h4>
+              <div class="history-table-container">
+                <table class="history-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Symbol</th>
+                      <th>Side</th>
+                      <th>Entry</th>
+                      <th>Exit</th>
+                      <th>P&L</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="growthHistoryBody">
+                    <tr><td colspan="7" class="empty-cell">No trades yet</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </main>

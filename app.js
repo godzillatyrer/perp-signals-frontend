@@ -42,8 +42,11 @@ const state = {
   chart: null,
   candleSeries: null,
   volumeSeries: null,
+  priceLines: [],
   equityChart: null,
   equitySeries: null,
+  growthChart: null,
+  growthSeries: null,
   wsConnection: null,
   signalFilter: 'all'
 };
@@ -677,6 +680,10 @@ async function loadChartData() {
   const candles = await fetchKlines(state.selectedSymbol, state.currentTimeframe, 300);
   if (candles.length === 0 || !state.candleSeries) return;
 
+  // Clear existing price lines
+  clearPriceLines();
+
+  // Set new data
   state.candleSeries.setData(candles);
   state.volumeSeries.setData(candles.map(c => ({
     time: c.time,
@@ -684,12 +691,68 @@ async function loadChartData() {
     color: c.close >= c.open ? 'rgba(63, 185, 80, 0.3)' : 'rgba(248, 81, 73, 0.3)'
   })));
 
+  // Add S/R price lines on chart
   if (state.showSR) {
     const { supports, resistances } = findSupportResistance(candles);
+    addPriceLines(supports, resistances, candles[candles.length - 1].close);
     updateChartLevels(supports, resistances, candles[candles.length - 1].close);
   }
 
+  // Auto-fit content to show correct price range
   state.chart.timeScale().fitContent();
+}
+
+function clearPriceLines() {
+  // Remove all existing price lines from candleSeries
+  if (state.priceLines && state.priceLines.length > 0) {
+    state.priceLines.forEach(line => {
+      try {
+        state.candleSeries.removePriceLine(line);
+      } catch (e) {
+        // Line may have already been removed
+      }
+    });
+  }
+  state.priceLines = [];
+}
+
+function addPriceLines(supports, resistances, currentPrice) {
+  // Add resistance lines (red)
+  resistances.forEach((price, idx) => {
+    const line = state.candleSeries.createPriceLine({
+      price: price,
+      color: '#f85149',
+      lineWidth: 1,
+      lineStyle: 2, // Dashed
+      axisLabelVisible: true,
+      title: `R${idx + 1}`
+    });
+    state.priceLines.push(line);
+  });
+
+  // Add support lines (green)
+  supports.forEach((price, idx) => {
+    const line = state.candleSeries.createPriceLine({
+      price: price,
+      color: '#3fb950',
+      lineWidth: 1,
+      lineStyle: 2, // Dashed
+      axisLabelVisible: true,
+      title: `S${idx + 1}`
+    });
+    state.priceLines.push(line);
+  });
+
+  // Add current price line (purple)
+  const currentLine = state.candleSeries.createPriceLine({
+    price: currentPrice,
+    color: '#7c5cff',
+    lineWidth: 2,
+    lineStyle: 0, // Solid
+    axisLabelVisible: true,
+    title: 'NOW'
+  });
+  state.priceLines.push(currentLine);
 }
 
 function updateChartLevels(supports, resistances, currentPrice) {
@@ -954,6 +1017,179 @@ function renderAll() {
   renderPositions();
   renderHistory();
   updatePortfolioStats();
+  renderGrowthView();
+}
+
+// ============================================
+// GROWTH VIEW RENDERING
+// ============================================
+
+function initGrowthChart() {
+  const container = document.getElementById('growthChart');
+  if (!container || typeof LightweightCharts === 'undefined') return;
+
+  state.growthChart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 300,
+    layout: {
+      background: { type: 'solid', color: '#0a0e14' },
+      textColor: '#8b949e'
+    },
+    grid: {
+      vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
+      horzLines: { color: 'rgba(255, 255, 255, 0.03)' }
+    },
+    rightPriceScale: {
+      borderColor: 'rgba(255, 255, 255, 0.1)'
+    },
+    timeScale: {
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+      timeVisible: true
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal
+    }
+  });
+
+  state.growthSeries = state.growthChart.addAreaSeries({
+    lineColor: '#7c5cff',
+    topColor: 'rgba(124, 92, 255, 0.4)',
+    bottomColor: 'rgba(124, 92, 255, 0.05)',
+    lineWidth: 2
+  });
+
+  // Add baseline at starting balance
+  state.growthSeries.createPriceLine({
+    price: state.startBalance,
+    color: '#8b949e',
+    lineWidth: 1,
+    lineStyle: 2,
+    axisLabelVisible: true,
+    title: 'Start'
+  });
+
+  new ResizeObserver(() => {
+    if (state.growthChart) {
+      state.growthChart.applyOptions({ width: container.clientWidth });
+    }
+  }).observe(container);
+
+  updateGrowthChart();
+}
+
+function updateGrowthChart() {
+  if (!state.growthSeries) return;
+
+  const data = state.equityHistory.map(p => ({
+    time: Math.floor(p.time / 1000),
+    value: p.value
+  }));
+
+  if (data.length > 0) {
+    state.growthSeries.setData(data);
+    state.growthChart.timeScale().fitContent();
+  }
+}
+
+function renderGrowthView() {
+  const closedTrades = state.trades.filter(t => t.status === 'closed');
+  const openTrades = state.trades.filter(t => t.status === 'open');
+  const wins = closedTrades.filter(t => t.pnl > 0);
+  const losses = closedTrades.filter(t => t.pnl < 0);
+
+  const totalPnl = state.balance - state.startBalance;
+  const winRate = closedTrades.length > 0 ? (wins.length / closedTrades.length * 100) : 0;
+  const avgWin = wins.length > 0 ? wins.reduce((a, t) => a + t.pnl, 0) / wins.length : 0;
+  const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((a, t) => a + t.pnl, 0) / losses.length) : 0;
+  const totalWins = wins.reduce((a, t) => a + t.pnl, 0);
+  const totalLosses = Math.abs(losses.reduce((a, t) => a + t.pnl, 0));
+  const profitFactor = totalLosses > 0 ? (totalWins / totalLosses) : totalWins > 0 ? 999 : 0;
+  const maxDd = calculateMaxDrawdown();
+
+  // Update stat cards
+  const growthEquity = document.getElementById('growthEquity');
+  const growthTotalPnl = document.getElementById('growthTotalPnl');
+  const growthWinRate = document.getElementById('growthWinRate');
+  const growthPnlIcon = document.getElementById('growthPnlIcon');
+
+  if (growthEquity) growthEquity.textContent = '$' + state.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (growthTotalPnl) {
+    growthTotalPnl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
+    growthTotalPnl.style.color = totalPnl >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+  if (growthPnlIcon) growthPnlIcon.className = 'stat-icon ' + (totalPnl >= 0 ? 'green' : 'red');
+  if (growthWinRate) growthWinRate.textContent = winRate.toFixed(0) + '%';
+
+  // Update statistics
+  const els = {
+    growthTotalTrades: closedTrades.length,
+    growthWinTrades: wins.length,
+    growthLossTrades: losses.length,
+    growthAvgWin: '$' + avgWin.toFixed(2),
+    growthAvgLoss: '$' + avgLoss.toFixed(2),
+    growthMaxDD: maxDd.toFixed(1) + '%',
+    growthProfitFactor: profitFactor.toFixed(2),
+    growthOpenPos: openTrades.length
+  };
+
+  for (const [id, value] of Object.entries(els)) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  }
+
+  // Render trade history table
+  renderGrowthHistoryTable();
+
+  // Update chart
+  updateGrowthChart();
+}
+
+function renderGrowthHistoryTable() {
+  const tbody = document.getElementById('growthHistoryBody');
+  if (!tbody) return;
+
+  const allTrades = [...state.trades].sort((a, b) => b.timestamp - a.timestamp);
+
+  if (allTrades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">No trades yet</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = allTrades.map(t => {
+    const time = new Date(t.timestamp).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+
+    return `
+      <tr>
+        <td>${time}</td>
+        <td><strong>${t.symbol.replace('USDT', '')}</strong></td>
+        <td><span class="side-${t.direction.toLowerCase()}">${t.direction}</span></td>
+        <td>$${formatPrice(t.entry)}</td>
+        <td>${t.exitPrice ? '$' + formatPrice(t.exitPrice) : '-'}</td>
+        <td class="${t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</td>
+        <td><span class="status-${t.status}">${t.status.toUpperCase()}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function resetAccount() {
+  if (!confirm('Are you sure you want to reset your paper trading account? This will clear all trades and reset balance to $2,000.')) {
+    return;
+  }
+
+  state.balance = state.startBalance;
+  state.trades = [];
+  state.equityHistory = [{ time: Date.now(), value: state.startBalance }];
+
+  saveTrades();
+  renderAll();
+  updateEquityChart();
+
+  if (state.growthSeries) {
+    state.growthSeries.setData([{ time: Math.floor(Date.now() / 1000), value: state.startBalance }]);
+  }
 }
 
 // ============================================
@@ -1067,6 +1303,11 @@ function initEventListeners() {
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
       const viewEl = document.getElementById(`view-${view}`);
       if (viewEl) viewEl.classList.add('active');
+
+      // Initialize growth chart when switching to growth view
+      if (view === 'growth' && !state.growthChart) {
+        setTimeout(initGrowthChart, 100);
+      }
     });
   });
 
@@ -1131,6 +1372,19 @@ function initEventListeners() {
   // Refresh button
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) refreshBtn.addEventListener('click', () => runScan());
+
+  // Reset account button
+  const resetBtn = document.getElementById('resetAccountBtn');
+  if (resetBtn) resetBtn.addEventListener('click', resetAccount);
+
+  // Growth period buttons
+  document.querySelectorAll('.growth-period-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.growth-period-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // Period filtering could be added here
+    });
+  });
 }
 
 // ============================================
