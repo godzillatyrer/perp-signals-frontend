@@ -15,7 +15,7 @@ const CONFIG = {
   // OpenAI API
   OPENAI_API: 'https://api.openai.com/v1/chat/completions',
   OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
-  OPENAI_MODEL: 'gpt-4-turbo-preview', // Model used for analysis
+  OPENAI_MODEL: 'gpt-4o', // Using GPT-4o for best analysis (change to 'o1-preview' for reasoning model)
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
@@ -180,7 +180,29 @@ const state = {
   lastAiAnalysis: null,
   aiAutoTradeEnabled: true,
   drawingMode: null, // 'hline', 'trendline', null
-  pendingLine: null // For drawing trendlines
+  pendingLine: null, // For drawing trendlines
+  // Enhanced features
+  fundingRates: {}, // Symbol -> funding rate
+  openInterest: {}, // Symbol -> OI data
+  performanceStats: {
+    totalTrades: 0,
+    winningTrades: 0,
+    losingTrades: 0,
+    totalPnL: 0,
+    claudeWins: 0,
+    claudeLosses: 0,
+    openaiWins: 0,
+    openaiLosses: 0,
+    consensusWins: 0,
+    consensusLosses: 0,
+    largestWin: 0,
+    largestLoss: 0,
+    currentStreak: 0,
+    maxDrawdown: 0,
+    peakBalance: 2000
+  },
+  soundEnabled: true,
+  notificationsEnabled: false
 };
 
 // Utility Functions
@@ -231,6 +253,317 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
 
 // Blocked tickers (problematic or unwanted)
 const BLOCKED_TICKERS = ['BNXUSDT', 'BNXUSDTPERP'];
+
+// ============================================
+// FUNDING RATES & OPEN INTEREST
+// ============================================
+
+async function fetchFundingRates() {
+  try {
+    const data = await fetchWithRetry(`${CONFIG.BINANCE_API}/fapi/v1/premiumIndex`);
+    const rates = {};
+    for (const item of data) {
+      if (item.symbol.endsWith('USDT')) {
+        rates[item.symbol] = {
+          fundingRate: parseFloat(item.lastFundingRate) * 100, // Convert to percentage
+          nextFundingTime: item.nextFundingTime,
+          markPrice: parseFloat(item.markPrice),
+          indexPrice: parseFloat(item.indexPrice)
+        };
+      }
+    }
+    state.fundingRates = rates;
+    console.log('📊 Funding rates updated for', Object.keys(rates).length, 'symbols');
+    return rates;
+  } catch (error) {
+    console.error('Failed to fetch funding rates:', error);
+    return {};
+  }
+}
+
+async function fetchOpenInterest(symbol) {
+  try {
+    const data = await fetchWithRetry(`${CONFIG.BINANCE_API}/fapi/v1/openInterest?symbol=${symbol}`);
+    const oiValue = parseFloat(data.openInterest);
+
+    // Get historical OI for comparison
+    const histData = await fetchWithRetry(
+      `${CONFIG.BINANCE_API}/futures/data/openInterestHist?symbol=${symbol}&period=1h&limit=24`
+    );
+
+    let oiChange = 0;
+    if (histData && histData.length > 1) {
+      const oldOI = parseFloat(histData[0].sumOpenInterest);
+      const newOI = parseFloat(histData[histData.length - 1].sumOpenInterest);
+      oiChange = ((newOI - oldOI) / oldOI) * 100;
+    }
+
+    state.openInterest[symbol] = {
+      value: oiValue,
+      change24h: oiChange,
+      timestamp: Date.now()
+    };
+
+    return state.openInterest[symbol];
+  } catch (error) {
+    console.error(`Failed to fetch OI for ${symbol}:`, error);
+    return null;
+  }
+}
+
+// ============================================
+// MULTI-TIMEFRAME ANALYSIS
+// ============================================
+
+async function analyzeMultiTimeframe(symbol) {
+  const timeframes = ['15', '60', '240', 'D']; // 15m, 1H, 4H, 1D
+  const analysis = {};
+
+  for (const tf of timeframes) {
+    try {
+      const candles = await fetchKlines(symbol, tf, 100);
+      if (candles.length < 50) continue;
+
+      const closes = candles.map(c => c.close);
+      const ema20 = calculateEMA(closes, 20);
+      const ema50 = calculateEMA(closes, 50);
+      const rsi = calculateRSI(closes);
+      const currentPrice = closes[closes.length - 1];
+
+      // Determine trend
+      let trend = 'NEUTRAL';
+      if (currentPrice > ema20 && ema20 > ema50) trend = 'BULLISH';
+      else if (currentPrice < ema20 && ema20 < ema50) trend = 'BEARISH';
+
+      analysis[tf] = {
+        trend,
+        rsi,
+        priceVsEma20: ((currentPrice - ema20) / ema20 * 100).toFixed(2),
+        emaAlignment: ema20 > ema50 ? 'BULLISH' : 'BEARISH'
+      };
+
+      await sleep(50); // Rate limiting
+    } catch (error) {
+      console.error(`MTF analysis failed for ${symbol} ${tf}:`, error);
+    }
+  }
+
+  // Calculate confluence score
+  const bullishCount = Object.values(analysis).filter(a => a.trend === 'BULLISH').length;
+  const bearishCount = Object.values(analysis).filter(a => a.trend === 'BEARISH').length;
+
+  return {
+    timeframes: analysis,
+    confluence: bullishCount > bearishCount ? 'BULLISH' : bearishCount > bullishCount ? 'BEARISH' : 'MIXED',
+    confluenceScore: Math.max(bullishCount, bearishCount) / Object.keys(analysis).length * 100,
+    alignment: bullishCount === Object.keys(analysis).length ? 'FULL_BULLISH' :
+               bearishCount === Object.keys(analysis).length ? 'FULL_BEARISH' : 'PARTIAL'
+  };
+}
+
+// ============================================
+// SOUND & BROWSER NOTIFICATIONS
+// ============================================
+
+function playAlertSound(type = 'signal') {
+  if (!state.soundEnabled) return;
+
+  try {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    if (type === 'consensus') {
+      // Special sound for consensus - ascending notes
+      oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+      oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+      oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.4);
+    } else if (type === 'win') {
+      // Victory sound
+      oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(554.37, audioContext.currentTime + 0.1);
+      oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.2);
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } else if (type === 'loss') {
+      // Loss sound - descending
+      oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(349.23, audioContext.currentTime + 0.15);
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } else {
+      // Default signal sound
+      oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    }
+  } catch (e) {
+    console.log('Audio not available');
+  }
+}
+
+async function requestNotificationPermission() {
+  if ('Notification' in window) {
+    const permission = await Notification.requestPermission();
+    state.notificationsEnabled = permission === 'granted';
+    console.log('🔔 Notifications:', state.notificationsEnabled ? 'enabled' : 'disabled');
+    return state.notificationsEnabled;
+  }
+  return false;
+}
+
+function sendBrowserNotification(title, body, options = {}) {
+  if (!state.notificationsEnabled || !('Notification' in window)) return;
+
+  try {
+    const notification = new Notification(title, {
+      body,
+      icon: '📊',
+      badge: '📈',
+      tag: options.tag || 'sentient-trader',
+      requireInteraction: options.important || false,
+      ...options
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      if (options.symbol) selectMarket(options.symbol);
+      notification.close();
+    };
+
+    // Auto close after 10 seconds
+    setTimeout(() => notification.close(), 10000);
+  } catch (e) {
+    console.error('Notification failed:', e);
+  }
+}
+
+// ============================================
+// PERFORMANCE TRACKING
+// ============================================
+
+function updatePerformanceStats(trade, pnl) {
+  const stats = state.performanceStats;
+
+  stats.totalTrades++;
+  stats.totalPnL += pnl;
+
+  if (pnl > 0) {
+    stats.winningTrades++;
+    stats.currentStreak = stats.currentStreak >= 0 ? stats.currentStreak + 1 : 1;
+    if (pnl > stats.largestWin) stats.largestWin = pnl;
+
+    // Track by AI source
+    if (trade.isConsensus) stats.consensusWins++;
+    else if (trade.aiSource === 'claude') stats.claudeWins++;
+    else if (trade.aiSource === 'openai') stats.openaiWins++;
+  } else {
+    stats.losingTrades++;
+    stats.currentStreak = stats.currentStreak <= 0 ? stats.currentStreak - 1 : -1;
+    if (pnl < stats.largestLoss) stats.largestLoss = pnl;
+
+    // Track by AI source
+    if (trade.isConsensus) stats.consensusLosses++;
+    else if (trade.aiSource === 'claude') stats.claudeLosses++;
+    else if (trade.aiSource === 'openai') stats.openaiLosses++;
+  }
+
+  // Update peak balance and drawdown
+  if (state.balance > stats.peakBalance) {
+    stats.peakBalance = state.balance;
+  }
+  const currentDrawdown = ((stats.peakBalance - state.balance) / stats.peakBalance) * 100;
+  if (currentDrawdown > stats.maxDrawdown) {
+    stats.maxDrawdown = currentDrawdown;
+  }
+
+  // Save stats
+  localStorage.setItem('performance_stats', JSON.stringify(stats));
+
+  // Play sound
+  playAlertSound(pnl > 0 ? 'win' : 'loss');
+
+  return stats;
+}
+
+function loadPerformanceStats() {
+  try {
+    const saved = localStorage.getItem('performance_stats');
+    if (saved) {
+      state.performanceStats = { ...state.performanceStats, ...JSON.parse(saved) };
+    }
+  } catch (e) {
+    console.error('Failed to load performance stats:', e);
+  }
+}
+
+function getWinRate() {
+  const { totalTrades, winningTrades } = state.performanceStats;
+  return totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(1) : '0.0';
+}
+
+function getAIPerformance(aiSource) {
+  const stats = state.performanceStats;
+  if (aiSource === 'claude') {
+    const total = stats.claudeWins + stats.claudeLosses;
+    return total > 0 ? ((stats.claudeWins / total) * 100).toFixed(1) : 'N/A';
+  } else if (aiSource === 'openai') {
+    const total = stats.openaiWins + stats.openaiLosses;
+    return total > 0 ? ((stats.openaiWins / total) * 100).toFixed(1) : 'N/A';
+  } else if (aiSource === 'consensus') {
+    const total = stats.consensusWins + stats.consensusLosses;
+    return total > 0 ? ((stats.consensusWins / total) * 100).toFixed(1) : 'N/A';
+  }
+  return 'N/A';
+}
+
+// ============================================
+// TRAILING STOP LOSS
+// ============================================
+
+function updateTrailingStop(trade, currentPrice) {
+  if (!trade.trailingStop || !trade.trailingStop.enabled) return;
+
+  const { trailPercent, activationPercent } = trade.trailingStop;
+  const entryPrice = trade.entry;
+
+  // Calculate current profit percentage
+  const profitPercent = trade.direction === 'LONG'
+    ? ((currentPrice - entryPrice) / entryPrice) * 100
+    : ((entryPrice - currentPrice) / entryPrice) * 100;
+
+  // Only activate trailing stop after reaching activation threshold
+  if (profitPercent < activationPercent) return;
+
+  // Calculate new stop loss
+  let newStopLoss;
+  if (trade.direction === 'LONG') {
+    newStopLoss = currentPrice * (1 - trailPercent / 100);
+    if (newStopLoss > trade.sl) {
+      trade.sl = newStopLoss;
+      console.log(`📈 Trailing stop updated for ${trade.symbol}: $${formatPrice(newStopLoss)}`);
+    }
+  } else {
+    newStopLoss = currentPrice * (1 + trailPercent / 100);
+    if (newStopLoss < trade.sl) {
+      trade.sl = newStopLoss;
+      console.log(`📉 Trailing stop updated for ${trade.symbol}: $${formatPrice(newStopLoss)}`);
+    }
+  }
+}
 
 // Binance API
 async function fetchBinanceMarkets() {
@@ -528,11 +861,16 @@ function buildMarketAnalysisPrompt(marketData) {
   return `You are an expert crypto perpetual futures trader. Analyze the following market data and provide trading recommendations.
 
 MARKET DATA:
-${marketData.map(m => `
+${marketData.map(m => {
+  const funding = state.fundingRates[m.symbol];
+  const oi = state.openInterest[m.symbol];
+  return `
 ${m.symbol}:
 - Current Price: $${m.price}
 - 24h Change: ${m.change.toFixed(2)}%
 - 24h Volume: $${formatVolume(m.volume)}
+- Funding Rate: ${funding ? (funding.fundingRate > 0 ? '+' : '') + funding.fundingRate.toFixed(4) + '%' : 'N/A'} ${funding && Math.abs(funding.fundingRate) > 0.01 ? '⚠️ HIGH' : ''}
+- Open Interest Change (24h): ${oi ? (oi.change24h > 0 ? '+' : '') + oi.change24h.toFixed(2) + '%' : 'N/A'}
 - RSI (14): ${m.rsi?.toFixed(1) || 'N/A'}
 - EMA20: $${m.ema20?.toFixed(2) || 'N/A'}
 - EMA50: $${m.ema50?.toFixed(2) || 'N/A'}
@@ -544,7 +882,8 @@ ${m.symbol}:
 - ATR (14): ${m.atr?.toFixed(4) || 'N/A'}
 - Volume Trend: ${m.volumeTrend || 'N/A'}
 - Trend Direction: ${m.trend || 'N/A'}
-`).join('\n')}
+- MTF Confluence: ${m.mtfAnalysis?.confluence || 'N/A'} (${m.mtfAnalysis?.confluenceScore?.toFixed(0) || 0}%)`;
+}).join('\n')}
 
 ANALYSIS REQUIREMENTS:
 1. Consider RSI extremes (oversold <30, overbought >70)
@@ -555,6 +894,9 @@ ANALYSIS REQUIREMENTS:
 6. Consider volume confirmation
 7. Look for liquidation zones (typically 3-5% from current price in leveraged markets)
 8. Evaluate trend strength and potential reversals
+9. **FUNDING RATE ANALYSIS**: High positive funding (>0.01%) suggests overleveraged longs - consider shorts. High negative funding suggests overleveraged shorts - consider longs.
+10. **OPEN INTEREST**: Rising OI with price = trend continuation. Rising OI against price = potential reversal.
+11. **MULTI-TIMEFRAME**: Prefer setups where multiple timeframes align (higher confluence score = stronger signal)
 
 Respond ONLY with valid JSON in this exact format (no other text):
 {
@@ -566,14 +908,15 @@ Respond ONLY with valid JSON in this exact format (no other text):
       "entry": price,
       "takeProfit": price,
       "stopLoss": price,
-      "reasoning": "Brief 1-2 sentence explanation",
+      "reasoning": "Brief 1-2 sentence explanation including funding/OI insight",
       "keyLevels": {
         "majorSupport": price,
         "majorResistance": price,
         "liquidationZone": price
       },
       "riskScore": 1-10,
-      "timeHorizon": "4H to 1D"
+      "timeHorizon": "4H to 1D",
+      "fundingBias": "FAVORABLE/UNFAVORABLE/NEUTRAL"
     }
   ],
   "marketSentiment": "BULLISH/BEARISH/NEUTRAL",
@@ -581,7 +924,7 @@ Respond ONLY with valid JSON in this exact format (no other text):
   "avoidList": ["symbols to avoid with reasons"]
 }
 
-Select the 2 BEST opportunities with highest probability setups. Be conservative with confidence scores.`;
+Select the 2-3 BEST opportunities with highest probability setups. Prioritize setups where funding rate supports the direction. Be conservative with confidence scores.`;
 }
 
 async function runAiAnalysis() {
@@ -599,14 +942,24 @@ async function runAiAnalysis() {
   if (isClaudeConfigured()) aiNames.push('Claude');
   if (isOpenAIConfigured()) aiNames.push('ChatGPT');
   console.log(`🤖 Starting ${aiNames.join(' + ')} AI market analysis...`);
-  updateAiScanStatus('Analyzing...');
+  updateAiScanStatus('Fetching data...');
 
   try {
+    // Fetch funding rates first (important for analysis)
+    console.log('📊 Fetching funding rates...');
+    await fetchFundingRates();
+
     // Gather enhanced market data for top 20 coins
     const topMarkets = state.markets.slice(0, 20);
     const enrichedData = [];
 
+    updateAiScanStatus('Analyzing markets...');
+
     for (const market of topMarkets) {
+      // Fetch Open Interest for top 10 markets only (rate limiting)
+      if (enrichedData.length < 10) {
+        await fetchOpenInterest(market.symbol);
+      }
       const candles = await fetchKlines(market.symbol, '240', 200);
       if (candles.length < 50) continue;
 
@@ -637,6 +990,12 @@ async function runAiAnalysis() {
                          price < bb.lower ? 'BELOW LOWER' :
                          price > bb.middle ? 'UPPER HALF' : 'LOWER HALF';
 
+      // Multi-timeframe analysis for top 5 coins only (expensive)
+      let mtfAnalysis = null;
+      if (enrichedData.length < 5) {
+        mtfAnalysis = await analyzeMultiTimeframe(market.symbol);
+      }
+
       enrichedData.push({
         ...market,
         rsi,
@@ -650,11 +1009,14 @@ async function runAiAnalysis() {
         supports,
         resistances,
         volumeTrend,
-        trend
+        trend,
+        mtfAnalysis
       });
 
       await sleep(30); // Rate limiting
     }
+
+    updateAiScanStatus('Consulting AI...');
 
     // Build prompt
     const prompt = buildMarketAnalysisPrompt(enrichedData);
@@ -852,6 +1214,10 @@ async function runAiAnalysis() {
 // Show special notification for consensus signals
 function showConsensusNotification(consensusSignals) {
   for (const signal of consensusSignals) {
+    // Play consensus sound
+    playAlertSound('consensus');
+
+    // Show in-app notification
     showNotification({
       type: 'consensus',
       title: '🎯 AI CONSENSUS ALERT',
@@ -861,6 +1227,13 @@ function showConsensusNotification(consensusSignals) {
       message: `Both Claude & ChatGPT agree: ${signal.symbol} ${signal.direction}`,
       reasons: [`Claude: ${signal.claudeReasoning}`, `ChatGPT: ${signal.openaiReasoning}`]
     });
+
+    // Send browser notification
+    sendBrowserNotification(
+      '🎯 AI CONSENSUS: ' + signal.symbol,
+      `Both AIs agree: ${signal.direction} with ${signal.confidence}% confidence`,
+      { symbol: signal.symbol, important: true, tag: 'consensus-' + signal.symbol }
+    );
   }
 }
 
@@ -1811,7 +2184,10 @@ function renderSignals() {
     // Build AI source badge
     let aiSourceBadge = '';
     if (signal.isAiGenerated) {
-      if (signal.isConsensus) {
+      const hasClaude = signal.aiSources?.includes('claude') || signal.claudeModel;
+      const hasOpenAI = signal.aiSources?.includes('openai') || signal.openaiModel;
+
+      if (signal.isConsensus || (hasClaude && hasOpenAI)) {
         // Consensus signal - both AIs agree
         aiSourceBadge = `
           <div class="ai-consensus-badge">
@@ -1819,24 +2195,32 @@ function renderSignals() {
             <span class="consensus-label">AI CONSENSUS</span>
             <div class="ai-models">
               <span class="ai-model claude">Claude</span>
-              <span class="ai-model openai">ChatGPT</span>
+              <span class="ai-model openai">GPT-4o</span>
             </div>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
-      } else if (signal.aiSources?.includes('claude')) {
-        const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : '3.5';
+      } else if (hasClaude) {
+        const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : '3.5-sonnet';
         aiSourceBadge = `
           <div class="claude-model-badge">
             <span class="model-icon">🧠</span>
             <span class="model-name">Claude ${modelShort}</span>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
-      } else if (signal.aiSources?.includes('openai')) {
-        const modelShort = signal.openaiModel ? signal.openaiModel.replace('gpt-4-', 'GPT-4 ').replace('-preview', '') : 'GPT-4';
+      } else if (hasOpenAI) {
+        const modelShort = signal.openaiModel ? signal.openaiModel.replace('gpt-', 'GPT-').replace('-preview', '') : 'GPT-4o';
         aiSourceBadge = `
           <div class="openai-model-badge">
             <span class="model-icon">🤖</span>
             <span class="model-name">${modelShort}</span>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>`;
+      } else {
+        // Fallback for AI signals without specific source info
+        aiSourceBadge = `
+          <div class="claude-model-badge">
+            <span class="model-icon">🤖</span>
+            <span class="model-name">AI Analysis</span>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
       }
@@ -2412,6 +2796,7 @@ function initEventListeners() {
 
 async function init() {
   loadTrades();
+  loadPerformanceStats();
 
   // Load API keys from localStorage
   const keysLoaded = loadApiKeys();
@@ -2424,10 +2809,30 @@ async function init() {
     }, 2000);
   }
 
-  // Expose functions to manage API keys from console
+  // Request notification permission
+  requestNotificationPermission();
+
+  // Expose functions to manage API keys and stats from console
   window.setApiKey = setApiKeyManually;
   window.showApiStatus = showApiKeyStatus;
-  console.log('💡 Tip: Run setApiKey("openai", "sk-...") to add OpenAI key, or showApiStatus() to check status');
+  window.showStats = () => {
+    const s = state.performanceStats;
+    console.log('📊 Performance Stats:');
+    console.log(`   Win Rate: ${getWinRate()}%`);
+    console.log(`   Total Trades: ${s.totalTrades} (${s.winningTrades}W / ${s.losingTrades}L)`);
+    console.log(`   Total PnL: $${s.totalPnL.toFixed(2)}`);
+    console.log(`   Largest Win: $${s.largestWin.toFixed(2)}`);
+    console.log(`   Largest Loss: $${s.largestLoss.toFixed(2)}`);
+    console.log(`   Max Drawdown: ${s.maxDrawdown.toFixed(2)}%`);
+    console.log(`   Current Streak: ${s.currentStreak}`);
+    console.log('');
+    console.log('   AI Performance:');
+    console.log(`   Claude: ${getAIPerformance('claude')}% win rate`);
+    console.log(`   ChatGPT: ${getAIPerformance('openai')}% win rate`);
+    console.log(`   Consensus: ${getAIPerformance('consensus')}% win rate`);
+  };
+  window.toggleSound = () => { state.soundEnabled = !state.soundEnabled; console.log('🔊 Sound:', state.soundEnabled ? 'ON' : 'OFF'); };
+  console.log('💡 Commands: setApiKey(), showApiStatus(), showStats(), toggleSound()');
 
   // Update balance display
   const startBalEl = document.getElementById('startBalance');
@@ -2453,13 +2858,14 @@ async function init() {
   setInterval(renderMarkets, 2000);
 
   // Initialize AI scanning with 10-minute interval
-  console.log('🤖 Claude AI Trading System initialized');
+  console.log('🤖 Sentient Trader v4.0 - Dual AI System');
   console.log('💰 Starting balance: $' + state.balance.toFixed(2));
-  console.log('📊 AI will scan every 10 minutes');
+  console.log('📊 Features: Funding Rates, OI Tracking, MTF Analysis, Trailing Stops');
+  console.log('🎯 AI Consensus Detection enabled');
 
   // Run first AI analysis after initial data is loaded
   setTimeout(() => {
-    if (isAiConfigured()) {
+    if (isAnyAiConfigured()) {
       runAiAnalysis();
     }
   }, 5000);
@@ -2467,11 +2873,14 @@ async function init() {
   // Set up 10-minute AI scan interval
   setInterval(runAiAnalysis, CONFIG.AI_SCAN_INTERVAL);
 
+  // Periodically update funding rates (every 5 minutes)
+  setInterval(fetchFundingRates, 300000);
+
   // Initialize countdown
   state.nextAiScanTime = Date.now() + 5000; // First scan in 5 seconds
   updateAiScanCountdown();
 
-  console.log('Sentient Trader v3.0 - AI Enhanced - initialized');
+  console.log('✅ Sentient Trader initialized successfully');
 }
 
 document.addEventListener('DOMContentLoaded', init);
