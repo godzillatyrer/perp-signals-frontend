@@ -858,6 +858,30 @@ body {
   color: var(--cyan);
 }
 
+.tool-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-light);
+  margin: 0 4px;
+}
+
+.tool-btn.draw-btn {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tool-btn.draw-btn.drawing {
+  background: var(--purple-dim);
+  border-color: var(--purple);
+  color: var(--purple);
+  animation: drawing-mode 1s infinite;
+}
+
+@keyframes drawing-mode {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 .chart-body {
   flex: 1;
   background: var(--bg-card);
@@ -1164,6 +1188,73 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
 }
+
+/* Claude Model Badge */
+.claude-model-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.15), rgba(163, 113, 247, 0.15));
+  border: 1px solid var(--purple);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.claude-model-badge .model-icon {
+  font-size: 14px;
+}
+
+.claude-model-badge .model-name {
+  color: var(--purple);
+  font-weight: 700;
+}
+
+.claude-model-badge .sentiment {
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.claude-model-badge .sentiment.bullish {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.claude-model-badge .sentiment.bearish {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.claude-model-badge .sentiment.neutral {
+  background: var(--yellow-dim);
+  color: var(--yellow);
+}
+
+/* Trading Badge - When AI has an open position */
+.trading-badge {
+  padding: 2px 6px;
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 4px;
+  animation: trading-pulse 2s infinite;
+}
+
+@keyframes trading-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.4); }
+  50% { box-shadow: 0 0 8px 2px rgba(63, 185, 80, 0.3); }
+}
+
+/* Signal card footer value colors */
+.footer-stat .value.cyan { color: var(--cyan); }
 
 /* Take Trade Button */
 .take-trade-btn {
