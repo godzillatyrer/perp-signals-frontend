@@ -15,7 +15,7 @@ const CONFIG = {
   // OpenAI API
   OPENAI_API: 'https://api.openai.com/v1/chat/completions',
   OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
-  OPENAI_MODEL: 'gpt-4-turbo-preview', // Model used for analysis
+  OPENAI_MODEL: 'gpt-4o', // Using GPT-4o for best analysis (change to 'o1-preview' for reasoning model)
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
@@ -1811,7 +1811,10 @@ function renderSignals() {
     // Build AI source badge
     let aiSourceBadge = '';
     if (signal.isAiGenerated) {
-      if (signal.isConsensus) {
+      const hasClaude = signal.aiSources?.includes('claude') || signal.claudeModel;
+      const hasOpenAI = signal.aiSources?.includes('openai') || signal.openaiModel;
+
+      if (signal.isConsensus || (hasClaude && hasOpenAI)) {
         // Consensus signal - both AIs agree
         aiSourceBadge = `
           <div class="ai-consensus-badge">
@@ -1819,24 +1822,32 @@ function renderSignals() {
             <span class="consensus-label">AI CONSENSUS</span>
             <div class="ai-models">
               <span class="ai-model claude">Claude</span>
-              <span class="ai-model openai">ChatGPT</span>
+              <span class="ai-model openai">GPT-4o</span>
             </div>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
-      } else if (signal.aiSources?.includes('claude')) {
-        const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : '3.5';
+      } else if (hasClaude) {
+        const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : '3.5-sonnet';
         aiSourceBadge = `
           <div class="claude-model-badge">
             <span class="model-icon">🧠</span>
             <span class="model-name">Claude ${modelShort}</span>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
-      } else if (signal.aiSources?.includes('openai')) {
-        const modelShort = signal.openaiModel ? signal.openaiModel.replace('gpt-4-', 'GPT-4 ').replace('-preview', '') : 'GPT-4';
+      } else if (hasOpenAI) {
+        const modelShort = signal.openaiModel ? signal.openaiModel.replace('gpt-', 'GPT-').replace('-preview', '') : 'GPT-4o';
         aiSourceBadge = `
           <div class="openai-model-badge">
             <span class="model-icon">🤖</span>
             <span class="model-name">${modelShort}</span>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>`;
+      } else {
+        // Fallback for AI signals without specific source info
+        aiSourceBadge = `
+          <div class="claude-model-badge">
+            <span class="model-icon">🤖</span>
+            <span class="model-name">AI Analysis</span>
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
       }
