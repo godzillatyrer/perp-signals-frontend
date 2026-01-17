@@ -128,15 +128,55 @@
 
       <!-- CHART VIEW -->
       <div class="view active" id="view-chart">
-        <div class="chart-area">
+        <div class="chart-area chart-fullscreen">
+          <!-- Trading Chart - Full Screen -->
+          <div class="chart-container">
+            <div class="chart-header">
+              <div class="chart-symbol">
+                <span class="symbol-name" id="chartSymbolName">BTCUSDT</span>
+                <span class="chart-price" id="chartPrice">$0.00</span>
+                <span class="chart-change" id="chartChange">0.00%</span>
+              </div>
+              <div class="timeframe-selector">
+                <button class="tf-btn" data-tf="5">5m</button>
+                <button class="tf-btn" data-tf="15">15m</button>
+                <button class="tf-btn" data-tf="60">1H</button>
+                <button class="tf-btn active" data-tf="240">4H</button>
+                <button class="tf-btn" data-tf="D">1D</button>
+              </div>
+              <div class="chart-tools">
+                <button class="tool-btn active" id="toggleSR" title="Support/Resistance">S/R</button>
+                <button class="tool-btn" id="toggleIndicators" title="Indicators">IND</button>
+                <button class="tool-btn" id="toggleVolume" title="Volume">VOL</button>
+              </div>
+            </div>
+            <div class="chart-body" id="tradingChart">
+              <div class="chart-legend">
+                <div class="legend-item"><span class="legend-dot ema20"></span>EMA 20</div>
+                <div class="legend-item"><span class="legend-dot ema50"></span>EMA 50</div>
+                <div class="legend-item"><span class="legend-dot ema200"></span>EMA 200</div>
+              </div>
+              <div class="loading-state">
+                <div class="spinner"></div>
+                <span>Loading chart...</span>
+              </div>
+            </div>
+            <div class="chart-levels" id="chartLevels"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GROWTH VIEW - Portfolio Simulator -->
+      <div class="view" id="view-growth">
+        <div class="growth-content">
           <!-- Portfolio Simulator Panel -->
-          <div class="portfolio-panel">
+          <div class="portfolio-panel-growth">
             <div class="portfolio-header">
               <div class="portfolio-title">
                 <span class="portfolio-icon">$</span>
                 <div>
                   <h3>Portfolio Simulator</h3>
-                  <span class="strategy-name">Preservation Strategy (Risk 2%)</span>
+                  <span class="strategy-name">AI Trading Strategy (Risk 2%)</span>
                 </div>
               </div>
               <div class="portfolio-balance">
@@ -187,50 +227,6 @@
               </div>
             </div>
           </div>
-
-          <!-- Trading Chart -->
-          <div class="chart-container">
-            <div class="chart-header">
-              <div class="chart-symbol">
-                <span class="symbol-name" id="chartSymbolName">BTCUSDT</span>
-                <span class="chart-price" id="chartPrice">$0.00</span>
-                <span class="chart-change" id="chartChange">0.00%</span>
-              </div>
-              <div class="timeframe-selector">
-                <button class="tf-btn" data-tf="5">5m</button>
-                <button class="tf-btn" data-tf="15">15m</button>
-                <button class="tf-btn" data-tf="60">1H</button>
-                <button class="tf-btn active" data-tf="240">4H</button>
-                <button class="tf-btn" data-tf="D">1D</button>
-              </div>
-              <div class="chart-tools">
-                <button class="tool-btn active" id="toggleSR" title="Support/Resistance">S/R</button>
-                <button class="tool-btn" id="toggleIndicators" title="Indicators">IND</button>
-                <button class="tool-btn" id="toggleVolume" title="Volume">VOL</button>
-              </div>
-            </div>
-            <div class="chart-body" id="tradingChart">
-              <div class="chart-legend">
-                <div class="legend-item"><span class="legend-dot ema20"></span>EMA 20</div>
-                <div class="legend-item"><span class="legend-dot ema50"></span>EMA 50</div>
-                <div class="legend-item"><span class="legend-dot ema200"></span>EMA 200</div>
-              </div>
-              <div class="loading-state">
-                <div class="spinner"></div>
-                <span>Loading chart...</span>
-              </div>
-            </div>
-            <div class="chart-levels" id="chartLevels"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- GROWTH VIEW -->
-      <div class="view" id="view-growth">
-        <div class="growth-content">
-          <h2>Portfolio Growth Analytics</h2>
-          <p class="muted">Track your portfolio performance over time</p>
-          <div class="growth-chart" id="growthChart"></div>
         </div>
       </div>
     </main>

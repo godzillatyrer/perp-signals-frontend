@@ -134,11 +134,14 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
   }
 }
 
+// Blocked tickers (problematic or unwanted)
+const BLOCKED_TICKERS = ['BNXUSDT', 'BNXUSDTPERP'];
+
 // Binance API
 async function fetchBinanceMarkets() {
   const data = await fetchWithRetry(`${CONFIG.BINANCE_API}/fapi/v1/ticker/24hr`);
   return data
-    .filter(t => t.symbol.endsWith('USDT') && !t.symbol.includes('_'))
+    .filter(t => t.symbol.endsWith('USDT') && !t.symbol.includes('_') && !BLOCKED_TICKERS.includes(t.symbol))
     .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
     .slice(0, CONFIG.TOP_COINS)
     .map(t => ({
@@ -155,7 +158,7 @@ async function fetchBinanceMarkets() {
 async function fetchBybitMarkets() {
   const data = await fetchWithRetry(`${CONFIG.BYBIT_API}/v5/market/tickers?category=linear`);
   return data.result.list
-    .filter(t => t.symbol.endsWith('USDT'))
+    .filter(t => t.symbol.endsWith('USDT') && !BLOCKED_TICKERS.includes(t.symbol))
     .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
     .slice(0, CONFIG.TOP_COINS)
     .map(t => ({
@@ -1550,6 +1553,34 @@ function selectMarket(symbol) {
   if (market) updateChartPrice(market.price, market.change);
 
   renderMarkets();
+
+  // Clear existing chart data and S/R lines before loading new data
+  if (state.candleSeries) {
+    state.candleSeries.setData([]);
+  }
+  if (state.volumeSeries) {
+    state.volumeSeries.setData([]);
+  }
+  if (state.ema20Series) {
+    state.ema20Series.setData([]);
+  }
+  if (state.ema50Series) {
+    state.ema50Series.setData([]);
+  }
+  if (state.ema200Series) {
+    state.ema200Series.setData([]);
+  }
+
+  // Remove existing S/R lines
+  if (state.srLines && state.srLines.length > 0) {
+    state.srLines.forEach(line => {
+      try {
+        state.candleSeries.removePriceLine(line);
+      } catch (e) {}
+    });
+    state.srLines = [];
+  }
+
   loadChartData();
 }
 
