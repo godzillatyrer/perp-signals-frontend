@@ -1539,6 +1539,12 @@ body {
 .level-item.target .level-value { color: var(--green); }
 .level-item.stop .level-value { color: var(--red); }
 .level-item.rr .level-value { color: var(--cyan); }
+.level-item.tp-pct .level-value {
+  font-size: 14px;
+  font-weight: 800;
+}
+.level-item.tp-pct .level-value.green { color: var(--green); }
+.level-item.tp-pct .level-value.yellow { color: var(--yellow); }
 
 /* Signal Intelligence (Social/Liquidation Data) */
 .signal-intel {
@@ -1701,6 +1707,58 @@ body {
   padding: 40px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.empty-state.api-setup {
+  flex-direction: column;
+  text-align: left;
+  gap: 8px;
+  padding: 20px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  border: 1px dashed var(--border-light);
+}
+
+.empty-state.api-setup h3 {
+  color: var(--text);
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.empty-state.api-setup p {
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.empty-state.api-setup p.optional {
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.empty-state.api-setup code {
+  display: block;
+  background: var(--bg-dark);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--cyan);
+  margin: 4px 0;
+}
+
+.empty-state.api-setup .links {
+  margin-top: 12px;
+  font-size: 10px;
+}
+
+.empty-state.api-setup .links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.empty-state.api-setup .links a:hover {
+  text-decoration: underline;
 }
 
 .loading-state {

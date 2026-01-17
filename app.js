@@ -32,12 +32,17 @@ const CONFIG = {
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
-  TP_PERCENT: 3,
-  SL_PERCENT: 1,
+  TP_PERCENT: 5, // Minimum 5% TP for worthwhile trades
+  SL_PERCENT: 2, // Stop loss
   MAX_OPEN_TRADES: 5, // Increased for more trades
   MAX_POSITION_SIZE_PERCENT: 20, // 20% of balance per trade
   AI_MIN_CONFIDENCE: 70, // Lower threshold for AI auto-trade
-  CHART_HISTORY_LIMIT: 1000 // More candles for longer history
+  CHART_HISTORY_LIMIT: 1000, // More candles for longer history
+  // Minimum move requirements by market cap
+  MIN_TP_PERCENT_BTC_ETH: 3, // BTC/ETH need at least 3% move
+  MIN_TP_PERCENT_LARGE_CAP: 5, // Large caps (top 10) need 5%
+  MIN_TP_PERCENT_MID_CAP: 7, // Mid caps need 7%
+  MIN_TP_PERCENT_SMALL_CAP: 10 // Small caps need 10% minimum move
 };
 
 // Load API keys from localStorage
@@ -1193,11 +1198,20 @@ Respond ONLY with valid JSON in this exact format (no other text):
   "avoidList": ["symbols to avoid with reasons"]
 }
 
+CRITICAL REQUIREMENTS:
+- Use DAILY and 4H timeframes for analysis (higher timeframes = bigger moves)
+- BTC/ETH: Minimum 3% target move from entry
+- Large caps (top 10 volume): Minimum 5% target move
+- Mid/Small caps: Minimum 7-10% target move
+- REJECT any setup with less than these minimum moves - not worth the risk
+- Focus on SWING trades, not scalps
+
 Select the 2-3 BEST opportunities with highest probability setups. Prioritize:
 1. Setups where funding rate supports the direction
 2. Sentiment aligned with technical direction
 3. Crowd positioning that favors the trade (fade the crowd)
 4. Strong liquidation signals (POTENTIAL_BOTTOM for longs, POTENTIAL_TOP for shorts)
+5. LARGER MOVES - We want significant percentage gains, not small scalps
 Be conservative with confidence scores.`;
 }
 
@@ -1453,11 +1467,34 @@ async function runAiAnalysis() {
       return b.confidence - a.confidence;
     });
 
-    if (allSignals.length > 0) {
+    // Filter out signals with too small TP percentage
+    const filteredSignals = allSignals.filter(signal => {
+      const tpPercent = Math.abs((signal.tp - signal.entry) / signal.entry * 100);
+      const symbol = signal.symbol;
+
+      // Determine minimum TP based on symbol
+      let minTP = CONFIG.MIN_TP_PERCENT_MID_CAP; // Default 7%
+      if (symbol === 'BTCUSDT' || symbol === 'ETHUSDT') {
+        minTP = CONFIG.MIN_TP_PERCENT_BTC_ETH; // 3%
+      } else if (['BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT'].includes(symbol)) {
+        minTP = CONFIG.MIN_TP_PERCENT_LARGE_CAP; // 5%
+      }
+
+      // Add TP percentage to signal for display
+      signal.tpPercent = tpPercent;
+
+      if (tpPercent < minTP) {
+        console.log(`⏭️ Filtered out ${symbol} - TP ${tpPercent.toFixed(1)}% below minimum ${minTP}%`);
+        return false;
+      }
+      return true;
+    });
+
+    if (filteredSignals.length > 0) {
       state.lastAiAnalysis = { claudeAnalysis, openaiAnalysis };
 
-      // Add to signal history
-      for (const signal of allSignals) {
+      // Add to signal history (only filtered signals with good TP%)
+      for (const signal of filteredSignals) {
         const existingIdx = state.signalHistory.findIndex(
           s => s.symbol === signal.symbol && s.direction === signal.direction
         );
@@ -1470,9 +1507,10 @@ async function runAiAnalysis() {
       }
       state.signalHistory = state.signalHistory.slice(0, 100);
 
-      state.aiSignals = allSignals;
+      state.aiSignals = filteredSignals;
 
-      console.log(`🤖 AI Analysis complete: ${allSignals.length} signals (${consensusSignals.length} consensus)`);
+      const consensusCount = filteredSignals.filter(s => s.isConsensus).length;
+      console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${consensusCount} consensus, ${allSignals.length - filteredSignals.length} filtered for small TP%)`);
 
       // Show consensus notification
       if (consensusSignals.length > 0) {
@@ -1802,6 +1840,15 @@ async function analyzeMarket(symbol, timeframe = '240') {
 }
 
 async function runScan() {
+  // Skip traditional scan if AI is configured - AI signals are primary
+  if (isAnyAiConfigured()) {
+    console.log('⏭️ Skipping traditional scan - using AI signals only');
+    state.isScanning = false;
+    updateScanStatus(state.markets.length, state.aiSignals.length);
+    renderSignals();
+    return;
+  }
+
   if (state.isScanning) return;
   state.isScanning = true;
   updateScanStatus(0, 0);
@@ -2442,14 +2489,39 @@ function renderSignals() {
   const container = document.getElementById('signalsList');
   if (!container) return;
 
-  // Use signal history for "new" tab, regular signals for "all" tab
-  let signals = state.signalTab === 'new' ? state.signalHistory : state.signals;
+  // When AI is configured, use AI signals; otherwise fall back to traditional signals
+  // "new" tab uses signalHistory (which includes AI signals), "all" tab uses aiSignals or signals
+  let signals;
+  if (isAnyAiConfigured()) {
+    signals = state.signalTab === 'new' ? state.signalHistory.filter(s => s.isAiGenerated) : state.aiSignals;
+  } else {
+    signals = state.signalTab === 'new' ? state.signalHistory : state.signals;
+  }
 
   if (state.signalFilter === 'longs') signals = signals.filter(s => s.direction === 'LONG');
   else if (state.signalFilter === 'shorts') signals = signals.filter(s => s.direction === 'SHORT');
 
   if (signals.length === 0) {
-    container.innerHTML = '<div class="empty-state">No signals found</div>';
+    const apiStatus = isAnyAiConfigured();
+    if (!apiStatus) {
+      container.innerHTML = `
+        <div class="empty-state api-setup">
+          <h3>🔑 Setup AI Analysis</h3>
+          <p>Open browser console (F12) and run:</p>
+          <code>setApiKey("claude", "sk-ant-...")</code>
+          <code>setApiKey("openai", "sk-...")</code>
+          <p class="optional">Optional data sources:</p>
+          <code>setApiKey("lunarcrush", "key")</code>
+          <code>setApiKey("coinglass", "key")</code>
+          <p class="links">
+            Get keys at:<br>
+            <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br>
+            <a href="https://platform.openai.com" target="_blank">platform.openai.com</a>
+          </p>
+        </div>`;
+    } else {
+      container.innerHTML = '<div class="empty-state">Waiting for AI analysis... Next scan in a few minutes.</div>';
+    }
     return;
   }
 
@@ -2535,7 +2607,7 @@ function renderSignals() {
         </div>
         <div class="signal-analysis">${signal.reasons.slice(0, 2).join('. ')}</div>
         <div class="signal-levels">
-          <div class="level-item rr"><div class="level-label">R/R Ratio</div><div class="level-value">1:${signal.riskReward.toFixed(1)}</div></div>
+          <div class="level-item tp-pct"><div class="level-label">Target %</div><div class="level-value ${signal.tpPercent >= 5 ? 'green' : 'yellow'}">${signal.tpPercent ? '+' + signal.tpPercent.toFixed(1) + '%' : '+' + Math.abs((signal.tp - signal.entry) / signal.entry * 100).toFixed(1) + '%'}</div></div>
           <div class="level-item entry"><div class="level-label">Entry</div><div class="level-value">${formatPrice(signal.entry)}</div></div>
           <div class="level-item target"><div class="level-label">Target</div><div class="level-value">${formatPrice(signal.tp)}</div></div>
           <div class="level-item stop"><div class="level-label">Stop</div><div class="level-value">${formatPrice(signal.sl)}</div></div>
