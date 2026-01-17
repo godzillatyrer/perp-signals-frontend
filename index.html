@@ -34,6 +34,11 @@
           <span>GPT-4o</span>
           <span class="ai-status-dot"></span>
         </div>
+        <div class="ai-badge grok" id="grokBadge" style="display: none;">
+          <span>⚡</span>
+          <span>Grok</span>
+          <span class="ai-status-dot"></span>
+        </div>
       </div>
       <div style="display: flex; align-items: center; gap: 6px;">
         <span class="star-icon">★</span>
@@ -257,8 +262,9 @@
 
       <div class="signal-tabs">
         <button class="signal-tab active" data-signal-tab="new">NEW</button>
-        <button class="signal-tab" data-signal-tab="all">ALL SIGNALS</button>
+        <button class="signal-tab" data-signal-tab="all">ALL</button>
         <button class="signal-tab" data-signal-tab="data">💧 DATA</button>
+        <button class="signal-tab" data-signal-tab="stats">📊 AI STATS</button>
       </div>
 
       <!-- Signals View -->
@@ -325,6 +331,115 @@
         </div>
       </div>
 
+      <!-- AI Performance Stats View -->
+      <div class="sidebar-view" id="statsView">
+        <div class="data-section">
+          <div class="data-header">
+            <span class="data-title">📊 AI Performance Overview</span>
+          </div>
+          <div class="ai-performance-summary" id="aiPerformanceSummary">
+            <div class="perf-card claude-perf">
+              <div class="perf-header">
+                <span class="perf-icon">🧠</span>
+                <span class="perf-name">Claude</span>
+              </div>
+              <div class="perf-stats">
+                <div class="perf-stat">
+                  <span class="stat-value" id="claudeWinRate">--%</span>
+                  <span class="stat-label">Win Rate</span>
+                </div>
+                <div class="perf-stat">
+                  <span class="stat-value" id="claudeTotalTrades">0</span>
+                  <span class="stat-label">Signals</span>
+                </div>
+                <div class="perf-stat">
+                  <span class="stat-value" id="claudeAvgConf">--%</span>
+                  <span class="stat-label">Avg Conf</span>
+                </div>
+              </div>
+              <div class="perf-bar-container">
+                <div class="perf-bar claude-bar" id="claudePerfBar" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <div class="perf-card openai-perf">
+              <div class="perf-header">
+                <span class="perf-icon">🤖</span>
+                <span class="perf-name">GPT-4o</span>
+              </div>
+              <div class="perf-stats">
+                <div class="perf-stat">
+                  <span class="stat-value" id="openaiWinRate">--%</span>
+                  <span class="stat-label">Win Rate</span>
+                </div>
+                <div class="perf-stat">
+                  <span class="stat-value" id="openaiTotalTrades">0</span>
+                  <span class="stat-label">Signals</span>
+                </div>
+                <div class="perf-stat">
+                  <span class="stat-value" id="openaiAvgConf">--%</span>
+                  <span class="stat-label">Avg Conf</span>
+                </div>
+              </div>
+              <div class="perf-bar-container">
+                <div class="perf-bar openai-bar" id="openaiPerfBar" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <div class="perf-card grok-perf">
+              <div class="perf-header">
+                <span class="perf-icon">⚡</span>
+                <span class="perf-name">Grok</span>
+              </div>
+              <div class="perf-stats">
+                <div class="perf-stat">
+                  <span class="stat-value" id="grokWinRate">--%</span>
+                  <span class="stat-label">Win Rate</span>
+                </div>
+                <div class="perf-stat">
+                  <span class="stat-value" id="grokTotalTrades">0</span>
+                  <span class="stat-label">Signals</span>
+                </div>
+                <div class="perf-stat">
+                  <span class="stat-value" id="grokAvgConf">--%</span>
+                  <span class="stat-label">Avg Conf</span>
+                </div>
+              </div>
+              <div class="perf-bar-container">
+                <div class="perf-bar grok-bar" id="grokPerfBar" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-section">
+          <div class="data-header">
+            <span class="data-title">🎯 Consensus Performance</span>
+          </div>
+          <div class="consensus-stats" id="consensusStats">
+            <div class="consensus-row">
+              <span class="consensus-type gold">🥇 3-AI Gold</span>
+              <span class="consensus-rate" id="goldConsensusRate">--%</span>
+              <span class="consensus-count" id="goldConsensusCount">0 signals</span>
+            </div>
+            <div class="consensus-row">
+              <span class="consensus-type silver">🥈 2-AI Match</span>
+              <span class="consensus-rate" id="silverConsensusRate">--%</span>
+              <span class="consensus-count" id="silverConsensusCount">0 signals</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-section">
+          <div class="data-header">
+            <span class="data-title">📈 Recent AI Predictions</span>
+          </div>
+          <div class="ai-predictions-list" id="aiPredictionsList">
+            <div class="empty-state">No predictions recorded yet</div>
+          </div>
+        </div>
+      </div>
+
       <div class="data-source">
         <span>Powered by</span>
         <span class="source-name" id="dataSourceName">Binance</span>
@@ -368,6 +483,18 @@
               <button class="toggle-visibility" data-target="openaiApiKey">👁</button>
             </div>
             <span class="api-hint">Get key at <a href="https://platform.openai.com" target="_blank">platform.openai.com</a></span>
+          </div>
+
+          <div class="api-input-group">
+            <label for="grokApiKey">
+              <span class="api-icon">⚡</span>
+              Grok API Key
+            </label>
+            <div class="api-input-wrapper">
+              <input type="password" id="grokApiKey" placeholder="xai-..." autocomplete="off">
+              <button class="toggle-visibility" data-target="grokApiKey">👁</button>
+            </div>
+            <span class="api-hint">Get key at <a href="https://console.x.ai" target="_blank">console.x.ai</a></span>
           </div>
         </div>
 
