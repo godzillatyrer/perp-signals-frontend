@@ -3133,41 +3133,212 @@ function initEventListeners() {
   const resetBalanceBtn = document.getElementById('resetBalanceBtn');
   if (resetBalanceBtn) resetBalanceBtn.addEventListener('click', resetBalance);
 
-  // Settings button - manage API key
+  // Settings button - open settings modal
   const settingsBtn = document.getElementById('settingsBtn');
   if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => {
-      const currentKey = CONFIG.CLAUDE_API_KEY;
-      const hasKey = currentKey && currentKey.startsWith('sk-ant-');
-      const maskedKey = hasKey ? currentKey.slice(0, 12) + '...' + currentKey.slice(-4) : 'Not configured';
+    settingsBtn.addEventListener('click', openSettingsModal);
+  }
 
-      const action = prompt(
-        `Claude AI Settings\n\n` +
-        `Current API Key: ${maskedKey}\n` +
-        `AI Auto-Trade: ${state.aiAutoTradeEnabled ? 'Enabled' : 'Disabled'}\n\n` +
-        `Enter:\n` +
-        `- 'new' to enter a new API key\n` +
-        `- 'toggle' to toggle auto-trading\n` +
-        `- 'clear' to remove API key\n` +
-        `- Or press Cancel to close`
-      );
+  // Settings modal handlers
+  initSettingsModal();
+}
 
-      if (action === 'new') {
-        promptForApiKey();
-        if (isAiConfigured()) {
-          runAiAnalysis();
-        }
-      } else if (action === 'toggle') {
-        state.aiAutoTradeEnabled = !state.aiAutoTradeEnabled;
-        alert(`AI Auto-Trading: ${state.aiAutoTradeEnabled ? 'ENABLED' : 'DISABLED'}`);
-      } else if (action === 'clear') {
-        localStorage.removeItem('claude_api_key');
-        CONFIG.CLAUDE_API_KEY = '';
-        alert('API Key cleared. AI features disabled.');
-        updateAiScanStatus('No API Key');
+// ============================================
+// SETTINGS MODAL
+// ============================================
+
+function openSettingsModal() {
+  const modal = document.getElementById('settingsModal');
+  if (!modal) return;
+
+  // Load current values into inputs
+  document.getElementById('claudeApiKey').value = CONFIG.CLAUDE_API_KEY || '';
+  document.getElementById('openaiApiKey').value = CONFIG.OPENAI_API_KEY || '';
+  document.getElementById('lunarcrushApiKey').value = CONFIG.LUNARCRUSH_API_KEY || '';
+  document.getElementById('coinglassApiKey').value = CONFIG.COINGLASS_API_KEY || '';
+
+  // Load toggle states
+  document.getElementById('aiAutoTradeToggle').checked = state.aiAutoTradeEnabled;
+  document.getElementById('soundToggle').checked = state.soundEnabled;
+  document.getElementById('notificationToggle').checked = state.notificationsEnabled;
+
+  // Update API status display
+  updateSettingsApiStatus();
+
+  modal.classList.add('active');
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settingsModal');
+  if (modal) modal.classList.remove('active');
+}
+
+function updateSettingsApiStatus() {
+  const statusEl = document.getElementById('settingsApiStatus');
+  if (!statusEl) return;
+
+  const claudeInput = document.getElementById('claudeApiKey');
+  const openaiInput = document.getElementById('openaiApiKey');
+
+  const claudeKey = claudeInput?.value || '';
+  const openaiKey = openaiInput?.value || '';
+
+  const claudeValid = claudeKey.startsWith('sk-ant-');
+  const openaiValid = openaiKey.startsWith('sk-');
+
+  // Update input visual states
+  if (claudeInput) {
+    claudeInput.classList.toggle('valid', claudeValid && claudeKey.length > 20);
+    claudeInput.classList.toggle('invalid', claudeKey && !claudeValid);
+  }
+  if (openaiInput) {
+    openaiInput.classList.toggle('valid', openaiValid && openaiKey.length > 20);
+    openaiInput.classList.toggle('invalid', openaiKey && !openaiValid);
+  }
+
+  // Update status indicator
+  if (claudeValid || openaiValid) {
+    if (claudeValid && openaiValid) {
+      statusEl.className = 'api-status connected';
+      statusEl.querySelector('.status-text').textContent = 'Both AIs configured';
+    } else {
+      statusEl.className = 'api-status partial';
+      statusEl.querySelector('.status-text').textContent = claudeValid ? 'Claude configured' : 'OpenAI configured';
+    }
+  } else {
+    statusEl.className = 'api-status disconnected';
+    statusEl.querySelector('.status-text').textContent = 'No AI configured';
+  }
+}
+
+function saveSettings() {
+  // Get values from inputs
+  const claudeKey = document.getElementById('claudeApiKey')?.value?.trim() || '';
+  const openaiKey = document.getElementById('openaiApiKey')?.value?.trim() || '';
+  const lunarcrushKey = document.getElementById('lunarcrushApiKey')?.value?.trim() || '';
+  const coinglassKey = document.getElementById('coinglassApiKey')?.value?.trim() || '';
+
+  // Validate and save Claude API key
+  if (claudeKey) {
+    if (claudeKey.startsWith('sk-ant-')) {
+      CONFIG.CLAUDE_API_KEY = claudeKey;
+      localStorage.setItem('claude_api_key', claudeKey);
+      console.log('✅ Claude API key saved');
+    } else if (claudeKey.length > 0) {
+      console.warn('⚠️ Invalid Claude API key format');
+    }
+  } else {
+    CONFIG.CLAUDE_API_KEY = '';
+    localStorage.removeItem('claude_api_key');
+  }
+
+  // Validate and save OpenAI API key
+  if (openaiKey) {
+    if (openaiKey.startsWith('sk-')) {
+      CONFIG.OPENAI_API_KEY = openaiKey;
+      localStorage.setItem('openai_api_key', openaiKey);
+      console.log('✅ OpenAI API key saved');
+    } else if (openaiKey.length > 0) {
+      console.warn('⚠️ Invalid OpenAI API key format');
+    }
+  } else {
+    CONFIG.OPENAI_API_KEY = '';
+    localStorage.removeItem('openai_api_key');
+  }
+
+  // Save LunarCrush API key (no specific format validation)
+  if (lunarcrushKey && lunarcrushKey.length > 5) {
+    CONFIG.LUNARCRUSH_API_KEY = lunarcrushKey;
+    localStorage.setItem('lunarcrush_api_key', lunarcrushKey);
+    console.log('✅ LunarCrush API key saved');
+  } else {
+    CONFIG.LUNARCRUSH_API_KEY = '';
+    localStorage.removeItem('lunarcrush_api_key');
+  }
+
+  // Save Coinglass API key (no specific format validation)
+  if (coinglassKey && coinglassKey.length > 5) {
+    CONFIG.COINGLASS_API_KEY = coinglassKey;
+    localStorage.setItem('coinglass_api_key', coinglassKey);
+    console.log('✅ Coinglass API key saved');
+  } else {
+    CONFIG.COINGLASS_API_KEY = '';
+    localStorage.removeItem('coinglass_api_key');
+  }
+
+  // Save toggle states
+  state.aiAutoTradeEnabled = document.getElementById('aiAutoTradeToggle')?.checked ?? true;
+  state.soundEnabled = document.getElementById('soundToggle')?.checked ?? true;
+  state.notificationsEnabled = document.getElementById('notificationToggle')?.checked ?? false;
+
+  // Request notification permission if enabled
+  if (state.notificationsEnabled) {
+    requestNotificationPermission();
+  }
+
+  // Close modal
+  closeSettingsModal();
+
+  // Show success notification
+  showNotification({
+    type: 'info',
+    title: 'Settings Saved',
+    message: 'Your API keys and settings have been saved.'
+  });
+
+  // Run AI analysis if configured
+  if (isAnyAiConfigured()) {
+    console.log('🤖 AI configured - starting analysis...');
+    updateAiScanStatus('Starting...');
+    setTimeout(() => runAiAnalysis(), 1000);
+  } else {
+    updateAiScanStatus('No API Key');
+  }
+
+  // Re-render signals panel
+  renderSignals();
+}
+
+function initSettingsModal() {
+  // Close button
+  const closeBtn = document.getElementById('settingsClose');
+  if (closeBtn) closeBtn.addEventListener('click', closeSettingsModal);
+
+  // Overlay click to close
+  const overlay = document.querySelector('.settings-overlay');
+  if (overlay) overlay.addEventListener('click', closeSettingsModal);
+
+  // Save button
+  const saveBtn = document.getElementById('settingsSaveBtn');
+  if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+
+  // Toggle visibility buttons
+  document.querySelectorAll('.toggle-visibility').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const input = document.getElementById(targetId);
+      if (input) {
+        const isPassword = input.type === 'password';
+        input.type = isPassword ? 'text' : 'password';
+        btn.textContent = isPassword ? '🙈' : '👁';
       }
     });
-  }
+  });
+
+  // Real-time validation on input
+  ['claudeApiKey', 'openaiApiKey'].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener('input', updateSettingsApiStatus);
+    }
+  });
+
+  // Escape key to close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeSettingsModal();
+    }
+  });
 }
 
 // ============================================
