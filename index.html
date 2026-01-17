@@ -23,13 +23,21 @@
   <!-- HIGH CONFIDENCE ALERT BAR - AI POWERED -->
   <div class="alert-bar" id="alertBar">
     <div class="alert-bar-icon">
-      <div class="ai-badge">
-        <span>🧠</span>
-        <span>CLAUDE AI</span>
+      <div class="ai-badges" id="aiActiveBadges">
+        <div class="ai-badge claude" id="claudeBadge" style="display: none;">
+          <span>🧠</span>
+          <span>Claude</span>
+          <span class="ai-status-dot"></span>
+        </div>
+        <div class="ai-badge openai" id="openaiBadge" style="display: none;">
+          <span>🤖</span>
+          <span>GPT-4o</span>
+          <span class="ai-status-dot"></span>
+        </div>
       </div>
       <div style="display: flex; align-items: center; gap: 6px;">
         <span class="star-icon">★</span>
-        TOP 2 PLAYS
+        TOP PLAYS (85%+)
       </div>
     </div>
     <div class="alert-bar-signals" id="alertBarSignals">
@@ -250,29 +258,70 @@
       <div class="signal-tabs">
         <button class="signal-tab active" data-signal-tab="new">NEW</button>
         <button class="signal-tab" data-signal-tab="all">ALL SIGNALS</button>
+        <button class="signal-tab" data-signal-tab="data">💧 DATA</button>
       </div>
 
-      <div class="signal-filters">
-        <button class="filter-btn active" data-filter="all">All</button>
-        <button class="filter-btn" data-filter="longs">Longs</button>
-        <button class="filter-btn" data-filter="shorts">Shorts</button>
+      <!-- Signals View -->
+      <div class="sidebar-view active" id="signalsView">
+        <div class="signal-filters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="longs">Longs</button>
+          <button class="filter-btn" data-filter="shorts">Shorts</button>
+        </div>
+
+        <div class="scan-status">
+          <span class="scan-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <span>Scanning <span id="scanProgress">0</span>/50</span>
+          <span class="analyzed-count" id="analyzedCount">0 analyzed</span>
+        </div>
+
+        <div class="signals-list" id="signalsList">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Scanning for signals...</span>
+          </div>
+        </div>
       </div>
 
-      <div class="scan-status">
-        <span class="scan-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-        </span>
-        <span>Scanning <span id="scanProgress">0</span>/50</span>
-        <span class="analyzed-count" id="analyzedCount">0 analyzed</span>
-      </div>
+      <!-- Market Data View (Coinglass/Liquidations) -->
+      <div class="sidebar-view" id="dataView">
+        <div class="data-section">
+          <div class="data-header">
+            <span class="data-title">💧 Liquidation Heatmap</span>
+            <span class="data-update" id="liqDataUpdate">--</span>
+          </div>
+          <div class="liquidation-list" id="liquidationList">
+            <div class="empty-state">
+              <p>Configure Coinglass API in Settings</p>
+              <p class="hint">Get key at coinglass.com/api</p>
+            </div>
+          </div>
+        </div>
 
-      <div class="signals-list" id="signalsList">
-        <div class="loading-state">
-          <div class="spinner"></div>
-          <span>Scanning for signals...</span>
+        <div class="data-section">
+          <div class="data-header">
+            <span class="data-title">👥 Long/Short Ratio</span>
+          </div>
+          <div class="ls-ratio-list" id="lsRatioList">
+            <div class="empty-state">No data available</div>
+          </div>
+        </div>
+
+        <div class="data-section">
+          <div class="data-header">
+            <span class="data-title">🌙 Social Sentiment</span>
+          </div>
+          <div class="sentiment-list" id="sentimentList">
+            <div class="empty-state">
+              <p>Configure LunarCrush API in Settings</p>
+              <p class="hint">Get key at lunarcrush.com/developers</p>
+            </div>
+          </div>
         </div>
       </div>
 
