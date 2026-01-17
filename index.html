@@ -284,6 +284,111 @@
     </aside>
   </div>
 
+  <!-- Settings Modal -->
+  <div class="settings-modal" id="settingsModal">
+    <div class="settings-overlay"></div>
+    <div class="settings-panel">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button class="settings-close" id="settingsClose">&times;</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <h3>🤖 AI Services (Required)</h3>
+          <p class="settings-desc">At least one AI service is required for signal generation</p>
+
+          <div class="api-input-group">
+            <label for="claudeApiKey">
+              <span class="api-icon">🧠</span>
+              Claude API Key
+            </label>
+            <div class="api-input-wrapper">
+              <input type="password" id="claudeApiKey" placeholder="sk-ant-api03-..." autocomplete="off">
+              <button class="toggle-visibility" data-target="claudeApiKey">👁</button>
+            </div>
+            <span class="api-hint">Get key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></span>
+          </div>
+
+          <div class="api-input-group">
+            <label for="openaiApiKey">
+              <span class="api-icon">🤖</span>
+              OpenAI API Key
+            </label>
+            <div class="api-input-wrapper">
+              <input type="password" id="openaiApiKey" placeholder="sk-proj-..." autocomplete="off">
+              <button class="toggle-visibility" data-target="openaiApiKey">👁</button>
+            </div>
+            <span class="api-hint">Get key at <a href="https://platform.openai.com" target="_blank">platform.openai.com</a></span>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>📊 Data Providers (Optional)</h3>
+          <p class="settings-desc">Enhance AI analysis with social sentiment and liquidation data</p>
+
+          <div class="api-input-group">
+            <label for="lunarcrushApiKey">
+              <span class="api-icon">🌙</span>
+              LunarCrush API Key
+            </label>
+            <div class="api-input-wrapper">
+              <input type="password" id="lunarcrushApiKey" placeholder="Your LunarCrush API key..." autocomplete="off">
+              <button class="toggle-visibility" data-target="lunarcrushApiKey">👁</button>
+            </div>
+            <span class="api-hint">Social sentiment data - <a href="https://lunarcrush.com/developers" target="_blank">lunarcrush.com/developers</a></span>
+          </div>
+
+          <div class="api-input-group">
+            <label for="coinglassApiKey">
+              <span class="api-icon">💧</span>
+              Coinglass API Key
+            </label>
+            <div class="api-input-wrapper">
+              <input type="password" id="coinglassApiKey" placeholder="Your Coinglass API key..." autocomplete="off">
+              <button class="toggle-visibility" data-target="coinglassApiKey">👁</button>
+            </div>
+            <span class="api-hint">Liquidation & derivatives data - <a href="https://coinglass.com/api" target="_blank">coinglass.com/api</a></span>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>⚙️ Trading Settings</h3>
+
+          <div class="settings-row">
+            <label>AI Auto-Trade</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="aiAutoTradeToggle" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row">
+            <label>Sound Alerts</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="soundToggle" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row">
+            <label>Browser Notifications</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="notificationToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <div class="api-status" id="settingsApiStatus">
+          <span class="status-indicator"></span>
+          <span class="status-text">Checking API status...</span>
+        </div>
+        <button class="settings-save-btn" id="settingsSaveBtn">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
