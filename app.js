@@ -1,6 +1,6 @@
 /* ============================================
-   SENTIENT TRADER - AI Crypto Trading Intelligence v3.0
-   Powered by Claude AI
+   SENTIENT TRADER - AI Crypto Trading Intelligence v3.1
+   Powered by Claude AI + ChatGPT
    ============================================ */
 
 // Configuration
@@ -8,9 +8,14 @@ const CONFIG = {
   BINANCE_API: 'https://fapi.binance.com',
   BYBIT_API: 'https://api.bybit.com',
   COINGECKO_API: 'https://api.coingecko.com/api/v3',
+  // Claude API
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
   CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
   CLAUDE_MODEL: 'claude-3-5-sonnet-20241022', // Model used for analysis
+  // OpenAI API
+  OPENAI_API: 'https://api.openai.com/v1/chat/completions',
+  OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
+  OPENAI_MODEL: 'gpt-4-turbo-preview', // Model used for analysis
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
@@ -29,31 +34,74 @@ const CONFIG = {
   CHART_HISTORY_LIMIT: 1000 // More candles for longer history
 };
 
-// Load API key from localStorage
+// Load API keys from localStorage
+function loadApiKeys() {
+  const claudeKey = localStorage.getItem('claude_api_key');
+  const openaiKey = localStorage.getItem('openai_api_key');
+
+  if (claudeKey) {
+    CONFIG.CLAUDE_API_KEY = claudeKey;
+  }
+  if (openaiKey) {
+    CONFIG.OPENAI_API_KEY = openaiKey;
+  }
+
+  return { claude: !!claudeKey, openai: !!openaiKey };
+}
+
+// Legacy function for backwards compatibility
 function loadApiKey() {
-  const savedKey = localStorage.getItem('claude_api_key');
-  if (savedKey) {
-    CONFIG.CLAUDE_API_KEY = savedKey;
-    return true;
-  }
-  return false;
+  return loadApiKeys().claude;
 }
 
-// Prompt for API key
+// Prompt for API keys
+function promptForApiKeys() {
+  // Claude API Key
+  if (!CONFIG.CLAUDE_API_KEY) {
+    const claudeKey = prompt('Enter your Claude API Key:\n\n(Get one at console.anthropic.com)\n\nLeave empty to skip.');
+    if (claudeKey && claudeKey.trim().startsWith('sk-ant-')) {
+      CONFIG.CLAUDE_API_KEY = claudeKey.trim();
+      localStorage.setItem('claude_api_key', claudeKey.trim());
+      console.log('🔑 Claude API Key saved');
+    }
+  }
+
+  // OpenAI API Key
+  if (!CONFIG.OPENAI_API_KEY) {
+    const openaiKey = prompt('Enter your OpenAI API Key:\n\n(Get one at platform.openai.com)\n\nLeave empty to skip.');
+    if (openaiKey && openaiKey.trim().startsWith('sk-')) {
+      CONFIG.OPENAI_API_KEY = openaiKey.trim();
+      localStorage.setItem('openai_api_key', openaiKey.trim());
+      console.log('🔑 OpenAI API Key saved');
+    }
+  }
+
+  return isAnyAiConfigured();
+}
+
+// Legacy function
 function promptForApiKey() {
-  const key = prompt('Enter your Claude API Key to enable AI trading:\n\n(Get one at console.anthropic.com)\n\nLeave empty to skip AI features.');
-  if (key && key.trim().startsWith('sk-ant-')) {
-    CONFIG.CLAUDE_API_KEY = key.trim();
-    localStorage.setItem('claude_api_key', key.trim());
-    console.log('🔑 Claude API Key saved');
-    return true;
-  }
-  return false;
+  return promptForApiKeys();
 }
 
-// Check if AI is configured
-function isAiConfigured() {
+// Check if Claude is configured
+function isClaudeConfigured() {
   return CONFIG.CLAUDE_API_KEY && CONFIG.CLAUDE_API_KEY.startsWith('sk-ant-');
+}
+
+// Check if OpenAI is configured
+function isOpenAIConfigured() {
+  return CONFIG.OPENAI_API_KEY && CONFIG.OPENAI_API_KEY.startsWith('sk-');
+}
+
+// Check if any AI is configured
+function isAnyAiConfigured() {
+  return isClaudeConfigured() || isOpenAIConfigured();
+}
+
+// Legacy function
+function isAiConfigured() {
+  return isAnyAiConfigured();
 }
 
 // State
@@ -382,7 +430,7 @@ async function callClaudeAPI(prompt) {
         'anthropic-dangerous-direct-browser-access': 'true'
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: CONFIG.CLAUDE_MODEL,
         max_tokens: 2048,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -397,6 +445,41 @@ async function callClaudeAPI(prompt) {
     return data.content[0].text;
   } catch (error) {
     console.error('Claude API call failed:', error);
+    return null;
+  }
+}
+
+async function callOpenAIAPI(prompt) {
+  try {
+    const response = await fetch(CONFIG.OPENAI_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CONFIG.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: CONFIG.OPENAI_MODEL,
+        max_tokens: 2048,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert crypto perpetual futures trader. Always respond with valid JSON only.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      console.error('OpenAI API error:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('OpenAI API call failed:', error);
     return null;
   }
 }
@@ -464,15 +547,18 @@ Select the 2 BEST opportunities with highest probability setups. Be conservative
 async function runAiAnalysis() {
   if (state.isAiScanning) return;
 
-  // Check if API key is configured
-  if (!isAiConfigured()) {
-    console.log('⚠️ Claude API key not configured. Skipping AI analysis.');
+  // Check if any API key is configured
+  if (!isAnyAiConfigured()) {
+    console.log('⚠️ No AI API keys configured. Skipping AI analysis.');
     updateAiScanStatus('No API Key');
     return;
   }
 
   state.isAiScanning = true;
-  console.log('🤖 Starting Claude AI market analysis...');
+  const aiNames = [];
+  if (isClaudeConfigured()) aiNames.push('Claude');
+  if (isOpenAIConfigured()) aiNames.push('ChatGPT');
+  console.log(`🤖 Starting ${aiNames.join(' + ')} AI market analysis...`);
   updateAiScanStatus('Analyzing...');
 
   try {
@@ -530,65 +616,187 @@ async function runAiAnalysis() {
       await sleep(30); // Rate limiting
     }
 
-    // Call Claude AI
+    // Build prompt
     const prompt = buildMarketAnalysisPrompt(enrichedData);
-    const aiResponse = await callClaudeAPI(prompt);
 
-    if (aiResponse) {
-      try {
-        // Parse JSON response
-        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const analysis = JSON.parse(jsonMatch[0]);
-          state.lastAiAnalysis = analysis;
+    // Call both AIs in parallel if both are configured
+    const apiPromises = [];
+    if (isClaudeConfigured()) {
+      apiPromises.push(callClaudeAPI(prompt).then(r => ({ source: 'claude', response: r })));
+    }
+    if (isOpenAIConfigured()) {
+      apiPromises.push(callOpenAIAPI(prompt).then(r => ({ source: 'openai', response: r })));
+    }
 
-          // Convert AI picks to signals
-          if (analysis.topPicks && analysis.topPicks.length > 0) {
-            const newAiSignals = analysis.topPicks.map(pick => ({
-              symbol: pick.symbol,
-              direction: pick.direction,
-              confidence: pick.confidence,
-              entry: pick.entry,
-              tp: pick.takeProfit,
-              sl: pick.stopLoss,
-              riskReward: Math.abs(pick.takeProfit - pick.entry) / Math.abs(pick.entry - pick.stopLoss),
-              timeframe: 'AI',
-              reasons: [pick.reasoning],
-              isAiGenerated: true,
-              claudeModel: CONFIG.CLAUDE_MODEL, // Track which model analyzed
-              keyLevels: pick.keyLevels,
-              riskScore: pick.riskScore,
-              timestamp: Date.now(),
-              marketSentiment: analysis.marketSentiment
-            }));
+    const results = await Promise.allSettled(apiPromises);
 
-            // Add to signal history for tracking
-            for (const signal of newAiSignals) {
-              const existingIdx = state.signalHistory.findIndex(
-                s => s.symbol === signal.symbol && s.direction === signal.direction
-              );
-              if (existingIdx === -1) {
-                state.signalHistory.unshift({ ...signal, isNew: true });
-              } else if (state.signalHistory[existingIdx].confidence !== signal.confidence) {
-                state.signalHistory.splice(existingIdx, 1);
-                state.signalHistory.unshift({ ...signal, isNew: true, isUpdated: true });
-              }
-            }
-            state.signalHistory = state.signalHistory.slice(0, 100);
+    // Parse responses from each AI
+    const claudePicks = [];
+    const openaiPicks = [];
+    let claudeAnalysis = null;
+    let openaiAnalysis = null;
 
-            state.aiSignals = newAiSignals;
-
-            console.log('🤖 AI Analysis complete:', analysis.topPicks.length, 'picks');
-            console.log('📊 Market Sentiment:', analysis.marketSentiment);
-
-            // Auto-trade if enabled
-            if (state.aiAutoTradeEnabled) {
-              await executeAiTrades();
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value.response) {
+        try {
+          const jsonMatch = result.value.response.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const analysis = JSON.parse(jsonMatch[0]);
+            if (result.value.source === 'claude') {
+              claudeAnalysis = analysis;
+              if (analysis.topPicks) claudePicks.push(...analysis.topPicks);
+              console.log('✅ Claude analysis received:', analysis.topPicks?.length || 0, 'picks');
+            } else {
+              openaiAnalysis = analysis;
+              if (analysis.topPicks) openaiPicks.push(...analysis.topPicks);
+              console.log('✅ ChatGPT analysis received:', analysis.topPicks?.length || 0, 'picks');
             }
           }
+        } catch (parseError) {
+          console.error(`Failed to parse ${result.value.source} response:`, parseError);
         }
-      } catch (parseError) {
-        console.error('Failed to parse AI response:', parseError);
+      }
+    }
+
+    // Find consensus signals (both AIs agree on symbol AND direction)
+    const consensusSignals = [];
+    for (const claudePick of claudePicks) {
+      const matchingOpenai = openaiPicks.find(
+        op => op.symbol === claudePick.symbol && op.direction === claudePick.direction
+      );
+      if (matchingOpenai) {
+        // CONSENSUS FOUND! Average the confidence and boost it
+        const avgConfidence = Math.min(95, Math.round((claudePick.confidence + matchingOpenai.confidence) / 2 + 5));
+        consensusSignals.push({
+          symbol: claudePick.symbol,
+          direction: claudePick.direction,
+          confidence: avgConfidence,
+          entry: (claudePick.entry + matchingOpenai.entry) / 2,
+          tp: Math.max(claudePick.takeProfit, matchingOpenai.takeProfit),
+          sl: claudePick.direction === 'LONG'
+            ? Math.max(claudePick.stopLoss, matchingOpenai.stopLoss)
+            : Math.min(claudePick.stopLoss, matchingOpenai.stopLoss),
+          isConsensus: true,
+          claudeReasoning: claudePick.reasoning,
+          openaiReasoning: matchingOpenai.reasoning,
+          claudeModel: CONFIG.CLAUDE_MODEL,
+          openaiModel: CONFIG.OPENAI_MODEL
+        });
+        console.log(`🎯 CONSENSUS: Both AIs agree on ${claudePick.symbol} ${claudePick.direction}!`);
+      }
+    }
+
+    // Combine all signals
+    const allSignals = [];
+
+    // Add consensus signals first (highest priority)
+    for (const cs of consensusSignals) {
+      allSignals.push({
+        symbol: cs.symbol,
+        direction: cs.direction,
+        confidence: cs.confidence,
+        entry: cs.entry,
+        tp: cs.tp,
+        sl: cs.sl,
+        riskReward: Math.abs(cs.tp - cs.entry) / Math.abs(cs.entry - cs.sl),
+        timeframe: 'AI',
+        reasons: [`Claude: ${cs.claudeReasoning}`, `ChatGPT: ${cs.openaiReasoning}`],
+        isAiGenerated: true,
+        isConsensus: true,
+        aiSources: ['claude', 'openai'],
+        claudeModel: cs.claudeModel,
+        openaiModel: cs.openaiModel,
+        timestamp: Date.now(),
+        marketSentiment: claudeAnalysis?.marketSentiment || openaiAnalysis?.marketSentiment || 'NEUTRAL'
+      });
+    }
+
+    // Add non-consensus Claude picks
+    for (const pick of claudePicks) {
+      if (!consensusSignals.some(cs => cs.symbol === pick.symbol && cs.direction === pick.direction)) {
+        allSignals.push({
+          symbol: pick.symbol,
+          direction: pick.direction,
+          confidence: pick.confidence,
+          entry: pick.entry,
+          tp: pick.takeProfit,
+          sl: pick.stopLoss,
+          riskReward: Math.abs(pick.takeProfit - pick.entry) / Math.abs(pick.entry - pick.stopLoss),
+          timeframe: 'AI',
+          reasons: [pick.reasoning],
+          isAiGenerated: true,
+          isConsensus: false,
+          aiSources: ['claude'],
+          claudeModel: CONFIG.CLAUDE_MODEL,
+          keyLevels: pick.keyLevels,
+          riskScore: pick.riskScore,
+          timestamp: Date.now(),
+          marketSentiment: claudeAnalysis?.marketSentiment || 'NEUTRAL'
+        });
+      }
+    }
+
+    // Add non-consensus OpenAI picks
+    for (const pick of openaiPicks) {
+      if (!consensusSignals.some(cs => cs.symbol === pick.symbol && cs.direction === pick.direction)) {
+        allSignals.push({
+          symbol: pick.symbol,
+          direction: pick.direction,
+          confidence: pick.confidence,
+          entry: pick.entry,
+          tp: pick.takeProfit,
+          sl: pick.stopLoss,
+          riskReward: Math.abs(pick.takeProfit - pick.entry) / Math.abs(pick.entry - pick.stopLoss),
+          timeframe: 'AI',
+          reasons: [pick.reasoning],
+          isAiGenerated: true,
+          isConsensus: false,
+          aiSources: ['openai'],
+          openaiModel: CONFIG.OPENAI_MODEL,
+          keyLevels: pick.keyLevels,
+          riskScore: pick.riskScore,
+          timestamp: Date.now(),
+          marketSentiment: openaiAnalysis?.marketSentiment || 'NEUTRAL'
+        });
+      }
+    }
+
+    // Sort by consensus first, then confidence
+    allSignals.sort((a, b) => {
+      if (a.isConsensus && !b.isConsensus) return -1;
+      if (!a.isConsensus && b.isConsensus) return 1;
+      return b.confidence - a.confidence;
+    });
+
+    if (allSignals.length > 0) {
+      state.lastAiAnalysis = { claudeAnalysis, openaiAnalysis };
+
+      // Add to signal history
+      for (const signal of allSignals) {
+        const existingIdx = state.signalHistory.findIndex(
+          s => s.symbol === signal.symbol && s.direction === signal.direction
+        );
+        if (existingIdx === -1) {
+          state.signalHistory.unshift({ ...signal, isNew: true });
+        } else if (state.signalHistory[existingIdx].confidence !== signal.confidence) {
+          state.signalHistory.splice(existingIdx, 1);
+          state.signalHistory.unshift({ ...signal, isNew: true, isUpdated: true });
+        }
+      }
+      state.signalHistory = state.signalHistory.slice(0, 100);
+
+      state.aiSignals = allSignals;
+
+      console.log(`🤖 AI Analysis complete: ${allSignals.length} signals (${consensusSignals.length} consensus)`);
+
+      // Show consensus notification
+      if (consensusSignals.length > 0) {
+        showConsensusNotification(consensusSignals);
+      }
+
+      // Auto-trade if enabled (prioritize consensus signals)
+      if (state.aiAutoTradeEnabled) {
+        await executeAiTrades();
       }
     }
   } catch (error) {
@@ -599,6 +807,21 @@ async function runAiAnalysis() {
   state.nextAiScanTime = Date.now() + CONFIG.AI_SCAN_INTERVAL;
   updateAiScanCountdown();
   renderAlertBar();
+}
+
+// Show special notification for consensus signals
+function showConsensusNotification(consensusSignals) {
+  for (const signal of consensusSignals) {
+    showNotification({
+      type: 'consensus',
+      title: '🎯 AI CONSENSUS ALERT',
+      symbol: signal.symbol,
+      direction: signal.direction,
+      confidence: signal.confidence,
+      message: `Both Claude & ChatGPT agree: ${signal.symbol} ${signal.direction}`,
+      reasons: [`Claude: ${signal.claudeReasoning}`, `ChatGPT: ${signal.openaiReasoning}`]
+    });
+  }
 }
 
 async function executeAiTrades() {
@@ -1543,16 +1766,50 @@ function renderSignals() {
   container.innerHTML = signals.map(signal => {
     const isRecent = Date.now() - signal.timestamp < 300000; // 5 minutes
     const isNew = signal.isNew && isRecent;
-    const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : null;
     const hasOpenTrade = state.trades.some(t => t.status === 'open' && t.symbol === signal.symbol);
 
+    // Build AI source badge
+    let aiSourceBadge = '';
+    if (signal.isAiGenerated) {
+      if (signal.isConsensus) {
+        // Consensus signal - both AIs agree
+        aiSourceBadge = `
+          <div class="ai-consensus-badge">
+            <span class="consensus-icon">🎯</span>
+            <span class="consensus-label">AI CONSENSUS</span>
+            <div class="ai-models">
+              <span class="ai-model claude">Claude</span>
+              <span class="ai-model openai">ChatGPT</span>
+            </div>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>`;
+      } else if (signal.aiSources?.includes('claude')) {
+        const modelShort = signal.claudeModel ? signal.claudeModel.replace('claude-', '').replace('-20241022', '') : '3.5';
+        aiSourceBadge = `
+          <div class="claude-model-badge">
+            <span class="model-icon">🧠</span>
+            <span class="model-name">Claude ${modelShort}</span>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>`;
+      } else if (signal.aiSources?.includes('openai')) {
+        const modelShort = signal.openaiModel ? signal.openaiModel.replace('gpt-4-', 'GPT-4 ').replace('-preview', '') : 'GPT-4';
+        aiSourceBadge = `
+          <div class="openai-model-badge">
+            <span class="model-icon">🤖</span>
+            <span class="model-name">${modelShort}</span>
+            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
+          </div>`;
+      }
+    }
+
     return `
-    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''}" data-symbol="${signal.symbol}">
+    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''} ${signal.isConsensus ? 'consensus-signal' : ''}" data-symbol="${signal.symbol}">
       <div class="signal-header">
         <div class="signal-symbol-info">
           <span class="signal-symbol">${signal.symbol.replace('USDT', '')}</span>
           <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
-          ${isNew ? '<span class="new-badge">NEW</span>' : ''}
+          ${signal.isConsensus ? '<span class="consensus-badge">🎯 CONSENSUS</span>' : ''}
+          ${isNew && !signal.isConsensus ? '<span class="new-badge">NEW</span>' : ''}
           ${signal.isUpdated ? '<span class="updated-badge">UPDATED</span>' : ''}
           ${hasOpenTrade ? '<span class="trading-badge">TRADING</span>' : ''}
         </div>
@@ -1563,16 +1820,10 @@ function renderSignals() {
         </div>
       </div>
       <div class="signal-body">
-        ${signal.isAiGenerated && modelShort ? `
-          <div class="claude-model-badge">
-            <span class="model-icon">🧠</span>
-            <span class="model-name">Claude ${modelShort}</span>
-            ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
-          </div>
-        ` : ''}
+        ${aiSourceBadge}
         <div class="signal-tags">
           ${signal.reasons.slice(0, 4).map((r, i) =>
-            `<span class="signal-tag ${i < 2 ? 'active' : ''}">${r.split(' ').slice(0, 3).join(' ')}</span>`
+            `<span class="signal-tag ${i < 2 ? 'active' : ''}">${r.length > 50 ? r.substring(0, 50) + '...' : r}</span>`
           ).join('')}
         </div>
         <div class="signal-analysis">${signal.reasons.slice(0, 2).join('. ')}</div>
@@ -1588,7 +1839,7 @@ function renderSignals() {
         <div class="footer-stat"><div class="label">Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
         <div class="footer-stat">
           <div class="label">Status</div>
-          <div class="value ${hasOpenTrade ? 'green' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
+          <div class="value ${hasOpenTrade ? 'green' : signal.isConsensus ? 'gold' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isConsensus ? '🎯 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
         </div>
       </div>
     </div>
@@ -1638,12 +1889,16 @@ function renderAlertBar() {
   }
 
   container.innerHTML = topSignals.map(s => `
-    <div class="alert-signal" data-symbol="${s.symbol}">
+    <div class="alert-signal ${s.isConsensus ? 'consensus' : ''}" data-symbol="${s.symbol}">
       <span class="symbol">${s.symbol.replace('USDT', '')}</span>
       <span class="direction ${s.direction.toLowerCase()}">${s.direction}</span>
       <span class="entry">$${formatPrice(s.entry)}</span>
       <span class="conf">${s.confidence}%</span>
-      ${s.isAiGenerated ? '<span class="ai-indicator">AI Pick</span>' : ''}
+      ${s.isConsensus ? '<span class="ai-indicator consensus">🎯 Both AIs</span>' :
+        s.aiSources?.includes('claude') && s.aiSources?.includes('openai') ? '<span class="ai-indicator consensus">🎯 Both AIs</span>' :
+        s.aiSources?.includes('claude') ? '<span class="ai-indicator claude">Claude</span>' :
+        s.aiSources?.includes('openai') ? '<span class="ai-indicator openai">ChatGPT</span>' :
+        s.isAiGenerated ? '<span class="ai-indicator">AI Pick</span>' : ''}
     </div>
   `).join('');
 
