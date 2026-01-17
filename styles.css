@@ -233,6 +233,39 @@ body {
   font-size: 12px;
 }
 
+.alert-signal .ai-indicator.claude {
+  background: var(--purple-dim);
+  color: var(--purple);
+}
+
+.alert-signal .ai-indicator.claude::before {
+  content: '🧠';
+}
+
+.alert-signal .ai-indicator.openai {
+  background: rgba(16, 163, 127, 0.2);
+  color: #10a37f;
+}
+
+.alert-signal .ai-indicator.openai::before {
+  content: '🤖';
+}
+
+.alert-signal .ai-indicator.consensus {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(255, 165, 0, 0.2));
+  color: #ffd700;
+  border: 1px solid rgba(255, 215, 0, 0.5);
+}
+
+.alert-signal .ai-indicator.consensus::before {
+  content: '';
+}
+
+.alert-signal.consensus {
+  border-color: #ffd700;
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+}
+
 /* AI Status indicator in alert bar */
 .ai-status {
   display: flex;
@@ -1255,6 +1288,106 @@ body {
 
 /* Signal card footer value colors */
 .footer-stat .value.cyan { color: var(--cyan); }
+.footer-stat .value.gold { color: #ffd700; }
+
+/* OpenAI Model Badge */
+.openai-model-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, rgba(16, 163, 127, 0.15), rgba(25, 195, 125, 0.15));
+  border: 1px solid #10a37f;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.openai-model-badge .model-icon {
+  font-size: 14px;
+}
+
+.openai-model-badge .model-name {
+  color: #10a37f;
+  font-weight: 700;
+}
+
+/* AI Consensus Badge - Both AIs agree */
+.ai-consensus-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 165, 0, 0.15));
+  border: 2px solid #ffd700;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  animation: consensus-glow 2s infinite;
+}
+
+@keyframes consensus-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(255, 215, 0, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.5); }
+}
+
+.ai-consensus-badge .consensus-icon {
+  font-size: 18px;
+}
+
+.ai-consensus-badge .consensus-label {
+  color: #ffd700;
+  font-weight: 800;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.ai-consensus-badge .ai-models {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.ai-consensus-badge .ai-model {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ai-consensus-badge .ai-model.claude {
+  background: var(--purple-dim);
+  color: var(--purple);
+}
+
+.ai-consensus-badge .ai-model.openai {
+  background: rgba(16, 163, 127, 0.2);
+  color: #10a37f;
+}
+
+/* Consensus signal card styling */
+.signal-card.consensus-signal {
+  border: 2px solid #ffd700;
+  background: linear-gradient(135deg, var(--bg-card), rgba(255, 215, 0, 0.05));
+}
+
+.signal-card.consensus-signal:hover {
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+}
+
+/* Consensus badge in header */
+.consensus-badge {
+  padding: 3px 8px;
+  background: linear-gradient(135deg, #ffd700, #ffa500);
+  color: #000;
+  font-size: 9px;
+  font-weight: 800;
+  border-radius: 4px;
+  animation: badge-pulse 1.5s infinite;
+}
 
 /* Take Trade Button */
 .take-trade-btn {
@@ -1515,6 +1648,10 @@ body {
 
 .notification.long { border-left: 3px solid var(--green); }
 .notification.short { border-left: 3px solid var(--red); }
+.notification.consensus {
+  border-left: 3px solid #ffd700;
+  background: linear-gradient(135deg, var(--bg-card), rgba(255, 215, 0, 0.1));
+}
 
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(100%); }
