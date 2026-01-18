@@ -3052,3 +3052,195 @@ body {
   background: var(--purple-dim);
   color: var(--purple);
 }
+
+/* ============================================
+   AI DEBUG PANEL
+   ============================================ */
+
+.debug-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 380px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 10000;
+  transform: translateY(120%);
+  opacity: 0;
+  transition: all 0.3s ease;
+}
+
+.debug-panel.visible {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 12px 12px 0 0;
+}
+
+.debug-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.debug-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.debug-close:hover {
+  color: var(--red);
+}
+
+.debug-body {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.debug-ai {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: all 0.3s ease;
+}
+
+.debug-ai.not-configured {
+  opacity: 0.5;
+}
+
+.debug-ai.calling {
+  border-color: var(--yellow);
+  background: rgba(210, 153, 34, 0.1);
+}
+
+.debug-ai.success {
+  border-color: var(--green);
+}
+
+.debug-ai.error {
+  border-color: var(--red);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.debug-ai-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.debug-ai-icon {
+  font-size: 18px;
+}
+
+.debug-ai-name {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+  flex: 1;
+}
+
+.debug-ai-status {
+  font-size: 16px;
+}
+
+.debug-ai-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.debug-label {
+  color: var(--text-muted);
+}
+
+.debug-value {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.debug-value.yes {
+  color: var(--green);
+}
+
+.debug-value.no {
+  color: var(--red);
+}
+
+.debug-value.model {
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.debug-value.error {
+  color: var(--red);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-row.error {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.debug-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 0 0 12px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.debug-footer .debug-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.debug-footer .debug-btn:hover {
+  background: #9d7aff;
+  transform: translateY(-1px);
+}
+
+/* Debug button in nav */
+.nav-right .icon-btn.debug-btn {
+  font-size: 14px;
+}
