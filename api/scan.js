@@ -2,8 +2,10 @@
 // Runs on cron schedule and sends Telegram alerts
 //
 // Uses Upstash Redis for persistent cooldown tracking across invocations
+// Integrates Discord community calls for enhanced AI context
 
 import { Redis } from '@upstash/redis';
+import { getRecentCalls, formatCallsForAIContext } from './discord.js';
 
 const CONFIG = {
   // Minimum confidence for alerts - STRICT (raised to 85%)
@@ -494,11 +496,22 @@ async function fetchMarketData() {
 // AI ANALYSIS
 // ============================================
 
-function buildAnalysisPrompt(marketData) {
+async function buildAnalysisPrompt(marketData) {
   let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data and identify the BEST trading opportunities.
 
 CURRENT MARKET DATA:
 `;
+
+  // Add Discord community calls context
+  try {
+    const discordCalls = await getRecentCalls(100);
+    if (discordCalls && discordCalls.length > 0) {
+      const discordContext = formatCallsForAIContext(discordCalls);
+      prompt = prompt.replace('CURRENT MARKET DATA:', discordContext + '\nCURRENT MARKET DATA:');
+    }
+  } catch (e) {
+    console.log('Could not fetch Discord calls context:', e.message);
+  }
 
   for (const symbol of CONFIG.TOP_COINS) {
     const price = marketData.prices[symbol];
@@ -845,8 +858,8 @@ export default async function handler(request, response) {
       });
     }
 
-    // Build analysis prompt
-    const prompt = buildAnalysisPrompt(marketData);
+    // Build analysis prompt (now async to include Discord context)
+    const prompt = await buildAnalysisPrompt(marketData);
 
     // Run AI analyses in parallel
     console.log('🤖 Running AI analysis...');
