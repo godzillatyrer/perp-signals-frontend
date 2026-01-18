@@ -519,19 +519,40 @@ function getCoinglassUrl(endpoint) {
   return `${CONFIG.COINGLASS_PROXY}${encodeURIComponent(baseUrl)}`;
 }
 
+// Cache for coin-list data (to avoid repeated API calls)
+let coinglassCoinListCache = null;
+let coinglassCoinListCacheTime = 0;
+const COINGLASS_CACHE_TTL = 60000; // 1 minute cache
+
 async function fetchLiquidationData(symbol) {
   if (!isCoinglassConfigured()) {
     if (DEBUG_MODE) console.log('💧 [COINGLASS] Not configured');
     return null;
   }
 
+  // Use coin-list endpoint (works with Hobbyist plan, other endpoints need upgrade)
+  return await fetchFromCoinglassCoinList(symbol);
+}
+
+// Primary method: Use coin-list endpoint (works with Hobbyist plan)
+async function fetchFromCoinglassCoinList(symbol) {
   try {
     const cleanSymbol = symbol.replace('USDT', '');
-    // V4 API endpoint: /futures/liquidation/aggregated-history
-    // This gets aggregated liquidation data across all exchanges for a coin
-    const url = getCoinglassUrl(`/futures/liquidation/aggregated-history?symbol=${cleanSymbol}&interval=h24`);
+    const now = Date.now();
 
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS V4] Fetching via proxy...`);
+    // Check cache first to avoid rate limits
+    if (coinglassCoinListCache && (now - coinglassCoinListCacheTime) < COINGLASS_CACHE_TTL) {
+      const coinData = coinglassCoinListCache.find(d =>
+        d.symbol?.toUpperCase() === cleanSymbol.toUpperCase()
+      );
+      if (coinData) {
+        return parseCoinglassData(symbol, coinData);
+      }
+    }
+
+    // Fetch fresh data
+    const url = getCoinglassUrl('/futures/liquidation/coin-list');
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS] Fetching coin-list...`);
 
     const response = await fetch(url, {
       headers: {
@@ -541,242 +562,96 @@ async function fetchLiquidationData(symbol) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`💧 [COINGLASS V4] Error ${response.status}: ${errorText}`);
-      if (response.status === 429) {
-        console.warn('Coinglass rate limited');
-        return null;
-      }
-      // Try alternate endpoint
-      return await fetchLiquidationFromCoinList(symbol);
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS] HTTP ${response.status}`);
+      return null;
     }
 
     const data = await response.json();
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS V4] Response:`, data);
 
-    // V4 API returns { code: "0", msg: "success", data: [...] }
     if (!data || (data.code !== '0' && data.code !== 0) || !data.data) {
-      console.warn(`💧 [COINGLASS V4] Invalid response for ${symbol}:`, data);
-      return await fetchLiquidationFromCoinList(symbol);
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS] Invalid response:`, data?.msg || data);
+      return null;
     }
 
-    // Parse V4 API response - data is an array of time-series entries
-    let totalLongLiq = 0, totalShortLiq = 0;
-    if (Array.isArray(data.data)) {
-      // Sum up liquidations from the time series
-      data.data.forEach(d => {
-        totalLongLiq += parseFloat(d.longLiquidationUsd || d.longVolUsd || d.buyVolUsd || 0);
-        totalShortLiq += parseFloat(d.shortLiquidationUsd || d.shortVolUsd || d.sellVolUsd || 0);
-      });
+    // Cache the response
+    coinglassCoinListCache = Array.isArray(data.data) ? data.data : [];
+    coinglassCoinListCacheTime = now;
+
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS] ✅ Loaded ${coinglassCoinListCache.length} coins from API`);
+
+    // Find our symbol
+    const coinData = coinglassCoinListCache.find(d =>
+      d.symbol?.toUpperCase() === cleanSymbol.toUpperCase()
+    );
+
+    if (!coinData) {
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS] ${cleanSymbol} not found`);
+      return null;
     }
 
-    state.liquidationData[symbol] = {
-      longLiquidations24h: totalLongLiq,
-      shortLiquidations24h: totalShortLiq,
-      totalLiquidations24h: totalLongLiq + totalShortLiq,
-      liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0,
-      dominantSide: totalLongLiq > totalShortLiq ? 'LONGS_LIQUIDATED' : 'SHORTS_LIQUIDATED',
-      priceImplication: totalLongLiq > totalShortLiq * 1.5 ? 'POTENTIAL_BOTTOM' :
-                        totalShortLiq > totalLongLiq * 1.5 ? 'POTENTIAL_TOP' : 'NEUTRAL',
-      timestamp: Date.now()
-    };
-
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS V4] Parsed ${symbol}: Long=$${totalLongLiq.toFixed(0)}, Short=$${totalShortLiq.toFixed(0)}`);
-    return state.liquidationData[symbol];
+    return parseCoinglassData(symbol, coinData);
   } catch (error) {
-    console.error(`Failed to fetch Coinglass data for ${symbol}:`, error);
-    return await fetchLiquidationFromCoinList(symbol);
+    if (DEBUG_MODE) console.error(`💧 [COINGLASS] Error:`, error);
+    return null;
   }
 }
 
-// Alternate: Try to get data from the coin-list endpoint
-async function fetchLiquidationFromCoinList(symbol) {
-  try {
-    const cleanSymbol = symbol.replace('USDT', '');
-    // V4 API endpoint: /futures/liquidation/coin-list - gets all coins at once
-    const url = getCoinglassUrl('/futures/liquidation/coin-list');
+// Parse Coinglass coin data
+function parseCoinglassData(symbol, coinData) {
+  // Try various possible field names from coin-list response
+  const totalLongLiq = parseFloat(
+    coinData.longLiquidationUsd ||
+    coinData.longVolUsd ||
+    coinData.h24LongLiquidationUsd ||
+    coinData.buyLiquidationUsd ||
+    coinData.longLiqUsd24h ||
+    0
+  );
+  const totalShortLiq = parseFloat(
+    coinData.shortLiquidationUsd ||
+    coinData.shortVolUsd ||
+    coinData.h24ShortLiquidationUsd ||
+    coinData.sellLiquidationUsd ||
+    coinData.shortLiqUsd24h ||
+    0
+  );
 
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS COINLIST] Fetching: ${url}`);
+  // Try to get long/short account ratio from the same data
+  const longRate = parseFloat(coinData.longRate || coinData.longRatio || coinData.longAccount || 50);
+  const shortRate = parseFloat(coinData.shortRate || coinData.shortRatio || coinData.shortAccount || 50);
 
-    const response = await fetch(url, {
-      headers: {
-        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
-        'accept': 'application/json'
-      }
-    });
+  state.liquidationData[symbol] = {
+    longLiquidations24h: totalLongLiq,
+    shortLiquidations24h: totalShortLiq,
+    totalLiquidations24h: totalLongLiq + totalShortLiq,
+    liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0,
+    dominantSide: totalLongLiq > totalShortLiq ? 'LONGS_LIQUIDATED' : 'SHORTS_LIQUIDATED',
+    priceImplication: totalLongLiq > totalShortLiq * 1.5 ? 'POTENTIAL_BOTTOM' :
+                      totalShortLiq > totalLongLiq * 1.5 ? 'POTENTIAL_TOP' : 'NEUTRAL',
+    // Add long/short ratio
+    longShortRatio: shortRate > 0 ? longRate / shortRate : 1,
+    longPercent: longRate,
+    shortPercent: shortRate,
+    crowdBias: longRate > 55 ? 'CROWDED_LONG' : shortRate > 55 ? 'CROWDED_SHORT' : 'BALANCED',
+    timestamp: Date.now()
+  };
 
-    if (!response.ok) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS COINLIST] HTTP ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json();
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS COINLIST] Response received`);
-
-    if (!data || (data.code !== '0' && data.code !== 0) || !data.data) {
-      return null;
-    }
-
-    // Find our symbol in the list
-    const coinData = Array.isArray(data.data)
-      ? data.data.find(d => d.symbol?.toUpperCase() === cleanSymbol.toUpperCase())
-      : null;
-
-    if (!coinData) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS COINLIST] ${cleanSymbol} not found in list`);
-      return null;
-    }
-
-    const totalLongLiq = parseFloat(coinData.longLiquidationUsd || coinData.longVolUsd || 0);
-    const totalShortLiq = parseFloat(coinData.shortLiquidationUsd || coinData.shortVolUsd || 0);
-
-    if (totalLongLiq > 0 || totalShortLiq > 0) {
-      state.liquidationData[symbol] = {
-        longLiquidations24h: totalLongLiq,
-        shortLiquidations24h: totalShortLiq,
-        totalLiquidations24h: totalLongLiq + totalShortLiq,
-        liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0,
-        dominantSide: totalLongLiq > totalShortLiq ? 'LONGS_LIQUIDATED' : 'SHORTS_LIQUIDATED',
-        priceImplication: totalLongLiq > totalShortLiq * 1.5 ? 'POTENTIAL_BOTTOM' :
-                          totalShortLiq > totalLongLiq * 1.5 ? 'POTENTIAL_TOP' : 'NEUTRAL',
-        timestamp: Date.now()
-      };
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS COINLIST] Parsed ${symbol}: Long=$${totalLongLiq.toFixed(0)}, Short=$${totalShortLiq.toFixed(0)}`);
-      return state.liquidationData[symbol];
-    }
-    return null;
-  } catch (error) {
-    if (DEBUG_MODE) console.error(`💧 [COINGLASS COINLIST] Error:`, error);
-    return null;
+  if (DEBUG_MODE && (totalLongLiq > 0 || totalShortLiq > 0)) {
+    console.log(`💧 [COINGLASS] ${symbol}: Long=$${totalLongLiq.toFixed(0)}, Short=$${totalShortLiq.toFixed(0)}, L/S=${longRate.toFixed(0)}%/${shortRate.toFixed(0)}%`);
   }
+
+  return state.liquidationData[symbol];
 }
 
 async function fetchLongShortRatio(symbol) {
-  if (!isCoinglassConfigured()) {
-    return null;
-  }
-
-  try {
-    const cleanSymbol = symbol.replace('USDT', '');
-    // V4 API endpoint for long/short ratio
-    const url = getCoinglassUrl(`/futures/global-long-short-account-ratio/history?symbol=${cleanSymbol}&interval=h1`);
-
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS LS V4] Fetching: ${url}`);
-
-    const response = await fetch(url, {
-      headers: {
-        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
-        'accept': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS LS V4] HTTP ${response.status}`);
-      // Try alternate endpoint
-      return await fetchLongShortFromOpenInterest(symbol);
-    }
-
-    const data = await response.json();
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS LS V4] Response:`, data);
-
-    if (!data || (data.code !== 0 && data.code !== '0') || !data.data) {
-      return await fetchLongShortFromOpenInterest(symbol);
-    }
-
-    // Parse V4 API response - can be array or object
-    let recent;
-    if (Array.isArray(data.data) && data.data.length > 0) {
-      recent = data.data[data.data.length - 1];
-    } else if (data.data) {
-      recent = data.data;
-    } else {
-      return await fetchLongShortFromOpenInterest(symbol);
-    }
-
-    // Get long/short percentages - different possible field names
-    const longRate = parseFloat(recent.longRate || recent.longAccount || recent.longRatio || recent.buyRatio || 50);
-    const shortRate = parseFloat(recent.shortRate || recent.shortAccount || recent.shortRatio || recent.sellRatio || 50);
-
-    // Add to existing liquidation data
-    if (!state.liquidationData[symbol]) {
-      state.liquidationData[symbol] = { timestamp: Date.now() };
-    }
-
-    state.liquidationData[symbol].longShortRatio = shortRate > 0 ? longRate / shortRate : 1;
-    state.liquidationData[symbol].longPercent = longRate;
-    state.liquidationData[symbol].shortPercent = shortRate;
-    state.liquidationData[symbol].crowdBias = longRate > 55 ? 'CROWDED_LONG' :
-                                               shortRate > 55 ? 'CROWDED_SHORT' : 'BALANCED';
-
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS LS V4] ${symbol}: Long=${longRate}%, Short=${shortRate}%`);
+  // Long/short ratio is already fetched with coin-list data in parseCoinglassData
+  // Just return existing data if available
+  if (state.liquidationData[symbol]?.longPercent) {
     return state.liquidationData[symbol];
-  } catch (error) {
-    console.error(`Failed to fetch long/short ratio for ${symbol}:`, error);
-    return await fetchLongShortFromOpenInterest(symbol);
   }
-}
 
-// Alternate: Get long/short from open interest endpoint
-async function fetchLongShortFromOpenInterest(symbol) {
-  try {
-    const cleanSymbol = symbol.replace('USDT', '');
-    // V4 API endpoint for open interest with long/short
-    const url = getCoinglassUrl(`/futures/open-interest/ohlc-aggregated-history?symbol=${cleanSymbol}&interval=h1`);
-
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS OI V4] Fetching: ${url}`);
-
-    const response = await fetch(url, {
-      headers: {
-        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
-        'accept': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS OI V4] HTTP ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json();
-    if (!data || (data.code !== 0 && data.code !== '0') || !data.data) {
-      return null;
-    }
-
-    // Try to get long/short from OI data
-    let recent;
-    if (Array.isArray(data.data) && data.data.length > 0) {
-      recent = data.data[data.data.length - 1];
-    } else {
-      return null;
-    }
-
-    // Calculate ratio from OI if available
-    const longOI = parseFloat(recent.longOpenInterest || recent.longOI || 0);
-    const shortOI = parseFloat(recent.shortOpenInterest || recent.shortOI || 0);
-    const totalOI = longOI + shortOI;
-
-    if (totalOI > 0) {
-      const longRate = (longOI / totalOI) * 100;
-      const shortRate = (shortOI / totalOI) * 100;
-
-      if (!state.liquidationData[symbol]) {
-        state.liquidationData[symbol] = { timestamp: Date.now() };
-      }
-
-      state.liquidationData[symbol].longShortRatio = shortRate > 0 ? longRate / shortRate : 1;
-      state.liquidationData[symbol].longPercent = longRate;
-      state.liquidationData[symbol].shortPercent = shortRate;
-      state.liquidationData[symbol].crowdBias = longRate > 55 ? 'CROWDED_LONG' :
-                                                 shortRate > 55 ? 'CROWDED_SHORT' : 'BALANCED';
-
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS OI V4] ${symbol}: Long=${longRate.toFixed(1)}%, Short=${shortRate.toFixed(1)}%`);
-      return state.liquidationData[symbol];
-    }
-    return null;
-  } catch (error) {
-    if (DEBUG_MODE) console.error(`💧 [COINGLASS OI V4] Error:`, error);
-    return null;
-  }
+  // If no data yet, fetch via coin-list
+  return await fetchFromCoinglassCoinList(symbol);
 }
 
 async function fetchBatchLiquidationData(symbols) {
@@ -787,13 +662,21 @@ async function fetchBatchLiquidationData(symbols) {
 
   console.log('💧 Fetching liquidation data...');
 
-  // Fetch for top 10 symbols only to avoid rate limits
-  const topSymbols = symbols.slice(0, 10);
+  // Fetch coin-list once (it contains all coins)
+  // First call will fetch and cache, subsequent calls use cache
+  await fetchFromCoinglassCoinList(symbols[0]);
 
-  for (const symbol of topSymbols) {
-    await fetchLiquidationData(symbol);
-    await fetchLongShortRatio(symbol);
-    await sleep(150); // Rate limiting
+  // Now parse data for all requested symbols from cache
+  for (const symbol of symbols.slice(0, 20)) {
+    const cleanSymbol = symbol.replace('USDT', '');
+    if (coinglassCoinListCache) {
+      const coinData = coinglassCoinListCache.find(d =>
+        d.symbol?.toUpperCase() === cleanSymbol.toUpperCase()
+      );
+      if (coinData) {
+        parseCoinglassData(symbol, coinData);
+      }
+    }
   }
 
   console.log(`💧 Liquidation data loaded for ${Object.keys(state.liquidationData).length} coins`);
