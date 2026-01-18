@@ -40,7 +40,7 @@
 
   /* Sizing */
   --sidebar-left-width: 180px;
-  --sidebar-right-width: 380px;
+  --sidebar-right-width: 480px;
   --alert-bar-height: 90px;
   --nav-height: 48px;
 
@@ -1146,7 +1146,7 @@ body {
 
 .data-section {
   border-bottom: 1px solid var(--border);
-  padding: 12px 16px;
+  padding: 16px 20px;
 }
 
 .data-section:last-child {
@@ -1157,20 +1157,69 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .data-title {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.data-update {
-  font-size: 9px;
+.data-title-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.data-subtitle {
+  font-size: 11px;
   color: var(--text-muted);
+  margin-top: 2px;
+  font-weight: 400;
+  text-transform: none;
+}
+
+.data-update {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.data-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: var(--bg-dark);
+  border-radius: var(--radius);
+}
+
+.data-legend .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.data-legend .legend-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.data-legend .legend-badge.bottom {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.data-legend .legend-badge.top {
+  background: var(--red-dim);
+  color: var(--red);
 }
 
 .liquidation-list,
@@ -1178,7 +1227,7 @@ body {
 .sentiment-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .liq-item,
@@ -1187,10 +1236,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 12px 14px;
   background: var(--bg-dark);
   border-radius: var(--radius);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .liq-item .symbol,
@@ -1198,31 +1247,36 @@ body {
 .sentiment-item .symbol {
   font-weight: 700;
   color: var(--text);
-  min-width: 60px;
+  min-width: 70px;
+  font-size: 14px;
 }
 
 .liq-item .data {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   flex: 1;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .liq-item .longs,
 .liq-item .shorts {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .liq-item .longs { color: var(--green); }
 .liq-item .shorts { color: var(--red); }
 
 .liq-item .signal {
-  padding: 2px 6px;
+  padding: 4px 10px;
   border-radius: var(--radius-sm);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
+  min-width: 70px;
+  text-align: center;
 }
 
 .liq-item .signal.bottom {
@@ -1237,28 +1291,29 @@ body {
 
 .ls-item .ratio-bar {
   flex: 1;
-  height: 6px;
+  height: 12px;
   background: var(--bg-card);
-  border-radius: 3px;
-  margin: 0 10px;
+  border-radius: 6px;
+  margin: 0 14px;
   overflow: hidden;
   display: flex;
 }
 
 .ls-item .long-fill {
-  background: var(--green);
+  background: linear-gradient(90deg, var(--green), #2ea043);
   height: 100%;
 }
 
 .ls-item .short-fill {
-  background: var(--red);
+  background: linear-gradient(90deg, #da3633, var(--red));
   height: 100%;
 }
 
 .ls-item .pct {
   font-family: var(--font-mono);
-  font-size: 10px;
-  min-width: 35px;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 45px;
   text-align: right;
 }
 
@@ -2252,16 +2307,22 @@ body {
 /* ============================================
    RESPONSIVE
    ============================================ */
+@media (max-width: 1600px) {
+  :root {
+    --sidebar-right-width: 420px;
+  }
+}
+
 @media (max-width: 1400px) {
   :root {
-    --sidebar-right-width: 340px;
+    --sidebar-right-width: 380px;
   }
 }
 
 @media (max-width: 1200px) {
   :root {
     --sidebar-left-width: 160px;
-    --sidebar-right-width: 320px;
+    --sidebar-right-width: 350px;
   }
 
   .portfolio-stats {

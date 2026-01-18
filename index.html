@@ -301,8 +301,15 @@
       <div class="sidebar-view" id="dataView">
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title">💧 Liquidation Heatmap</span>
+            <div class="data-title-wrap">
+              <span class="data-title">💧 24H Liquidations</span>
+              <span class="data-subtitle">All Exchanges • L=Longs S=Shorts</span>
+            </div>
             <span class="data-update" id="liqDataUpdate">--</span>
+          </div>
+          <div class="data-legend">
+            <span class="legend-item"><span class="legend-badge bottom">BOTTOM</span> Longs rekt → Bullish reversal</span>
+            <span class="legend-item"><span class="legend-badge top">TOP</span> Shorts rekt → Bearish reversal</span>
           </div>
           <div class="liquidation-list" id="liquidationList">
             <div class="empty-state">
@@ -314,7 +321,10 @@
 
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title">👥 Long/Short Ratio</span>
+            <div class="data-title-wrap">
+              <span class="data-title">👥 Long/Short Ratio</span>
+              <span class="data-subtitle">Based on 24H liquidation volume</span>
+            </div>
           </div>
           <div class="ls-ratio-list" id="lsRatioList">
             <div class="empty-state">No data available</div>
@@ -323,7 +333,10 @@
 
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title">🌙 Social Sentiment</span>
+            <div class="data-title-wrap">
+              <span class="data-title">🌙 Social Sentiment</span>
+              <span class="data-subtitle">LunarCrush Galaxy Score</span>
+            </div>
           </div>
           <div class="sentiment-list" id="sentimentList">
             <div class="empty-state">
