@@ -1845,6 +1845,126 @@ body {
   color: var(--red);
 }
 
+/* Entry Trigger Styles */
+.entry-intel {
+  margin-bottom: 8px;
+  background: rgba(88, 166, 255, 0.05);
+  border-radius: 6px;
+}
+
+.intel-item.trigger-breakout {
+  border-left: 2px solid #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+}
+.intel-item.trigger-breakout .intel-value {
+  color: #00ff88;
+}
+
+.intel-item.trigger-pullback {
+  border-left: 2px solid #ffa500;
+  background: rgba(255, 165, 0, 0.1);
+}
+.intel-item.trigger-pullback .intel-value {
+  color: #ffa500;
+}
+
+.intel-item.trigger-reversal {
+  border-left: 2px solid #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+}
+.intel-item.trigger-reversal .intel-value {
+  color: #ff6b6b;
+}
+
+.intel-item.trigger-momentum {
+  border-left: 2px solid #58a6ff;
+  background: rgba(88, 166, 255, 0.1);
+}
+.intel-item.trigger-momentum .intel-value {
+  color: #58a6ff;
+}
+
+/* Market Regime Styles */
+.intel-item.regime-trending-up {
+  border-left: 2px solid var(--green);
+  background: rgba(63, 185, 80, 0.1);
+}
+.intel-item.regime-trending-up .intel-value {
+  color: var(--green);
+}
+
+.intel-item.regime-trending-down {
+  border-left: 2px solid var(--red);
+  background: rgba(248, 81, 73, 0.1);
+}
+.intel-item.regime-trending-down .intel-value {
+  color: var(--red);
+}
+
+.intel-item.regime-volatile {
+  border-left: 2px solid #ffa500;
+  background: rgba(255, 165, 0, 0.1);
+}
+.intel-item.regime-volatile .intel-value {
+  color: #ffa500;
+}
+
+.intel-item.regime-ranging {
+  border-left: 2px solid #888;
+  background: rgba(136, 136, 136, 0.1);
+}
+.intel-item.regime-ranging .intel-value {
+  color: #888;
+}
+
+/* MTF Alignment Styles */
+.intel-item.mtf-strong {
+  border-left: 2px solid #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+}
+.intel-item.mtf-strong .intel-value {
+  color: #00ff88;
+}
+
+.intel-item.mtf-partial {
+  border-left: 2px solid #ffa500;
+  background: rgba(255, 165, 0, 0.1);
+}
+.intel-item.mtf-partial .intel-value {
+  color: #ffa500;
+}
+
+.intel-item.mtf-weak {
+  border-left: 2px solid #888;
+  background: rgba(136, 136, 136, 0.1);
+}
+.intel-item.mtf-weak .intel-value {
+  color: #888;
+}
+
+/* Entry Condition */
+.entry-condition {
+  padding: 8px 12px;
+  background: rgba(88, 166, 255, 0.08);
+  border-radius: 6px;
+  margin: 8px 0;
+  border-left: 2px solid #58a6ff;
+}
+
+.entry-condition .condition-label {
+  font-size: 10px;
+  color: #58a6ff;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.entry-condition .condition-text {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
 .signal-footer {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

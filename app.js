@@ -26,8 +26,8 @@ const CONFIG = {
   // LunarCrush API (Social Sentiment)
   LUNARCRUSH_API: 'https://lunarcrush.com/api4/public',
   LUNARCRUSH_API_KEY: '', // Get free key at lunarcrush.com/developers
-  // Coinglass API (Liquidation & Derivatives Data)
-  COINGLASS_API: 'https://open-api.coinglass.com/public/v2',
+  // Coinglass API (Liquidation & Derivatives Data) - Using v3 API
+  COINGLASS_API: 'https://open-api-v3.coinglass.com/api',
   COINGLASS_API_KEY: '', // Get free key at coinglass.com/api
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
@@ -512,46 +512,56 @@ async function fetchBatchSocialSentiment(symbols) {
 
 async function fetchLiquidationData(symbol) {
   if (!isCoinglassConfigured()) {
+    if (DEBUG_MODE) console.log('💧 [COINGLASS] Not configured');
     return null;
   }
 
   try {
-    // Convert symbol format for Coinglass
+    // Convert symbol format for Coinglass (v3 API uses full symbol like BTCUSDT)
     const cleanSymbol = symbol.replace('USDT', '');
+    // Try aggregated liquidation data endpoint (v3 API)
+    const url = `${CONFIG.COINGLASS_API}/futures/liquidation/v2/symbol?symbol=${cleanSymbol}&interval=h24`;
 
-    // Fetch liquidation data
-    const response = await fetch(`${CONFIG.COINGLASS_API}/liquidation_chart?symbol=${cleanSymbol}&interval=h1`, {
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS] Fetching: ${url}`);
+
+    // Fetch liquidation data with v3 API headers
+    const response = await fetch(url, {
       headers: {
-        'coinglassSecret': CONFIG.COINGLASS_API_KEY
+        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
+        'Accept': 'application/json'
       }
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`💧 [COINGLASS] Error ${response.status}: ${errorText}`);
       if (response.status === 429) {
         console.warn('Coinglass rate limited');
         return null;
       }
-      throw new Error(`HTTP ${response.status}`);
+      // Try alternate endpoint if main one fails
+      return await fetchLiquidationDataAlternate(symbol);
     }
 
     const data = await response.json();
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS] Response:`, data);
 
-    if (!data || data.code !== '0' || !data.data) {
-      return null;
+    if (!data || data.code !== 0 || !data.data) {
+      console.warn(`💧 [COINGLASS] Invalid response for ${symbol}:`, data);
+      return await fetchLiquidationDataAlternate(symbol);
     }
 
-    // Get most recent hour data
-    const recentData = data.data.slice(-24);
-    const totalLongLiq = recentData.reduce((sum, d) => sum + (d.longLiquidationUsd || 0), 0);
-    const totalShortLiq = recentData.reduce((sum, d) => sum + (d.shortLiquidationUsd || 0), 0);
+    // Parse v3 API response
+    const liqData = data.data;
+    const totalLongLiq = liqData.longLiquidationUsd || 0;
+    const totalShortLiq = liqData.shortLiquidationUsd || 0;
 
     state.liquidationData[symbol] = {
       longLiquidations24h: totalLongLiq,
       shortLiquidations24h: totalShortLiq,
       totalLiquidations24h: totalLongLiq + totalShortLiq,
-      liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0, // > 1 means more shorts liquidated
+      liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0,
       dominantSide: totalLongLiq > totalShortLiq ? 'LONGS_LIQUIDATED' : 'SHORTS_LIQUIDATED',
-      // If longs are being liquidated, might be near bottom. If shorts, might be near top.
       priceImplication: totalLongLiq > totalShortLiq * 1.5 ? 'POTENTIAL_BOTTOM' :
                         totalShortLiq > totalLongLiq * 1.5 ? 'POTENTIAL_TOP' : 'NEUTRAL',
       timestamp: Date.now()
@@ -560,6 +570,65 @@ async function fetchLiquidationData(symbol) {
     return state.liquidationData[symbol];
   } catch (error) {
     console.error(`Failed to fetch Coinglass data for ${symbol}:`, error);
+    return await fetchLiquidationDataAlternate(symbol);
+  }
+}
+
+// Alternate endpoint for liquidation data
+async function fetchLiquidationDataAlternate(symbol) {
+  try {
+    const cleanSymbol = symbol.replace('USDT', '');
+    const url = `${CONFIG.COINGLASS_API}/futures/liquidation/aggregated?symbol=${cleanSymbol}&interval=h24`;
+
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS ALT] Fetching: ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS ALT] HTTP ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS ALT] Response:`, data);
+
+    if (!data || (data.code !== 0 && data.code !== '0') || !data.data) {
+      return null;
+    }
+
+    // Try to parse whatever structure we get
+    let totalLongLiq = 0, totalShortLiq = 0;
+    if (Array.isArray(data.data)) {
+      data.data.forEach(d => {
+        totalLongLiq += d.longLiquidationUsd || d.longVolUsd || 0;
+        totalShortLiq += d.shortLiquidationUsd || d.shortVolUsd || 0;
+      });
+    } else if (data.data) {
+      totalLongLiq = data.data.longLiquidationUsd || data.data.buyVolUsd || 0;
+      totalShortLiq = data.data.shortLiquidationUsd || data.data.sellVolUsd || 0;
+    }
+
+    if (totalLongLiq > 0 || totalShortLiq > 0) {
+      state.liquidationData[symbol] = {
+        longLiquidations24h: totalLongLiq,
+        shortLiquidations24h: totalShortLiq,
+        totalLiquidations24h: totalLongLiq + totalShortLiq,
+        liqRatio: totalLongLiq > 0 ? totalShortLiq / totalLongLiq : 0,
+        dominantSide: totalLongLiq > totalShortLiq ? 'LONGS_LIQUIDATED' : 'SHORTS_LIQUIDATED',
+        priceImplication: totalLongLiq > totalShortLiq * 1.5 ? 'POTENTIAL_BOTTOM' :
+                          totalShortLiq > totalLongLiq * 1.5 ? 'POTENTIAL_TOP' : 'NEUTRAL',
+        timestamp: Date.now()
+      };
+      return state.liquidationData[symbol];
+    }
+    return null;
+  } catch (error) {
+    if (DEBUG_MODE) console.error(`💧 [COINGLASS ALT] Error:`, error);
     return null;
   }
 }
@@ -571,36 +640,54 @@ async function fetchLongShortRatio(symbol) {
 
   try {
     const cleanSymbol = symbol.replace('USDT', '');
+    // v3 API endpoint for long/short ratio
+    const url = `${CONFIG.COINGLASS_API}/futures/globalLongShortAccountRatio?symbol=${cleanSymbol}&interval=h1`;
 
-    const response = await fetch(`${CONFIG.COINGLASS_API}/long_short?symbol=${cleanSymbol}&interval=h1`, {
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS LS] Fetching: ${url}`);
+
+    const response = await fetch(url, {
       headers: {
-        'coinglassSecret': CONFIG.COINGLASS_API_KEY
+        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
+        'Accept': 'application/json'
       }
     });
 
     if (!response.ok) {
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS LS] HTTP ${response.status}`);
       return null;
     }
 
     const data = await response.json();
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS LS] Response:`, data);
 
-    if (!data || data.code !== '0' || !data.data || !data.data.length) {
+    if (!data || (data.code !== 0 && data.code !== '0') || !data.data) {
       return null;
     }
 
-    // Get most recent data
-    const recent = data.data[data.data.length - 1];
+    // Parse v3 API response - can be array or object
+    let recent;
+    if (Array.isArray(data.data) && data.data.length > 0) {
+      recent = data.data[data.data.length - 1];
+    } else if (data.data) {
+      recent = data.data;
+    } else {
+      return null;
+    }
+
+    // Get long/short percentages - different possible field names
+    const longRate = recent.longRate || recent.longAccount || recent.buyRatio || 50;
+    const shortRate = recent.shortRate || recent.shortAccount || recent.sellRatio || 50;
 
     // Add to existing liquidation data
     if (!state.liquidationData[symbol]) {
       state.liquidationData[symbol] = { timestamp: Date.now() };
     }
 
-    state.liquidationData[symbol].longShortRatio = recent.longRate / recent.shortRate;
-    state.liquidationData[symbol].longPercent = recent.longRate;
-    state.liquidationData[symbol].shortPercent = recent.shortRate;
-    state.liquidationData[symbol].crowdBias = recent.longRate > 55 ? 'CROWDED_LONG' :
-                                               recent.shortRate > 55 ? 'CROWDED_SHORT' : 'BALANCED';
+    state.liquidationData[symbol].longShortRatio = shortRate > 0 ? longRate / shortRate : 1;
+    state.liquidationData[symbol].longPercent = longRate;
+    state.liquidationData[symbol].shortPercent = shortRate;
+    state.liquidationData[symbol].crowdBias = longRate > 55 ? 'CROWDED_LONG' :
+                                               shortRate > 55 ? 'CROWDED_SHORT' : 'BALANCED';
 
     return state.liquidationData[symbol];
   } catch (error) {
@@ -1108,6 +1195,361 @@ function findSupportResistance(candles, lookback = 50) {
 }
 
 // ============================================
+// ADVANCED INDICATORS (VWAP, Order Blocks, Pivot Points)
+// ============================================
+
+// Calculate VWAP (Volume Weighted Average Price)
+function calculateVWAP(candles) {
+  if (!candles || candles.length < 10) return { vwap: 0, upperBand: 0, lowerBand: 0, deviation: 0 };
+
+  let cumulativeTPV = 0; // Cumulative (Typical Price * Volume)
+  let cumulativeVolume = 0;
+  const vwapValues = [];
+
+  for (const candle of candles) {
+    const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+    cumulativeTPV += typicalPrice * candle.volume;
+    cumulativeVolume += candle.volume;
+    vwapValues.push(cumulativeTPV / cumulativeVolume);
+  }
+
+  const vwap = vwapValues[vwapValues.length - 1];
+
+  // Calculate standard deviation for bands
+  let sumSquaredDiff = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const typicalPrice = (candles[i].high + candles[i].low + candles[i].close) / 3;
+    sumSquaredDiff += Math.pow(typicalPrice - vwapValues[i], 2);
+  }
+  const stdDev = Math.sqrt(sumSquaredDiff / candles.length);
+
+  const currentPrice = candles[candles.length - 1].close;
+  const deviation = ((currentPrice - vwap) / vwap) * 100;
+
+  return {
+    vwap,
+    upperBand: vwap + (2 * stdDev),
+    lowerBand: vwap - (2 * stdDev),
+    deviation, // Positive = above VWAP, Negative = below VWAP
+    pricePosition: currentPrice > vwap ? 'ABOVE_VWAP' : 'BELOW_VWAP',
+    isExtended: Math.abs(deviation) > 3 // Extended from VWAP by more than 3%
+  };
+}
+
+// Find Order Blocks (institutional supply/demand zones)
+function findOrderBlocks(candles, lookback = 50) {
+  if (!candles || candles.length < lookback) return { bullishOB: [], bearishOB: [] };
+
+  const recent = candles.slice(-lookback);
+  const bullishOB = []; // Demand zones
+  const bearishOB = []; // Supply zones
+
+  for (let i = 3; i < recent.length - 1; i++) {
+    const curr = recent[i];
+    const prev1 = recent[i - 1];
+    const prev2 = recent[i - 2];
+    const prev3 = recent[i - 3];
+    const next = recent[i + 1];
+
+    // Bullish Order Block: Last bearish candle before a strong bullish move
+    // Look for: bearish candle followed by strong bullish candle that breaks previous high
+    if (prev1.close < prev1.open && // Previous was bearish
+        curr.close > curr.open && // Current is bullish
+        curr.close > prev1.high && // Broke above previous high
+        (curr.close - curr.open) > (prev1.open - prev1.close) * 1.5) { // Strong bullish move
+
+      bullishOB.push({
+        high: prev1.high,
+        low: prev1.low,
+        midpoint: (prev1.high + prev1.low) / 2,
+        time: prev1.time,
+        strength: 'MODERATE',
+        type: 'BULLISH_OB'
+      });
+    }
+
+    // Look for aggressive bullish OB (3 bearish candles followed by explosive bullish)
+    if (prev3.close < prev3.open && prev2.close < prev2.open && prev1.close < prev1.open &&
+        curr.close > curr.open && curr.close > prev3.high) {
+
+      bullishOB.push({
+        high: Math.max(prev3.high, prev2.high, prev1.high),
+        low: Math.min(prev3.low, prev2.low, prev1.low),
+        midpoint: (Math.max(prev3.high, prev2.high, prev1.high) + Math.min(prev3.low, prev2.low, prev1.low)) / 2,
+        time: prev3.time,
+        strength: 'STRONG',
+        type: 'BULLISH_OB'
+      });
+    }
+
+    // Bearish Order Block: Last bullish candle before a strong bearish move
+    if (prev1.close > prev1.open && // Previous was bullish
+        curr.close < curr.open && // Current is bearish
+        curr.close < prev1.low && // Broke below previous low
+        (curr.open - curr.close) > (prev1.close - prev1.open) * 1.5) { // Strong bearish move
+
+      bearishOB.push({
+        high: prev1.high,
+        low: prev1.low,
+        midpoint: (prev1.high + prev1.low) / 2,
+        time: prev1.time,
+        strength: 'MODERATE',
+        type: 'BEARISH_OB'
+      });
+    }
+
+    // Aggressive bearish OB
+    if (prev3.close > prev3.open && prev2.close > prev2.open && prev1.close > prev1.open &&
+        curr.close < curr.open && curr.close < prev3.low) {
+
+      bearishOB.push({
+        high: Math.max(prev3.high, prev2.high, prev1.high),
+        low: Math.min(prev3.low, prev2.low, prev1.low),
+        midpoint: (Math.max(prev3.high, prev2.high, prev1.high) + Math.min(prev3.low, prev2.low, prev1.low)) / 2,
+        time: prev3.time,
+        strength: 'STRONG',
+        type: 'BEARISH_OB'
+      });
+    }
+  }
+
+  // Sort by strength and recency, take top 3
+  const sortByStrength = (a, b) => {
+    if (a.strength === 'STRONG' && b.strength !== 'STRONG') return -1;
+    if (b.strength === 'STRONG' && a.strength !== 'STRONG') return 1;
+    return b.time - a.time; // More recent first
+  };
+
+  return {
+    bullishOB: bullishOB.sort(sortByStrength).slice(0, 3),
+    bearishOB: bearishOB.sort(sortByStrength).slice(0, 3)
+  };
+}
+
+// Calculate Pivot Points (Standard, Fibonacci, Camarilla)
+function calculatePivotPoints(candles, type = 'standard') {
+  if (!candles || candles.length < 2) return null;
+
+  // Use previous day/period for pivot calculation
+  const prev = candles[candles.length - 2];
+  const curr = candles[candles.length - 1];
+
+  const high = prev.high;
+  const low = prev.low;
+  const close = prev.close;
+
+  // Standard Pivot Point
+  const pivot = (high + low + close) / 3;
+
+  let pivots;
+
+  if (type === 'fibonacci') {
+    // Fibonacci Pivot Points
+    const range = high - low;
+    pivots = {
+      r3: pivot + (range * 1.000),
+      r2: pivot + (range * 0.618),
+      r1: pivot + (range * 0.382),
+      pivot,
+      s1: pivot - (range * 0.382),
+      s2: pivot - (range * 0.618),
+      s3: pivot - (range * 1.000)
+    };
+  } else if (type === 'camarilla') {
+    // Camarilla Pivot Points (good for intraday)
+    const range = high - low;
+    pivots = {
+      r4: close + (range * 1.1 / 2),
+      r3: close + (range * 1.1 / 4),
+      r2: close + (range * 1.1 / 6),
+      r1: close + (range * 1.1 / 12),
+      pivot,
+      s1: close - (range * 1.1 / 12),
+      s2: close - (range * 1.1 / 6),
+      s3: close - (range * 1.1 / 4),
+      s4: close - (range * 1.1 / 2)
+    };
+  } else {
+    // Standard Pivot Points
+    pivots = {
+      r3: high + 2 * (pivot - low),
+      r2: pivot + (high - low),
+      r1: (2 * pivot) - low,
+      pivot,
+      s1: (2 * pivot) - high,
+      s2: pivot - (high - low),
+      s3: low - 2 * (high - pivot)
+    };
+  }
+
+  // Determine current price position relative to pivots
+  const price = curr.close;
+  let position = 'AT_PIVOT';
+  let nearestLevel = pivot;
+  let nearestLevelName = 'Pivot';
+
+  if (price > pivots.r2) {
+    position = 'ABOVE_R2';
+    nearestLevel = pivots.r2;
+    nearestLevelName = 'R2';
+  } else if (price > pivots.r1) {
+    position = 'ABOVE_R1';
+    nearestLevel = pivots.r1;
+    nearestLevelName = 'R1';
+  } else if (price > pivot) {
+    position = 'ABOVE_PIVOT';
+    nearestLevel = pivot;
+    nearestLevelName = 'Pivot';
+  } else if (price < pivots.s2) {
+    position = 'BELOW_S2';
+    nearestLevel = pivots.s2;
+    nearestLevelName = 'S2';
+  } else if (price < pivots.s1) {
+    position = 'BELOW_S1';
+    nearestLevel = pivots.s1;
+    nearestLevelName = 'S1';
+  } else if (price < pivot) {
+    position = 'BELOW_PIVOT';
+    nearestLevel = pivot;
+    nearestLevelName = 'Pivot';
+  }
+
+  return {
+    ...pivots,
+    position,
+    nearestLevel,
+    nearestLevelName,
+    priceToNearestLevel: ((price - nearestLevel) / nearestLevel * 100).toFixed(2)
+  };
+}
+
+// Calculate Ichimoku Cloud
+function calculateIchimoku(candles) {
+  if (!candles || candles.length < 52) return null;
+
+  const getHighLow = (data, period) => {
+    const slice = data.slice(-period);
+    return {
+      high: Math.max(...slice.map(c => c.high)),
+      low: Math.min(...slice.map(c => c.low))
+    };
+  };
+
+  // Tenkan-sen (Conversion Line): 9-period high+low / 2
+  const tenkan9 = getHighLow(candles, 9);
+  const tenkanSen = (tenkan9.high + tenkan9.low) / 2;
+
+  // Kijun-sen (Base Line): 26-period high+low / 2
+  const kijun26 = getHighLow(candles, 26);
+  const kijunSen = (kijun26.high + kijun26.low) / 2;
+
+  // Senkou Span A: (Tenkan + Kijun) / 2
+  const senkouSpanA = (tenkanSen + kijunSen) / 2;
+
+  // Senkou Span B: 52-period high+low / 2
+  const senkou52 = getHighLow(candles, 52);
+  const senkouSpanB = (senkou52.high + senkou52.low) / 2;
+
+  const currentPrice = candles[candles.length - 1].close;
+
+  // Determine cloud color and position
+  const cloudTop = Math.max(senkouSpanA, senkouSpanB);
+  const cloudBottom = Math.min(senkouSpanA, senkouSpanB);
+  const cloudColor = senkouSpanA > senkouSpanB ? 'BULLISH' : 'BEARISH';
+
+  let signal = 'NEUTRAL';
+  if (currentPrice > cloudTop && tenkanSen > kijunSen) {
+    signal = 'STRONG_BULLISH';
+  } else if (currentPrice > cloudTop) {
+    signal = 'BULLISH';
+  } else if (currentPrice < cloudBottom && tenkanSen < kijunSen) {
+    signal = 'STRONG_BEARISH';
+  } else if (currentPrice < cloudBottom) {
+    signal = 'BEARISH';
+  } else {
+    signal = 'IN_CLOUD'; // Price is within the cloud - indecision
+  }
+
+  return {
+    tenkanSen,
+    kijunSen,
+    senkouSpanA,
+    senkouSpanB,
+    cloudTop,
+    cloudBottom,
+    cloudColor,
+    signal,
+    tkCross: tenkanSen > kijunSen ? 'BULLISH_TK' : 'BEARISH_TK'
+  };
+}
+
+// Calculate Market Structure (Higher Highs, Lower Lows)
+function analyzeMarketStructure(candles, lookback = 30) {
+  if (!candles || candles.length < lookback) return null;
+
+  const recent = candles.slice(-lookback);
+  const swingPoints = [];
+
+  // Find swing highs and lows
+  for (let i = 2; i < recent.length - 2; i++) {
+    if (recent[i].high > recent[i-1].high && recent[i].high > recent[i-2].high &&
+        recent[i].high > recent[i+1].high && recent[i].high > recent[i+2].high) {
+      swingPoints.push({ type: 'HIGH', price: recent[i].high, index: i });
+    }
+    if (recent[i].low < recent[i-1].low && recent[i].low < recent[i-2].low &&
+        recent[i].low < recent[i+1].low && recent[i].low < recent[i+2].low) {
+      swingPoints.push({ type: 'LOW', price: recent[i].low, index: i });
+    }
+  }
+
+  // Analyze structure
+  const highs = swingPoints.filter(p => p.type === 'HIGH');
+  const lows = swingPoints.filter(p => p.type === 'LOW');
+
+  let structure = 'UNCLEAR';
+  let structureBreak = null;
+
+  if (highs.length >= 2 && lows.length >= 2) {
+    const lastHigh = highs[highs.length - 1];
+    const prevHigh = highs[highs.length - 2];
+    const lastLow = lows[lows.length - 1];
+    const prevLow = lows[lows.length - 2];
+
+    const isHH = lastHigh.price > prevHigh.price;
+    const isHL = lastLow.price > prevLow.price;
+    const isLH = lastHigh.price < prevHigh.price;
+    const isLL = lastLow.price < prevLow.price;
+
+    if (isHH && isHL) {
+      structure = 'UPTREND'; // Higher Highs and Higher Lows
+    } else if (isLH && isLL) {
+      structure = 'DOWNTREND'; // Lower Highs and Lower Lows
+    } else if (isHH && isLL) {
+      structure = 'EXPANDING'; // Volatility expansion
+    } else if (isLH && isHL) {
+      structure = 'CONTRACTING'; // Volatility contraction (triangle)
+    }
+
+    // Check for structure break (BOS/CHoCH)
+    const currentPrice = recent[recent.length - 1].close;
+    if (structure === 'DOWNTREND' && currentPrice > lastHigh.price) {
+      structureBreak = 'BULLISH_BOS'; // Break of Structure
+    } else if (structure === 'UPTREND' && currentPrice < lastLow.price) {
+      structureBreak = 'BEARISH_BOS';
+    }
+  }
+
+  return {
+    structure,
+    structureBreak,
+    swingHighs: highs.map(h => h.price),
+    swingLows: lows.map(l => l.price),
+    lastSwingHigh: highs.length > 0 ? highs[highs.length - 1].price : null,
+    lastSwingLow: lows.length > 0 ? lows[lows.length - 1].price : null
+  };
+}
+
+// ============================================
 // CLAUDE AI SERVICE
 // ============================================
 
@@ -1244,20 +1686,20 @@ async function callGrokAPI(prompt) {
   }
 }
 
-function buildMarketAnalysisPrompt(marketData) {
-  return `You are an expert crypto perpetual futures trader. Analyze the following market data and provide trading recommendations.
+// Format market data for AI prompts (shared)
+function formatMarketDataForAI(marketData) {
+  return marketData.map(m => {
+    const funding = state.fundingRates[m.symbol];
+    const oi = state.openInterest[m.symbol];
+    const social = state.socialSentiment[m.symbol];
+    const liq = state.liquidationData[m.symbol];
 
-MARKET DATA:
-${marketData.map(m => {
-  const funding = state.fundingRates[m.symbol];
-  const oi = state.openInterest[m.symbol];
-  const social = state.socialSentiment[m.symbol];
-  const liq = state.liquidationData[m.symbol];
-  return `
+    return `
 ${m.symbol}:
 - Current Price: $${m.price}
 - 24h Change: ${m.change.toFixed(2)}%
 - 24h Volume: $${formatVolume(m.volume)}
+- Market Regime: ${m.marketRegime || 'N/A'}
 - Funding Rate: ${funding ? (funding.fundingRate > 0 ? '+' : '') + funding.fundingRate.toFixed(4) + '%' : 'N/A'} ${funding && Math.abs(funding.fundingRate) > 0.01 ? '⚠️ HIGH' : ''}
 - Open Interest Change (24h): ${oi ? (oi.change24h > 0 ? '+' : '') + oi.change24h.toFixed(2) + '%' : 'N/A'}
 - RSI (14): ${m.rsi?.toFixed(1) || 'N/A'}
@@ -1272,30 +1714,25 @@ ${m.symbol}:
 - Volume Trend: ${m.volumeTrend || 'N/A'}
 - Trend Direction: ${m.trend || 'N/A'}
 - MTF Confluence: ${m.mtfAnalysis?.confluence || 'N/A'} (${m.mtfAnalysis?.confluenceScore?.toFixed(0) || 0}%)
+- VWAP Position: ${m.vwap?.pricePosition || 'N/A'} (Deviation: ${m.vwap?.deviation?.toFixed(2) || 0}%)
+- VWAP Levels: Lower: $${m.vwap?.lowerBand?.toFixed(2) || 'N/A'} | VWAP: $${m.vwap?.vwap?.toFixed(2) || 'N/A'} | Upper: $${m.vwap?.upperBand?.toFixed(2) || 'N/A'}
+- Pivot Points: S1: $${m.pivotPoints?.s1?.toFixed(2) || 'N/A'} | Pivot: $${m.pivotPoints?.pivot?.toFixed(2) || 'N/A'} | R1: $${m.pivotPoints?.r1?.toFixed(2) || 'N/A'}
+- Pivot Position: ${m.pivotPoints?.position || 'N/A'}
+- Bullish Order Blocks: ${m.orderBlocks?.bullishOB?.length > 0 ? m.orderBlocks.bullishOB.map(ob => `$${formatPrice(ob.midpoint)} (${ob.strength})`).join(', ') : 'None'}
+- Bearish Order Blocks: ${m.orderBlocks?.bearishOB?.length > 0 ? m.orderBlocks.bearishOB.map(ob => `$${formatPrice(ob.midpoint)} (${ob.strength})`).join(', ') : 'None'}
+- Market Structure: ${m.marketStructure?.structure || 'N/A'} ${m.marketStructure?.structureBreak ? `⚠️ ${m.marketStructure.structureBreak}` : ''}
+- Last Swing High: $${m.marketStructure?.lastSwingHigh?.toFixed(2) || 'N/A'}
+- Last Swing Low: $${m.marketStructure?.lastSwingLow?.toFixed(2) || 'N/A'}
+- Ichimoku Signal: ${m.ichimoku?.signal || 'N/A'} (Cloud: ${m.ichimoku?.cloudColor || 'N/A'})
 - Social Sentiment: ${social ? `${social.sentimentLabel} (Score: ${social.sentiment}/100, Galaxy: ${social.galaxyScore})` : 'N/A'}
-- Social Volume: ${social ? formatVolume(social.socialVolume) : 'N/A'}
 - Long/Short Ratio: ${liq?.longShortRatio ? liq.longShortRatio.toFixed(2) : 'N/A'} ${liq?.crowdBias ? `(${liq.crowdBias})` : ''}
 - 24h Liquidations: ${liq ? `Longs: $${formatVolume(liq.longLiquidations24h || 0)} | Shorts: $${formatVolume(liq.shortLiquidations24h || 0)}` : 'N/A'}
 - Liquidation Signal: ${liq?.priceImplication || 'N/A'}`;
-}).join('\n')}
+  }).join('\n');
+}
 
-ANALYSIS REQUIREMENTS:
-1. Consider RSI extremes (oversold <30, overbought >70)
-2. Evaluate EMA alignments and crossovers
-3. Check MACD momentum and divergences
-4. Assess Bollinger Band breakouts or mean reversion
-5. Identify key support/resistance levels
-6. Consider volume confirmation
-7. Look for liquidation zones (typically 3-5% from current price in leveraged markets)
-8. Evaluate trend strength and potential reversals
-9. **FUNDING RATE ANALYSIS**: High positive funding (>0.01%) suggests overleveraged longs - consider shorts. High negative funding suggests overleveraged shorts - consider longs.
-10. **OPEN INTEREST**: Rising OI with price = trend continuation. Rising OI against price = potential reversal.
-11. **MULTI-TIMEFRAME**: Prefer setups where multiple timeframes align (higher confluence score = stronger signal)
-12. **SOCIAL SENTIMENT**: High Galaxy Score (>70) with bullish sentiment = strong conviction. Bearish sentiment divergence from price = potential reversal.
-13. **LONG/SHORT RATIO**: CROWDED_LONG (>55% longs) often leads to long squeeze - favor shorts. CROWDED_SHORT favors longs.
-14. **LIQUIDATION DATA**: Heavy long liquidations = potential bottom (buy). Heavy short liquidations = potential top (sell).
-
-Respond ONLY with valid JSON in this exact format (no other text):
+// JSON response format (shared)
+const AI_RESPONSE_FORMAT = `
 {
   "topPicks": [
     {
@@ -1305,7 +1742,7 @@ Respond ONLY with valid JSON in this exact format (no other text):
       "entry": price,
       "takeProfit": price,
       "stopLoss": price,
-      "reasoning": "Brief 1-2 sentence explanation including funding/OI insight",
+      "reasoning": "Brief 1-2 sentence explanation",
       "keyLevels": {
         "majorSupport": price,
         "majorResistance": price,
@@ -1313,31 +1750,127 @@ Respond ONLY with valid JSON in this exact format (no other text):
       },
       "riskScore": 1-10,
       "timeHorizon": "4H to 1D",
-      "fundingBias": "FAVORABLE/UNFAVORABLE/NEUTRAL",
-      "socialSentiment": "BULLISH/BEARISH/NEUTRAL",
-      "crowdPositioning": "CROWDED_LONG/CROWDED_SHORT/BALANCED"
+      "entryTrigger": "BREAKOUT/PULLBACK/REVERSAL/MOMENTUM",
+      "entryCondition": "Specific condition to enter (e.g., 'Break above 95000 with volume')"
     }
   ],
   "marketSentiment": "BULLISH/BEARISH/NEUTRAL",
-  "marketCondition": "Brief market condition description including social/liquidation insights",
-  "avoidList": ["symbols to avoid with reasons"]
-}
+  "marketCondition": "Brief market condition description"
+}`;
+
+// CLAUDE - Risk Manager (focuses on stop loss, traps, position sizing)
+function buildClaudePrompt(marketData) {
+  const dataStr = formatMarketDataForAI(marketData);
+  return `You are CLAUDE, a RISK MANAGEMENT specialist for crypto perpetual futures trading. Your expertise:
+- Optimal stop loss placement using market structure
+- Identifying bull traps and bear traps
+- Evaluating risk/reward ratios
+- Spotting over-leveraged crowd positioning to fade
+- Protecting capital above all else
+
+MARKET DATA:
+${dataStr}
+
+YOUR SPECIALIZED ANALYSIS FOCUS:
+1. **TRAP IDENTIFICATION**: Look for bull traps (fake breakouts followed by rejection) and bear traps (fake breakdowns followed by recovery). Use order blocks and market structure to identify these.
+2. **STOP LOSS OPTIMIZATION**: Place stops behind swing lows (for longs) or swing highs (for shorts). Consider ATR for volatility-adjusted stops.
+3. **CROWD POSITIONING**: When crowd is CROWDED_LONG (>55%), look for short opportunities. When CROWDED_SHORT, look for longs. Fade the herd.
+4. **LIQUIDATION ZONES**: Heavy long liquidations (POTENTIAL_BOTTOM) = smart money buying. Heavy short liquidations (POTENTIAL_TOP) = smart money selling.
+5. **FUNDING RATE TRAPS**: High positive funding with price stalling = longs paying heavy fees, potential short squeeze setup.
+6. **RISK/REWARD**: Only pick trades with at least 2:1 R/R ratio. Calculate: (TP - Entry) / (Entry - SL) >= 2
 
 CRITICAL REQUIREMENTS:
-- Use DAILY and 4H timeframes for analysis (higher timeframes = bigger moves)
-- BTC/ETH: Minimum 3% target move from entry
-- Large caps (top 10 volume): Minimum 5% target move
-- Mid/Small caps: Minimum 7-10% target move
-- REJECT any setup with less than these minimum moves - not worth the risk
-- Focus on SWING trades, not scalps
+- ONLY trade in direction of higher timeframe trend (check MTF Confluence)
+- Market Regime must be TRENDING (UP or DOWN), NOT VOLATILE or RANGING
+- Must have clear structure break (BULLISH_BOS for longs, BEARISH_BOS for shorts) OR price at strong order block
+- Place SL behind the nearest swing high/low with ATR buffer
+- Entry must be at a favorable level (near support for longs, near resistance for shorts)
 
-Select the 2-3 BEST opportunities with highest probability setups. Prioritize:
-1. Setups where funding rate supports the direction
-2. Sentiment aligned with technical direction
-3. Crowd positioning that favors the trade (fade the crowd)
-4. Strong liquidation signals (POTENTIAL_BOTTOM for longs, POTENTIAL_TOP for shorts)
-5. LARGER MOVES - We want significant percentage gains, not small scalps
-Be conservative with confidence scores.`;
+Respond ONLY with valid JSON in this exact format:
+${AI_RESPONSE_FORMAT}
+
+Select 1-3 setups with the BEST risk/reward profiles. Be paranoid about risk - better to miss a trade than lose capital.`;
+}
+
+// GPT-4o - Technical Analyst (focuses on chart patterns, S/R, price action)
+function buildOpenAIPrompt(marketData) {
+  const dataStr = formatMarketDataForAI(marketData);
+  return `You are GPT-4o, a TECHNICAL ANALYSIS specialist for crypto perpetual futures trading. Your expertise:
+- Chart pattern recognition (head & shoulders, triangles, wedges)
+- Support/resistance level identification
+- Price action analysis (candlestick patterns)
+- EMA/MACD/RSI confluence
+- Breakout and breakdown identification
+
+MARKET DATA:
+${dataStr}
+
+YOUR SPECIALIZED ANALYSIS FOCUS:
+1. **CHART PATTERNS**: Look for classic patterns - double tops/bottoms, head & shoulders, triangles, wedges, channels.
+2. **SUPPORT/RESISTANCE**: Identify major S/R levels. Look for price respecting these levels multiple times.
+3. **PRICE ACTION**: Analyze candlestick patterns at key levels - engulfing, pin bars, inside bars.
+4. **TECHNICAL INDICATORS**:
+   - RSI: Oversold (<30) = potential long, Overbought (>70) = potential short
+   - MACD: Histogram positive + crossover = bullish, negative + crossover = bearish
+   - Bollinger Bands: Price at lower band + oversold = long opportunity
+5. **VWAP ANALYSIS**: Price above VWAP = bullish bias. Price below VWAP = bearish bias. Extended (>3% deviation) = mean reversion expected.
+6. **PIVOT POINTS**: Use daily pivots as targets. S1/S2 for support, R1/R2 for resistance.
+
+CRITICAL REQUIREMENTS:
+- ONLY trade when technical indicators ALIGN (e.g., RSI + MACD + EMA all pointing same direction)
+- Price must be respecting key levels (not in no-man's-land)
+- Volume should confirm the move (INCREASING volume trend preferred)
+- MTF Confluence should be at least PARTIAL alignment
+- Ichimoku signal should support the direction (not IN_CLOUD)
+
+Respond ONLY with valid JSON in this exact format:
+${AI_RESPONSE_FORMAT}
+
+Select 1-3 setups with the STRONGEST technical confluence. Focus on clarity - avoid ambiguous setups.`;
+}
+
+// GROK - Momentum Hunter (focuses on trend strength, breakouts, volume)
+function buildGrokPrompt(marketData) {
+  const dataStr = formatMarketDataForAI(marketData);
+  return `You are GROK, a MOMENTUM TRADING specialist for crypto perpetual futures trading. Your expertise:
+- Identifying trend strength and acceleration
+- Catching breakouts early
+- Volume analysis and confirmation
+- Momentum divergences
+- Riding strong trends
+
+MARKET DATA:
+${dataStr}
+
+YOUR SPECIALIZED ANALYSIS FOCUS:
+1. **TREND STRENGTH**: Look for STRONG UPTREND or STRONG DOWNTREND in trend direction. Avoid weak trends.
+2. **BREAKOUT DETECTION**:
+   - Price breaking above resistance with volume = long entry
+   - Price breaking below support with volume = short entry
+   - Structure breaks (BULLISH_BOS/BEARISH_BOS) are high-probability
+3. **VOLUME CONFIRMATION**: Only trade when volume trend is INCREASING. Avoid DECREASING volume breakouts (likely fake).
+4. **MOMENTUM INDICATORS**:
+   - MACD Histogram: Look for histogram expanding (increasing momentum)
+   - RSI: 50-70 zone for longs (momentum without overbought), 30-50 for shorts
+5. **ORDER BLOCK MOMENTUM**: Price breaking through order block with momentum = strong continuation signal
+6. **ICHIMOKU MOMENTUM**: STRONG_BULLISH or STRONG_BEARISH signals with TK cross = high momentum
+
+CRITICAL REQUIREMENTS:
+- ONLY trade with the trend (no counter-trend trades)
+- Market Structure must show UPTREND for longs, DOWNTREND for shorts
+- Volume must be INCREASING or STABLE (never DECREASING)
+- Prefer symbols with high 24h change (momentum already present)
+- Entry should be on pullback to VWAP or EMA20, not at extended levels
+
+Respond ONLY with valid JSON in this exact format:
+${AI_RESPONSE_FORMAT}
+
+Select 1-3 setups with the STRONGEST momentum. Speed matters - capture moves early, exit if momentum fades.`;
+}
+
+// Legacy function for backwards compatibility
+function buildMarketAnalysisPrompt(marketData) {
+  return buildOpenAIPrompt(marketData);
 }
 
 async function runAiAnalysis() {
@@ -1426,6 +1959,14 @@ async function runAiAnalysis() {
         mtfAnalysis = await analyzeMultiTimeframe(market.symbol);
       }
 
+      // Calculate advanced indicators
+      const vwap = calculateVWAP(candles);
+      const orderBlocks = findOrderBlocks(candles);
+      const pivotPoints = calculatePivotPoints(candles);
+      const ichimoku = calculateIchimoku(candles);
+      const marketStructure = analyzeMarketStructure(candles);
+      const marketRegime = detectMarketRegime(candles);
+
       enrichedData.push({
         ...market,
         rsi,
@@ -1440,7 +1981,14 @@ async function runAiAnalysis() {
         resistances,
         volumeTrend,
         trend,
-        mtfAnalysis
+        mtfAnalysis,
+        // Advanced indicators
+        vwap,
+        orderBlocks,
+        pivotPoints,
+        ichimoku,
+        marketStructure,
+        marketRegime
       });
 
       await sleep(30); // Rate limiting
@@ -1448,19 +1996,24 @@ async function runAiAnalysis() {
 
     updateAiScanStatus('Consulting AI...');
 
-    // Build prompt
-    const prompt = buildMarketAnalysisPrompt(enrichedData);
+    // Build specialized prompts for each AI
+    // Claude = Risk Manager, GPT-4o = Technical Analyst, Grok = Momentum Hunter
+    const claudePrompt = buildClaudePrompt(enrichedData);
+    const openaiPrompt = buildOpenAIPrompt(enrichedData);
+    const grokPrompt = buildGrokPrompt(enrichedData);
 
-    // Call all configured AIs in parallel
+    console.log('🎯 Using specialized AI roles: Claude=Risk, GPT=Technical, Grok=Momentum');
+
+    // Call all configured AIs in parallel with their specialized prompts
     const apiPromises = [];
     if (isClaudeConfigured()) {
-      apiPromises.push(callClaudeAPI(prompt).then(r => ({ source: 'claude', response: r })));
+      apiPromises.push(callClaudeAPI(claudePrompt).then(r => ({ source: 'claude', response: r })));
     }
     if (isOpenAIConfigured()) {
-      apiPromises.push(callOpenAIAPI(prompt).then(r => ({ source: 'openai', response: r })));
+      apiPromises.push(callOpenAIAPI(openaiPrompt).then(r => ({ source: 'openai', response: r })));
     }
     if (isGrokConfigured()) {
-      apiPromises.push(callGrokAPI(prompt).then(r => ({ source: 'grok', response: r })));
+      apiPromises.push(callGrokAPI(grokPrompt).then(r => ({ source: 'grok', response: r })));
     }
 
     const results = await Promise.allSettled(apiPromises);
@@ -1555,14 +2108,84 @@ async function runAiAnalysis() {
       if (matchingPicks.length >= 2) {
         const isGoldConsensus = matchingPicks.length >= 3;
         const isSilverConsensus = matchingPicks.length === 2;
+        const symbol = matchingPicks[0].symbol;
+        const direction = matchingPicks[0].direction;
+
+        // Get market data for this symbol (for regime and MTF checks)
+        const marketInfo = enrichedData.find(m => m.symbol === symbol);
+
+        // MARKET REGIME FILTER - Only allow signals in trending markets
+        const regime = marketInfo?.marketRegime || 'UNKNOWN';
+        const isValidRegime = regime === 'TRENDING_UP' || regime === 'TRENDING_DOWN';
+        if (!isValidRegime && regime !== 'UNKNOWN') {
+          console.log(`⏭️ Filtered ${symbol} ${direction} - Market regime is ${regime} (need TRENDING)`);
+          continue; // Skip this signal
+        }
+
+        // REGIME DIRECTION CHECK - Long only in uptrend, Short only in downtrend
+        if (regime === 'TRENDING_UP' && direction === 'SHORT') {
+          console.log(`⏭️ Filtered ${symbol} SHORT - Regime is TRENDING_UP (counter-trend)`);
+          continue;
+        }
+        if (regime === 'TRENDING_DOWN' && direction === 'LONG') {
+          console.log(`⏭️ Filtered ${symbol} LONG - Regime is TRENDING_DOWN (counter-trend)`);
+          continue;
+        }
+
+        // MTF ALIGNMENT FILTER - Require at least partial alignment
+        const mtfConfluence = marketInfo?.mtfAnalysis?.confluence || 'N/A';
+        const mtfScore = marketInfo?.mtfAnalysis?.confluenceScore || 0;
+        const isMtfAligned = mtfConfluence === 'BULLISH' && direction === 'LONG' ||
+                            mtfConfluence === 'BEARISH' && direction === 'SHORT' ||
+                            mtfScore >= 60; // At least 60% alignment
+
+        // For gold consensus, still allow even without MTF (strong signal)
+        // For silver consensus, require MTF alignment
+        if (isSilverConsensus && !isMtfAligned && mtfConfluence !== 'N/A') {
+          console.log(`⏭️ Filtered ${symbol} ${direction} - MTF not aligned (${mtfConfluence}, ${mtfScore}%)`);
+          continue;
+        }
 
         // Average the values from matching picks
         const avgEntry = matchingPicks.reduce((sum, p) => sum + p.entry, 0) / matchingPicks.length;
-        const avgConf = matchingPicks.reduce((sum, p) => sum + p.confidence, 0) / matchingPicks.length;
-        const direction = matchingPicks[0].direction;
+        let avgConf = matchingPicks.reduce((sum, p) => sum + p.confidence, 0) / matchingPicks.length;
 
-        // Boost confidence based on consensus level
-        const boostedConf = Math.min(98, Math.round(avgConf + (isGoldConsensus ? 10 : 5)));
+        // AI PERFORMANCE WEIGHTING - Weight by historical win rate
+        const stats = state.performanceStats;
+        const getAiWeight = (source) => {
+          if (source === 'claude') {
+            const total = stats.claudeWins + stats.claudeLosses;
+            return total >= 3 ? (stats.claudeWins / total) : 0.5; // Need 3+ trades for weight
+          }
+          if (source === 'openai') {
+            const total = stats.openaiWins + stats.openaiLosses;
+            return total >= 3 ? (stats.openaiWins / total) : 0.5;
+          }
+          if (source === 'grok') {
+            const total = stats.grokWins + stats.grokLosses;
+            return total >= 3 ? (stats.grokWins / total) : 0.5;
+          }
+          return 0.5;
+        };
+
+        // Calculate weighted confidence
+        let totalWeight = 0;
+        let weightedConf = 0;
+        for (const pick of matchingPicks) {
+          const weight = getAiWeight(pick.source);
+          weightedConf += pick.confidence * weight;
+          totalWeight += weight;
+        }
+        const performanceWeightedConf = totalWeight > 0 ? weightedConf / totalWeight : avgConf;
+
+        // Boost confidence based on consensus level and apply weighting
+        const baseConf = (avgConf + performanceWeightedConf) / 2; // Blend simple and weighted
+        let boostedConf = Math.min(98, Math.round(baseConf + (isGoldConsensus ? 10 : 5)));
+
+        // Additional boost for MTF alignment
+        if (isMtfAligned && mtfScore >= 75) {
+          boostedConf = Math.min(98, boostedConf + 3);
+        }
 
         // Use most aggressive TP from all matching picks
         const bestTP = direction === 'LONG'
@@ -1577,8 +2200,14 @@ async function runAiAnalysis() {
         const aiSources = matchingPicks.map(p => p.source);
         const reasons = matchingPicks.map(p => `${p.source.charAt(0).toUpperCase() + p.source.slice(1)}: ${p.reasoning}`);
 
+        // Get entry trigger and condition from picks
+        const entryTriggers = matchingPicks.map(p => p.entryTrigger).filter(t => t);
+        const entryConditions = matchingPicks.map(p => p.entryCondition).filter(c => c);
+        const primaryTrigger = entryTriggers[0] || 'MOMENTUM';
+        const primaryCondition = entryConditions[0] || 'Price momentum confirmation';
+
         const signal = {
-          symbol: matchingPicks[0].symbol,
+          symbol: symbol,
           direction: direction,
           confidence: boostedConf,
           entry: avgEntry,
@@ -1597,7 +2226,14 @@ async function runAiAnalysis() {
           grokModel: aiSources.includes('grok') ? CONFIG.GROK_MODEL : null,
           keyLevels: matchingPicks[0].keyLevels,
           timestamp: Date.now(),
-          marketSentiment: claudeAnalysis?.marketSentiment || openaiAnalysis?.marketSentiment || grokAnalysis?.marketSentiment || 'NEUTRAL'
+          marketSentiment: claudeAnalysis?.marketSentiment || openaiAnalysis?.marketSentiment || grokAnalysis?.marketSentiment || 'NEUTRAL',
+          // New fields
+          marketRegime: regime,
+          mtfConfluence: mtfConfluence,
+          mtfScore: mtfScore,
+          entryTrigger: primaryTrigger,
+          entryCondition: primaryCondition,
+          aiWeights: matchingPicks.reduce((acc, p) => { acc[p.source] = getAiWeight(p.source).toFixed(2); return acc; }, {})
         };
 
         allSignals.push(signal);
@@ -1605,10 +2241,10 @@ async function runAiAnalysis() {
         // Track consensus stats
         if (isGoldConsensus) {
           state.performanceStats.goldConsensusSignals++;
-          console.log(`🥇 GOLD CONSENSUS: All 3 AIs agree on ${signal.symbol} ${signal.direction}!`);
+          console.log(`🥇 GOLD CONSENSUS: All 3 AIs agree on ${signal.symbol} ${signal.direction}! [${regime}, MTF:${mtfScore}%]`);
         } else {
           state.performanceStats.silverConsensusSignals++;
-          console.log(`🥈 SILVER CONSENSUS: ${aiSources.join(' + ')} agree on ${signal.symbol} ${signal.direction}!`);
+          console.log(`🥈 SILVER CONSENSUS: ${aiSources.join(' + ')} agree on ${signal.symbol} ${signal.direction}! [${regime}, MTF:${mtfScore}%]`);
         }
 
         // Track prediction for stats
@@ -1620,6 +2256,8 @@ async function runAiAnalysis() {
           tp: bestTP,
           aiSources: aiSources,
           isGoldConsensus: isGoldConsensus,
+          marketRegime: regime,
+          entryTrigger: primaryTrigger,
           timestamp: Date.now(),
           status: 'pending'
         });
@@ -2899,6 +3537,37 @@ function renderSignals() {
           <div class="level-item target"><div class="level-label">Target</div><div class="level-value">${formatPrice(signal.tp)}</div></div>
           <div class="level-item stop"><div class="level-label">Stop</div><div class="level-value">${formatPrice(signal.sl)}</div></div>
         </div>
+        ${signal.entryTrigger || signal.marketRegime || signal.mtfScore ? `
+        <div class="signal-intel entry-intel">
+          ${signal.entryTrigger ? `
+          <div class="intel-item trigger-${signal.entryTrigger.toLowerCase()}">
+            <span class="intel-icon">🎯</span>
+            <span class="intel-label">Entry</span>
+            <span class="intel-value">${signal.entryTrigger}</span>
+          </div>
+          ` : ''}
+          ${signal.marketRegime && signal.marketRegime !== 'UNKNOWN' ? `
+          <div class="intel-item regime-${signal.marketRegime.toLowerCase().replace('_', '-')}">
+            <span class="intel-icon">📊</span>
+            <span class="intel-label">Regime</span>
+            <span class="intel-value">${signal.marketRegime.replace('_', ' ')}</span>
+          </div>
+          ` : ''}
+          ${signal.mtfScore ? `
+          <div class="intel-item mtf-${signal.mtfScore >= 75 ? 'strong' : signal.mtfScore >= 50 ? 'partial' : 'weak'}">
+            <span class="intel-icon">📈</span>
+            <span class="intel-label">MTF</span>
+            <span class="intel-value">${signal.mtfScore.toFixed(0)}% ${signal.mtfConfluence || ''}</span>
+          </div>
+          ` : ''}
+        </div>
+        ` : ''}
+        ${signal.entryCondition ? `
+        <div class="entry-condition">
+          <span class="condition-label">📋 When to enter:</span>
+          <span class="condition-text">${signal.entryCondition}</span>
+        </div>
+        ` : ''}
         ${(state.socialSentiment[signal.symbol] || state.liquidationData[signal.symbol]) ? `
         <div class="signal-intel">
           ${state.socialSentiment[signal.symbol] ? `
