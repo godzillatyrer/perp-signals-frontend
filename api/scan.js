@@ -1,19 +1,25 @@
 // Vercel Serverless Function for AI Signal Scanning
 // Runs on cron schedule and sends Telegram alerts
+//
+// Uses Upstash Redis for persistent cooldown tracking across invocations
+
+import { Redis } from '@upstash/redis';
 
 const CONFIG = {
-  // Minimum confidence for alerts (lowered from 85% to 75%)
-  ALERT_CONFIDENCE: 75,
+  // Minimum confidence for alerts - STRICT (raised to 85%)
+  ALERT_CONFIDENCE: 85,
   // Minimum TP percentages by market cap
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
   MIN_TP_PERCENT_MID_CAP: 7,
   // Top coins to analyze
   TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
-  // Signal cooldown in hours (don't repeat same signal within this time)
-  SIGNAL_COOLDOWN_HOURS: 4,
-  // Price move % that overrides cooldown (if price moved this much, allow new signal)
-  PRICE_MOVE_OVERRIDE_PERCENT: 5,
+  // Signal cooldown in hours - 12 hours per coin
+  SIGNAL_COOLDOWN_HOURS: 12,
+  // Price move % that overrides cooldown - INCREASED to 10%
+  PRICE_MOVE_OVERRIDE_PERCENT: 10,
+  // Minimum price change to even consider a signal (blocks tiny entry updates)
+  MIN_PRICE_CHANGE_PERCENT: 2,
   // Correlation groups (don't send multiple signals from same group)
   CORRELATION_GROUPS: {
     'LAYER1': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AVAXUSDT', 'DOTUSDT'],
@@ -22,7 +28,9 @@ const CONFIG = {
     'EXCHANGE': ['BNBUSDT']
   },
   // Max signals per correlation group per scan
-  MAX_SIGNALS_PER_GROUP: 1
+  MAX_SIGNALS_PER_GROUP: 1,
+  // GOLD CONSENSUS ONLY - require all 3 AIs to agree
+  REQUIRE_GOLD_CONSENSUS: true
 };
 
 // ============================================
@@ -83,142 +91,104 @@ function isMajorEventDay() {
 }
 
 // ============================================
-// SIGNAL COOLDOWN (Smart - with direction flip & price move detection)
+// SIGNAL TRACKING (Persistent via Upstash Redis)
 // ============================================
+// Stores: { direction, entry, timestamp } for each symbol
+// Cooldown: 24 hours, unless direction flips or price moves 10%+
 
-async function getRecentTelegramMessages() {
-  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
-    return [];
+let redis = null;
+
+function getRedis() {
+  if (!redis && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    redis = new Redis({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN
+    });
+  }
+  return redis;
+}
+
+async function getLastSignal(symbol) {
+  const r = getRedis();
+  if (!r) return null;
+
+  try {
+    const data = await r.get(`signal:${symbol}`);
+    return data;
+  } catch (e) {
+    console.log(`Redis get error for ${symbol}:`, e.message);
+    return null;
+  }
+}
+
+async function saveSignal(symbol, direction, entry) {
+  const r = getRedis();
+  if (!r) {
+    console.log(`📝 Redis not configured - signal not persisted`);
+    return;
   }
 
   try {
-    // Get recent messages from the chat to check for duplicates
-    const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getUpdates?limit=50`;
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.ok && data.result) {
-      const messages = data.result
-        .filter(u => u.message && u.message.text)
-        .map(u => ({
-          text: u.message.text,
-          date: new Date(u.message.date * 1000)
-        }));
-      return messages;
-    }
-  } catch (error) {
-    console.log('Could not fetch Telegram history:', error.message);
+    const data = {
+      direction,
+      entry,
+      timestamp: Date.now()
+    };
+    // Store with 48-hour expiry (auto-cleanup)
+    await r.set(`signal:${symbol}`, JSON.stringify(data), { ex: 48 * 60 * 60 });
+    console.log(`📝 Saved ${symbol} ${direction} @ ${entry} to Redis`);
+  } catch (e) {
+    console.log(`Redis save error for ${symbol}:`, e.message);
   }
-  return [];
 }
 
-// Parse signal details from a Telegram message
-function parseSignalFromMessage(msgText) {
-  const result = { symbol: null, direction: null, entryPrice: null };
-
-  // Try multiple patterns for direction and symbol
-  // Pattern 1: "🚀 LONG BTCUSDT" or "🔴 SHORT BTCUSDT"
-  let headerMatch = msgText.match(/(LONG|SHORT)\s+([A-Z]+USDT)/);
-  if (headerMatch) {
-    result.direction = headerMatch[1];
-    result.symbol = headerMatch[2];
-  }
-
-  // Pattern 2: "BTCUSDT 🟢 LONG" or "BTCUSDT 🔴 SHORT" (frontend format)
-  if (!result.symbol) {
-    headerMatch = msgText.match(/([A-Z]+USDT)\s+.*?(LONG|SHORT)/);
-    if (headerMatch) {
-      result.symbol = headerMatch[1];
-      result.direction = headerMatch[2];
-    }
-  }
-
-  // Try multiple patterns for entry price
-  // Pattern 1: "Entry: $95,000" or "Entry: $0.00001234"
-  let entryMatch = msgText.match(/Entry:\s*\$?([\d,]+\.?\d*)/);
-
-  // Pattern 2: "Entry: <code>1.92</code>" (frontend format with HTML tags)
-  if (!entryMatch || !entryMatch[1]) {
-    entryMatch = msgText.match(/Entry:\s*(?:<code>)?([\d.]+)(?:<\/code>)?/);
-  }
-
-  if (entryMatch && entryMatch[1]) {
-    result.entryPrice = parseFloat(entryMatch[1].replace(/,/g, ''));
-  }
-
-  return result;
-}
-
-// Find the last signal sent for a specific symbol
-function findLastSignalForSymbol(symbol, recentMessages, cooldownMs) {
-  const cutoffTime = new Date(Date.now() - cooldownMs);
-
-  // Sort messages by date descending (newest first)
-  const sorted = [...recentMessages].sort((a, b) => b.date - a.date);
-
-  for (const msg of sorted) {
-    if (msg.date < cutoffTime) continue;
-
-    const parsed = parseSignalFromMessage(msg.text);
-    if (parsed.symbol === symbol) {
-      return {
-        direction: parsed.direction,
-        entryPrice: parsed.entryPrice,
-        date: msg.date
-      };
-    }
-  }
-  return null;
-}
-
-function isSignalOnCooldown(symbol, direction, currentPrice, recentMessages) {
-  const cooldownMs = CONFIG.SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
-  const minCooldownMs = 30 * 60 * 1000; // Minimum 30 minutes between any signals for same coin
-
-  // Find the last signal we sent for this symbol
-  const lastSignal = findLastSignalForSymbol(symbol, recentMessages, cooldownMs);
-
-  // No recent signal for this symbol - not on cooldown
-  if (!lastSignal) {
+async function isSignalOnCooldown(symbol, direction, currentPrice) {
+  const lastSignalRaw = await getLastSignal(symbol);
+  if (!lastSignalRaw) {
+    console.log(`✅ ${symbol}: No previous signal found - OK to send`);
     return false;
   }
 
-  const minutesAgo = Math.round((Date.now() - lastSignal.date.getTime()) / 60000);
-  const timeSinceLastMs = Date.now() - lastSignal.date.getTime();
-
-  // Calculate price change
-  let priceChange = 0;
-  if (lastSignal.entryPrice && currentPrice) {
-    priceChange = Math.abs((currentPrice - lastSignal.entryPrice) / lastSignal.entryPrice * 100);
+  let lastSignal;
+  try {
+    lastSignal = typeof lastSignalRaw === 'string' ? JSON.parse(lastSignalRaw) : lastSignalRaw;
+  } catch (e) {
+    console.log(`✅ ${symbol}: Could not parse last signal - OK to send`);
+    return false;
   }
 
-  // BLOCK: If price only moved slightly (< 2%), always block regardless of direction
-  // This prevents spam like 2.04 → 2.03 entry alerts
-  if (priceChange < 2) {
-    console.log(`🚫 ${symbol}: Price only moved ${priceChange.toFixed(1)}% (< 2%) - BLOCKING duplicate signal`);
-    return true; // Block the signal
+  const hoursSinceLast = (Date.now() - lastSignal.timestamp) / (1000 * 60 * 60);
+
+  // Cooldown expired
+  if (hoursSinceLast >= CONFIG.SIGNAL_COOLDOWN_HOURS) {
+    console.log(`✅ ${symbol}: Cooldown expired (${hoursSinceLast.toFixed(1)}h ago) - OK to send`);
+    return false;
   }
 
-  // BLOCK: Minimum 30 minutes between signals even with direction change
-  if (timeSinceLastMs < minCooldownMs) {
-    console.log(`⏳ ${symbol}: Only ${minutesAgo} min since last signal (min 30 min) - BLOCKING`);
-    return true; // Block the signal
-  }
-
-  // OVERRIDE 1: Direction has flipped AND price moved enough AND enough time passed
+  // Direction flipped (LONG -> SHORT or vice versa)
   if (lastSignal.direction && lastSignal.direction !== direction) {
-    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction}→${direction} + ${priceChange.toFixed(1)}% move - ALLOWING`);
-    return false; // Allow the signal
+    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction} → ${direction} - OK to send`);
+    return false;
   }
 
-  // OVERRIDE 2: Significant price move (>5%) since last signal
-  if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
-    console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% since last signal - ALLOWING new signal`);
-    return false; // Allow the signal
+  // Price moved significantly (10%+)
+  if (lastSignal.entry && currentPrice) {
+    const priceChange = Math.abs((currentPrice - lastSignal.entry) / lastSignal.entry * 100);
+    if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
+      console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% - OK to send`);
+      return false;
+    }
+
+    // Price barely moved - definitely on cooldown
+    if (priceChange < CONFIG.MIN_PRICE_CHANGE_PERCENT) {
+      console.log(`🚫 ${symbol}: Price only moved ${priceChange.toFixed(1)}% (< ${CONFIG.MIN_PRICE_CHANGE_PERCENT}%) - BLOCKED`);
+      return true;
+    }
   }
 
-  // Same direction, not enough price movement - ON COOLDOWN
-  console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${minutesAgo} min ago, only ${priceChange.toFixed(1)}% move)`);
+  // Still on cooldown
+  const hoursRemaining = (CONFIG.SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
+  console.log(`⏳ ${symbol}: On cooldown (${hoursRemaining}h remaining) - BLOCKED`);
   return true;
 }
 
@@ -875,10 +845,6 @@ export default async function handler(request, response) {
       });
     }
 
-    // Get recent Telegram messages for cooldown check
-    const recentMessages = await getRecentTelegramMessages();
-    console.log(`📨 Fetched ${recentMessages.length} recent messages for cooldown check`);
-
     // Build analysis prompt
     const prompt = buildAnalysisPrompt(marketData);
 
@@ -913,11 +879,27 @@ export default async function handler(request, response) {
       return tpPercent >= minTP;
     });
 
-    // Apply smart cooldown filter (allows direction flips & significant price moves)
-    alertSignals = alertSignals.filter(signal => {
-      const currentPrice = marketData.prices[signal.symbol]?.price || signal.entry;
-      return !isSignalOnCooldown(signal.symbol, signal.direction, currentPrice, recentMessages);
-    });
+    // Filter by Gold consensus only (all 3 AIs must agree)
+    if (CONFIG.REQUIRE_GOLD_CONSENSUS) {
+      alertSignals = alertSignals.filter(signal => {
+        if (!signal.isGoldConsensus) {
+          console.log(`⛔ ${signal.symbol}: Not Gold consensus (only ${signal.aiSources.length} AIs) - Skipping`);
+          return false;
+        }
+        return true;
+      });
+      console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
+    }
+
+    // Apply Redis-based cooldown filter (persistent across invocations)
+    const cooldownChecks = await Promise.all(
+      alertSignals.map(async signal => {
+        const currentPrice = marketData.prices[signal.symbol]?.price || signal.entry;
+        const onCooldown = await isSignalOnCooldown(signal.symbol, signal.direction, currentPrice);
+        return { signal, onCooldown };
+      })
+    );
+    alertSignals = cooldownChecks.filter(c => !c.onCooldown).map(c => c.signal);
     console.log(`⏱️ After cooldown filter: ${alertSignals.length} signals`);
 
     // Apply correlation filter (don't send multiple signals from same group)
@@ -933,7 +915,12 @@ export default async function handler(request, response) {
       const message = formatSignalForTelegram(signal, majorEvent);
       const keyboard = createTradeKeyboard(signal);
       const sent = await sendTelegramMessage(message, keyboard);
-      if (sent) alertsSent++;
+      if (sent) {
+        alertsSent++;
+        // Save to Redis for cooldown tracking
+        await saveSignal(signal.symbol, signal.direction, signal.entry);
+        console.log(`✅ Sent alert for ${signal.symbol} ${signal.direction}`);
+      }
     }
 
     console.log(`📤 Sent ${alertsSent} Telegram alerts`);

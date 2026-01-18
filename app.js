@@ -42,7 +42,7 @@ const CONFIG = {
   CACHE_TTL: 30000,
   MIN_CONFIDENCE: 65,
   HIGH_CONFIDENCE: 85, // Alert threshold - only notify for 85%+
-  ALERT_CONFIDENCE: 75, // Minimum confidence for alerts/notifications (lowered from 85%)
+  ALERT_CONFIDENCE: 85, // Minimum confidence for alerts - raised back to 85% for quality
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
@@ -93,6 +93,99 @@ function loadApiKeys() {
 function loadApiKey() {
   return loadApiKeys().claude;
 }
+
+// ============================================
+// SIGNAL COOLDOWN TRACKING (localStorage-based)
+// ============================================
+
+const SIGNAL_COOLDOWN_HOURS = 12; // 12-hour cooldown per coin
+const PRICE_OVERRIDE_PERCENT = 10; // 10% price move overrides cooldown
+
+function getSentSignals() {
+  try {
+    const stored = localStorage.getItem('sent_signals');
+    return stored ? JSON.parse(stored) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveSentSignals(signals) {
+  try {
+    localStorage.setItem('sent_signals', JSON.stringify(signals));
+  } catch (e) {
+    console.error('Failed to save sent signals:', e);
+  }
+}
+
+function recordSentSignal(symbol, direction, entry) {
+  const signals = getSentSignals();
+  signals[symbol] = {
+    direction,
+    entry,
+    timestamp: Date.now()
+  };
+  saveSentSignals(signals);
+  console.log(`📝 Recorded signal: ${symbol} ${direction} at ${entry}`);
+}
+
+function isSignalOnCooldown(symbol, direction, currentEntry) {
+  const signals = getSentSignals();
+  const lastSignal = signals[symbol];
+
+  if (!lastSignal) {
+    return { onCooldown: false };
+  }
+
+  const hoursSinceLast = (Date.now() - lastSignal.timestamp) / (1000 * 60 * 60);
+
+  // Cooldown expired
+  if (hoursSinceLast >= SIGNAL_COOLDOWN_HOURS) {
+    return { onCooldown: false };
+  }
+
+  // Check price change override
+  const priceChange = Math.abs((currentEntry - lastSignal.entry) / lastSignal.entry * 100);
+
+  // If price moved significantly (>10%), allow new signal
+  if (priceChange >= PRICE_OVERRIDE_PERCENT) {
+    console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% - allowing new signal`);
+    return { onCooldown: false };
+  }
+
+  // On cooldown
+  const hoursRemaining = (SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
+  console.log(`⏳ ${symbol}: On cooldown (${hoursRemaining}h remaining, price only moved ${priceChange.toFixed(1)}%)`);
+  return {
+    onCooldown: true,
+    hoursRemaining,
+    lastDirection: lastSignal.direction,
+    lastEntry: lastSignal.entry,
+    priceChange: priceChange.toFixed(1)
+  };
+}
+
+function cleanExpiredSignals() {
+  const signals = getSentSignals();
+  const now = Date.now();
+  const maxAge = SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
+
+  let cleaned = 0;
+  for (const symbol of Object.keys(signals)) {
+    if (now - signals[symbol].timestamp > maxAge) {
+      delete signals[symbol];
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    saveSentSignals(signals);
+    console.log(`🧹 Cleaned ${cleaned} expired signal records`);
+  }
+}
+
+// Clean expired signals on load
+cleanExpiredSignals();
 
 // ============================================
 // TELEGRAM ALERTS
@@ -246,9 +339,23 @@ async function sendTelegramSignalAlert(signal) {
     return false;
   }
 
+  // Check cooldown - prevent spam
+  const cooldownCheck = isSignalOnCooldown(signal.symbol, signal.direction, signal.entry);
+  if (cooldownCheck.onCooldown) {
+    console.log(`🚫 ${signal.symbol}: Blocked by cooldown (${cooldownCheck.hoursRemaining}h remaining)`);
+    return false;
+  }
+
   const message = formatSignalForTelegram(signal);
   const keyboard = createTradeKeyboard(signal);
-  return await sendTelegramMessage(message, 'HTML', keyboard);
+  const success = await sendTelegramMessage(message, 'HTML', keyboard);
+
+  // Record the signal if sent successfully
+  if (success) {
+    recordSentSignal(signal.symbol, signal.direction, signal.entry);
+  }
+
+  return success;
 }
 
 async function sendTelegramTestMessage() {
@@ -272,7 +379,7 @@ Your bot is properly configured and ready to receive trading signals.
   return await sendTelegramMessage(testMessage.trim());
 }
 
-// Manual send signal to Telegram (bypasses enabled/confidence checks)
+// Manual send signal to Telegram (bypasses enabled/confidence checks but still tracks cooldown)
 async function sendSignalToTelegramManual(signal) {
   // Check if Telegram is configured (but not necessarily enabled)
   if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
@@ -280,11 +387,19 @@ async function sendSignalToTelegramManual(signal) {
     return false;
   }
 
+  // Warn about cooldown but don't block manual sends
+  const cooldownCheck = isSignalOnCooldown(signal.symbol, signal.direction, signal.entry);
+  if (cooldownCheck.onCooldown) {
+    console.warn(`⚠️ ${signal.symbol}: This coin is on cooldown (${cooldownCheck.hoursRemaining}h remaining) - sending anyway (manual override)`);
+  }
+
   const message = formatSignalForTelegram(signal);
   const keyboard = createTradeKeyboard(signal);
   const success = await sendTelegramMessage(message, 'HTML', keyboard);
 
   if (success) {
+    // Record the signal to prevent automatic duplicates
+    recordSentSignal(signal.symbol, signal.direction, signal.entry);
     console.log(`📤 Manually sent ${signal.symbol} signal to Telegram with Win/Loss buttons`);
   }
 
@@ -1332,6 +1447,547 @@ function calculateATR(candles, period = 14) {
   return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
 }
 
+// ADX - Average Directional Index (Trend Strength)
+// ADX > 25 = Strong trend, ADX < 20 = Weak/No trend
+function calculateADX(candles, period = 14) {
+  if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0, trend: 'WEAK' };
+
+  const plusDMs = [];
+  const minusDMs = [];
+  const trs = [];
+
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevHigh = candles[i - 1].high;
+    const prevLow = candles[i - 1].low;
+    const prevClose = candles[i - 1].close;
+
+    // True Range
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+
+    // Directional Movement
+    const plusDM = high - prevHigh > prevLow - low ? Math.max(high - prevHigh, 0) : 0;
+    const minusDM = prevLow - low > high - prevHigh ? Math.max(prevLow - low, 0) : 0;
+    plusDMs.push(plusDM);
+    minusDMs.push(minusDM);
+  }
+
+  // Smoothed averages
+  const smoothedTR = trs.slice(-period).reduce((a, b) => a + b, 0);
+  const smoothedPlusDM = plusDMs.slice(-period).reduce((a, b) => a + b, 0);
+  const smoothedMinusDM = minusDMs.slice(-period).reduce((a, b) => a + b, 0);
+
+  // Directional Indicators
+  const plusDI = smoothedTR > 0 ? (smoothedPlusDM / smoothedTR) * 100 : 0;
+  const minusDI = smoothedTR > 0 ? (smoothedMinusDM / smoothedTR) * 100 : 0;
+
+  // DX and ADX
+  const diDiff = Math.abs(plusDI - minusDI);
+  const diSum = plusDI + minusDI;
+  const dx = diSum > 0 ? (diDiff / diSum) * 100 : 0;
+
+  // Calculate ADX as smoothed DX (simplified - using recent average)
+  const adx = dx; // In full implementation, this would be smoothed over period
+
+  // Determine trend strength
+  let trend = 'WEAK';
+  if (adx >= 50) trend = 'VERY_STRONG';
+  else if (adx >= 25) trend = 'STRONG';
+  else if (adx >= 20) trend = 'MODERATE';
+
+  return { adx: Math.round(adx * 10) / 10, plusDI: Math.round(plusDI * 10) / 10, minusDI: Math.round(minusDI * 10) / 10, trend };
+}
+
+// Stochastic RSI - Better overbought/oversold than regular RSI
+function calculateStochRSI(closes, rsiPeriod = 14, stochPeriod = 14, kPeriod = 3, dPeriod = 3) {
+  if (closes.length < rsiPeriod + stochPeriod) return { k: 50, d: 50, signal: 'NEUTRAL' };
+
+  // Calculate RSI values for each point
+  const rsiValues = [];
+  for (let i = rsiPeriod; i <= closes.length; i++) {
+    const slice = closes.slice(i - rsiPeriod - 1, i);
+    let gains = 0, losses = 0;
+    for (let j = 1; j < slice.length; j++) {
+      const change = slice[j] - slice[j - 1];
+      if (change > 0) gains += change;
+      else losses -= change;
+    }
+    const avgGain = gains / rsiPeriod;
+    const avgLoss = losses / rsiPeriod;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    rsiValues.push(100 - (100 / (1 + rs)));
+  }
+
+  if (rsiValues.length < stochPeriod) return { k: 50, d: 50, signal: 'NEUTRAL' };
+
+  // Calculate Stochastic of RSI
+  const recentRSI = rsiValues.slice(-stochPeriod);
+  const minRSI = Math.min(...recentRSI);
+  const maxRSI = Math.max(...recentRSI);
+  const currentRSI = recentRSI[recentRSI.length - 1];
+
+  const stochRSI = maxRSI - minRSI > 0 ? ((currentRSI - minRSI) / (maxRSI - minRSI)) * 100 : 50;
+
+  // %K is smoothed stochRSI, %D is smoothed %K (simplified)
+  const k = Math.round(stochRSI * 10) / 10;
+  const d = k; // In full implementation, this would be SMA of K
+
+  // Signal interpretation
+  let signal = 'NEUTRAL';
+  if (k <= 20) signal = 'OVERSOLD';
+  else if (k >= 80) signal = 'OVERBOUGHT';
+  else if (k > 50) signal = 'BULLISH';
+  else if (k < 50) signal = 'BEARISH';
+
+  return { k, d, signal };
+}
+
+// Supertrend - Clear trend direction indicator
+function calculateSupertrend(candles, period = 10, multiplier = 3) {
+  if (candles.length < period + 1) return { supertrend: 0, direction: 'NEUTRAL', signal: 'HOLD' };
+
+  const atr = calculateATR(candles, period);
+  const lastCandle = candles[candles.length - 1];
+  const hl2 = (lastCandle.high + lastCandle.low) / 2;
+
+  // Basic Bands
+  const upperBand = hl2 + (multiplier * atr);
+  const lowerBand = hl2 - (multiplier * atr);
+
+  // Determine trend direction based on close vs bands
+  const close = lastCandle.close;
+  const prevClose = candles[candles.length - 2]?.close || close;
+
+  let direction = 'UP';
+  let supertrend = lowerBand;
+
+  if (close < lowerBand) {
+    direction = 'DOWN';
+    supertrend = upperBand;
+  } else if (close > upperBand) {
+    direction = 'UP';
+    supertrend = lowerBand;
+  } else {
+    // Price within bands - use previous trend
+    direction = prevClose > hl2 ? 'UP' : 'DOWN';
+    supertrend = direction === 'UP' ? lowerBand : upperBand;
+  }
+
+  // Signal
+  let signal = 'HOLD';
+  if (direction === 'UP' && close > supertrend) signal = 'BUY';
+  else if (direction === 'DOWN' && close < supertrend) signal = 'SELL';
+
+  return {
+    supertrend: Math.round(supertrend * 100) / 100,
+    direction,
+    signal,
+    upperBand: Math.round(upperBand * 100) / 100,
+    lowerBand: Math.round(lowerBand * 100) / 100
+  };
+}
+
+// ============================================
+// USDT DOMINANCE (Market Sentiment Indicator)
+// ============================================
+// USDT.D falling = money flowing into crypto = BULLISH
+// USDT.D rising = money flowing into stablecoins = BEARISH
+
+let usdtDominanceData = {
+  current: null,
+  change24h: null,
+  trend: null,
+  signal: null,
+  lastUpdate: 0
+};
+
+async function fetchUSDTDominance() {
+  // Cache for 5 minutes
+  if (Date.now() - usdtDominanceData.lastUpdate < 300000 && usdtDominanceData.current) {
+    return usdtDominanceData;
+  }
+
+  try {
+    // Fetch from CoinGecko global data
+    const response = await fetch('https://api.coingecko.com/api/v3/global');
+    const data = await response.json();
+
+    if (data?.data?.market_cap_percentage?.usdt) {
+      const current = data.data.market_cap_percentage.usdt;
+      const previousCurrent = usdtDominanceData.current;
+
+      // Calculate change if we have previous data
+      let change24h = 0;
+      if (previousCurrent && previousCurrent !== current) {
+        change24h = ((current - previousCurrent) / previousCurrent * 100);
+      }
+
+      // Determine trend and signal
+      let trend = 'NEUTRAL';
+      let signal = 'NEUTRAL';
+
+      if (current > 6.5) {
+        trend = 'HIGH';
+        signal = 'BEARISH'; // High USDT.D = risk-off
+      } else if (current < 5.5) {
+        trend = 'LOW';
+        signal = 'BULLISH'; // Low USDT.D = risk-on
+      } else {
+        trend = 'NORMAL';
+      }
+
+      // If USDT.D is dropping, it's bullish for crypto
+      if (change24h < -0.5) {
+        signal = 'BULLISH';
+      } else if (change24h > 0.5) {
+        signal = 'BEARISH';
+      }
+
+      usdtDominanceData = {
+        current: Math.round(current * 100) / 100,
+        change24h: Math.round(change24h * 100) / 100,
+        trend,
+        signal,
+        lastUpdate: Date.now()
+      };
+
+      console.log(`📊 USDT.D: ${current.toFixed(2)}% | Trend: ${trend} | Signal: ${signal}`);
+    }
+  } catch (error) {
+    console.log('USDT.D fetch failed:', error.message);
+  }
+
+  return usdtDominanceData;
+}
+
+// ============================================
+// FIBONACCI RETRACEMENT
+// ============================================
+// Key levels: 0.236, 0.382, 0.5, 0.618, 0.786
+
+function calculateFibonacciLevels(candles, lookback = 50) {
+  if (candles.length < lookback) return null;
+
+  const recent = candles.slice(-lookback);
+
+  // Find swing high and swing low
+  let swingHigh = -Infinity;
+  let swingLow = Infinity;
+  let swingHighIdx = 0;
+  let swingLowIdx = 0;
+
+  for (let i = 0; i < recent.length; i++) {
+    if (recent[i].high > swingHigh) {
+      swingHigh = recent[i].high;
+      swingHighIdx = i;
+    }
+    if (recent[i].low < swingLow) {
+      swingLow = recent[i].low;
+      swingLowIdx = i;
+    }
+  }
+
+  const range = swingHigh - swingLow;
+  const currentPrice = recent[recent.length - 1].close;
+
+  // Determine if we're in uptrend or downtrend based on swing positions
+  const isUptrend = swingLowIdx < swingHighIdx;
+
+  // Calculate Fibonacci levels
+  let levels;
+  if (isUptrend) {
+    // In uptrend, retracement from high
+    levels = {
+      level_0: swingHigh,
+      level_236: swingHigh - range * 0.236,
+      level_382: swingHigh - range * 0.382,
+      level_500: swingHigh - range * 0.5,
+      level_618: swingHigh - range * 0.618,
+      level_786: swingHigh - range * 0.786,
+      level_1: swingLow
+    };
+  } else {
+    // In downtrend, retracement from low
+    levels = {
+      level_0: swingLow,
+      level_236: swingLow + range * 0.236,
+      level_382: swingLow + range * 0.382,
+      level_500: swingLow + range * 0.5,
+      level_618: swingLow + range * 0.618,
+      level_786: swingLow + range * 0.786,
+      level_1: swingHigh
+    };
+  }
+
+  // Find nearest Fibonacci level to current price
+  const allLevels = [
+    { name: '0%', price: levels.level_0 },
+    { name: '23.6%', price: levels.level_236 },
+    { name: '38.2%', price: levels.level_382 },
+    { name: '50%', price: levels.level_500 },
+    { name: '61.8%', price: levels.level_618 },
+    { name: '78.6%', price: levels.level_786 },
+    { name: '100%', price: levels.level_1 }
+  ];
+
+  let nearestLevel = allLevels[0];
+  let minDist = Math.abs(currentPrice - allLevels[0].price);
+
+  for (const level of allLevels) {
+    const dist = Math.abs(currentPrice - level.price);
+    if (dist < minDist) {
+      minDist = dist;
+      nearestLevel = level;
+    }
+  }
+
+  // Determine if price is at a key level (within 1%)
+  const atKeyLevel = (minDist / currentPrice * 100) < 1;
+
+  // Find support and resistance from Fib levels
+  const fibSupport = allLevels.filter(l => l.price < currentPrice).sort((a, b) => b.price - a.price)[0];
+  const fibResistance = allLevels.filter(l => l.price > currentPrice).sort((a, b) => a.price - b.price)[0];
+
+  return {
+    swingHigh: Math.round(swingHigh * 100) / 100,
+    swingLow: Math.round(swingLow * 100) / 100,
+    isUptrend,
+    levels: {
+      '0%': Math.round(levels.level_0 * 100) / 100,
+      '23.6%': Math.round(levels.level_236 * 100) / 100,
+      '38.2%': Math.round(levels.level_382 * 100) / 100,
+      '50%': Math.round(levels.level_500 * 100) / 100,
+      '61.8%': Math.round(levels.level_618 * 100) / 100,
+      '78.6%': Math.round(levels.level_786 * 100) / 100,
+      '100%': Math.round(levels.level_1 * 100) / 100
+    },
+    nearestLevel: nearestLevel.name,
+    nearestPrice: Math.round(nearestLevel.price * 100) / 100,
+    atKeyLevel,
+    fibSupport: fibSupport ? { level: fibSupport.name, price: Math.round(fibSupport.price * 100) / 100 } : null,
+    fibResistance: fibResistance ? { level: fibResistance.name, price: Math.round(fibResistance.price * 100) / 100 } : null
+  };
+}
+
+// ============================================
+// TREND STRUCTURE (Higher Highs/Lows, Lower Highs/Lows)
+// ============================================
+
+function analyzeTrendStructure(candles, lookback = 30) {
+  if (candles.length < lookback) return null;
+
+  const recent = candles.slice(-lookback);
+  const swingPoints = [];
+
+  // Find swing highs and lows
+  for (let i = 2; i < recent.length - 2; i++) {
+    const curr = recent[i];
+    // Swing High
+    if (curr.high > recent[i-1].high && curr.high > recent[i-2].high &&
+        curr.high > recent[i+1].high && curr.high > recent[i+2].high) {
+      swingPoints.push({ type: 'HIGH', price: curr.high, index: i });
+    }
+    // Swing Low
+    if (curr.low < recent[i-1].low && curr.low < recent[i-2].low &&
+        curr.low < recent[i+1].low && curr.low < recent[i+2].low) {
+      swingPoints.push({ type: 'LOW', price: curr.low, index: i });
+    }
+  }
+
+  if (swingPoints.length < 4) return { structure: 'UNDEFINED', swingPoints: [] };
+
+  // Analyze the last 4 swing points
+  const recentSwings = swingPoints.slice(-4);
+  const highs = recentSwings.filter(s => s.type === 'HIGH').map(s => s.price);
+  const lows = recentSwings.filter(s => s.type === 'LOW').map(s => s.price);
+
+  let structure = 'RANGING';
+  let structureBreak = null;
+
+  // Check for Higher Highs and Higher Lows (Uptrend)
+  const hasHigherHighs = highs.length >= 2 && highs[highs.length - 1] > highs[highs.length - 2];
+  const hasHigherLows = lows.length >= 2 && lows[lows.length - 1] > lows[lows.length - 2];
+
+  // Check for Lower Highs and Lower Lows (Downtrend)
+  const hasLowerHighs = highs.length >= 2 && highs[highs.length - 1] < highs[highs.length - 2];
+  const hasLowerLows = lows.length >= 2 && lows[lows.length - 1] < lows[lows.length - 2];
+
+  if (hasHigherHighs && hasHigherLows) {
+    structure = 'UPTREND';
+  } else if (hasLowerHighs && hasLowerLows) {
+    structure = 'DOWNTREND';
+  } else if (hasHigherHighs && hasLowerLows) {
+    structure = 'EXPANDING'; // Volatility expansion
+  } else if (hasLowerHighs && hasHigherLows) {
+    structure = 'CONTRACTING'; // Volatility contraction (triangle/wedge)
+  }
+
+  // Check for Break of Structure (BOS)
+  const currentPrice = recent[recent.length - 1].close;
+  const lastSwingHigh = highs.length > 0 ? Math.max(...highs.slice(-2)) : null;
+  const lastSwingLow = lows.length > 0 ? Math.min(...lows.slice(-2)) : null;
+
+  if (lastSwingHigh && currentPrice > lastSwingHigh) {
+    structureBreak = 'BULLISH_BOS';
+  } else if (lastSwingLow && currentPrice < lastSwingLow) {
+    structureBreak = 'BEARISH_BOS';
+  }
+
+  return {
+    structure,
+    hasHigherHighs,
+    hasHigherLows,
+    hasLowerHighs,
+    hasLowerLows,
+    structureBreak,
+    lastSwingHigh: lastSwingHigh ? Math.round(lastSwingHigh * 100) / 100 : null,
+    lastSwingLow: lastSwingLow ? Math.round(lastSwingLow * 100) / 100 : null,
+    swingCount: swingPoints.length
+  };
+}
+
+// ============================================
+// CONFLUENCE SCORING SYSTEM
+// ============================================
+// Combines multiple indicators to score trade quality
+
+function calculateConfluenceScore(data) {
+  let bullishScore = 0;
+  let bearishScore = 0;
+  const signals = [];
+
+  // 1. Trend Direction (weight: 2)
+  if (data.trend === 'STRONG UPTREND') { bullishScore += 2; signals.push('Strong Uptrend'); }
+  else if (data.trend === 'STRONG DOWNTREND') { bearishScore += 2; signals.push('Strong Downtrend'); }
+  else if (data.trend === 'WEAK UPTREND') { bullishScore += 1; }
+  else if (data.trend === 'WEAK DOWNTREND') { bearishScore += 1; }
+
+  // 2. RSI (weight: 1.5)
+  if (data.rsi < 30) { bullishScore += 1.5; signals.push('RSI Oversold'); }
+  else if (data.rsi > 70) { bearishScore += 1.5; signals.push('RSI Overbought'); }
+  else if (data.rsi < 40) { bullishScore += 0.5; }
+  else if (data.rsi > 60) { bearishScore += 0.5; }
+
+  // 3. Stochastic RSI (weight: 1.5)
+  if (data.stochRsi?.signal === 'OVERSOLD') { bullishScore += 1.5; signals.push('StochRSI Oversold'); }
+  else if (data.stochRsi?.signal === 'OVERBOUGHT') { bearishScore += 1.5; signals.push('StochRSI Overbought'); }
+
+  // 4. ADX Trend Strength (weight: 1)
+  if (data.adx?.adx >= 25) {
+    if (data.adx?.plusDI > data.adx?.minusDI) { bullishScore += 1; signals.push('ADX Bullish'); }
+    else { bearishScore += 1; signals.push('ADX Bearish'); }
+  }
+
+  // 5. Supertrend (weight: 1.5)
+  if (data.supertrend?.direction === 'UP') { bullishScore += 1.5; signals.push('Supertrend UP'); }
+  else if (data.supertrend?.direction === 'DOWN') { bearishScore += 1.5; signals.push('Supertrend DOWN'); }
+
+  // 6. Funding Rate (weight: 1) - Contrarian
+  const funding = state.fundingRates[data.symbol];
+  if (funding?.fundingRate > 0.01) {
+    bearishScore += 1; // Crowded longs = bearish
+    signals.push('High Funding (Crowded Longs)');
+  } else if (funding?.fundingRate < -0.01) {
+    bullishScore += 1; // Crowded shorts = bullish
+    signals.push('Negative Funding (Crowded Shorts)');
+  }
+
+  // 7. USDT.D Sentiment (weight: 1)
+  if (usdtDominanceData.signal === 'BULLISH') { bullishScore += 1; signals.push('USDT.D Bullish'); }
+  else if (usdtDominanceData.signal === 'BEARISH') { bearishScore += 1; signals.push('USDT.D Bearish'); }
+
+  // 8. Fibonacci Level (weight: 1)
+  if (data.fibonacci?.atKeyLevel) {
+    if (data.fibonacci.isUptrend && data.fibonacci.nearestLevel === '61.8%') {
+      bullishScore += 1; signals.push('At Fib 61.8% Support');
+    } else if (!data.fibonacci.isUptrend && data.fibonacci.nearestLevel === '61.8%') {
+      bearishScore += 1; signals.push('At Fib 61.8% Resistance');
+    }
+  }
+
+  // 9. Trend Structure (weight: 1.5)
+  if (data.trendStructure?.structure === 'UPTREND') { bullishScore += 1.5; signals.push('HH/HL Structure'); }
+  else if (data.trendStructure?.structure === 'DOWNTREND') { bearishScore += 1.5; signals.push('LH/LL Structure'); }
+
+  // 10. Break of Structure (weight: 2)
+  if (data.trendStructure?.structureBreak === 'BULLISH_BOS') { bullishScore += 2; signals.push('Bullish BOS'); }
+  else if (data.trendStructure?.structureBreak === 'BEARISH_BOS') { bearishScore += 2; signals.push('Bearish BOS'); }
+
+  // Calculate overall score and direction
+  const totalScore = Math.max(bullishScore, bearishScore);
+  const maxPossibleScore = 15; // Sum of all weights
+  const confluencePercent = Math.round((totalScore / maxPossibleScore) * 100);
+
+  const direction = bullishScore > bearishScore ? 'BULLISH' :
+                    bearishScore > bullishScore ? 'BEARISH' : 'NEUTRAL';
+
+  // Quality rating
+  let quality = 'LOW';
+  if (confluencePercent >= 60) quality = 'HIGH';
+  else if (confluencePercent >= 40) quality = 'MEDIUM';
+
+  return {
+    direction,
+    bullishScore: Math.round(bullishScore * 10) / 10,
+    bearishScore: Math.round(bearishScore * 10) / 10,
+    confluencePercent,
+    quality,
+    signals: signals.slice(0, 5) // Top 5 signals
+  };
+}
+
+// ============================================
+// MULTI-TIMEFRAME RSI ANALYSIS
+// ============================================
+
+async function analyzeMultiTimeframeRSI(symbol) {
+  const timeframes = {
+    '60': '1H',
+    '240': '4H',
+    'D': '1D'
+  };
+
+  const rsiData = {};
+  let overboughtCount = 0;
+  let oversoldCount = 0;
+
+  for (const [interval, label] of Object.entries(timeframes)) {
+    try {
+      const candles = await fetchKlines(symbol, interval, 50);
+      if (candles.length < 20) continue;
+
+      const closes = candles.map(c => c.close);
+      const rsi = calculateRSI(closes);
+
+      rsiData[label] = {
+        value: Math.round(rsi * 10) / 10,
+        status: rsi > 70 ? 'OVERBOUGHT' : rsi < 30 ? 'OVERSOLD' : 'NEUTRAL'
+      };
+
+      if (rsi > 70) overboughtCount++;
+      if (rsi < 30) oversoldCount++;
+
+      await sleep(30);
+    } catch (e) {
+      console.log(`RSI fetch failed for ${symbol} ${label}`);
+    }
+  }
+
+  // Determine confluence
+  let confluence = 'MIXED';
+  if (overboughtCount >= 2) confluence = 'OVERBOUGHT_CONFLUENCE';
+  else if (oversoldCount >= 2) confluence = 'OVERSOLD_CONFLUENCE';
+
+  return {
+    timeframes: rsiData,
+    confluence,
+    overboughtCount,
+    oversoldCount
+  };
+}
+
 function findSupportResistance(candles, lookback = 50) {
   if (candles.length < lookback) return { supports: [], resistances: [] };
 
@@ -1865,7 +2521,13 @@ async function callGrokAPI(prompt) {
 
 // Format market data for AI prompts (shared)
 function formatMarketDataForAI(marketData) {
-  return marketData.map(m => {
+  // Global market sentiment header
+  const globalSentiment = `
+=== GLOBAL MARKET SENTIMENT ===
+- USDT Dominance: ${usdtDominanceData.current || 'N/A'}% (${usdtDominanceData.trend || 'N/A'}) ${usdtDominanceData.signal === 'BULLISH' ? '🟢 BULLISH FOR CRYPTO' : usdtDominanceData.signal === 'BEARISH' ? '🔴 BEARISH FOR CRYPTO' : ''}
+`;
+
+  const coinData = marketData.map(m => {
     const funding = state.fundingRates[m.symbol];
     const oi = state.openInterest[m.symbol];
     const social = state.socialSentiment[m.symbol];
@@ -1873,39 +2535,26 @@ function formatMarketDataForAI(marketData) {
 
     return `
 ${m.symbol}:
-- Current Price: $${m.price}
-- 24h Change: ${m.change.toFixed(2)}%
-- 24h Volume: $${formatVolume(m.volume)}
-- Market Regime: ${m.marketRegime || 'N/A'}
-- Funding Rate: ${funding ? (funding.fundingRate > 0 ? '+' : '') + funding.fundingRate.toFixed(4) + '%' : 'N/A'} ${funding && Math.abs(funding.fundingRate) > 0.01 ? '⚠️ HIGH' : ''}
-- Open Interest Change (24h): ${oi ? (oi.change24h > 0 ? '+' : '') + oi.change24h.toFixed(2) + '%' : 'N/A'}
-- RSI (14): ${m.rsi?.toFixed(1) || 'N/A'}
-- EMA20: $${m.ema20?.toFixed(2) || 'N/A'}
-- EMA50: $${m.ema50?.toFixed(2) || 'N/A'}
-- EMA200: $${m.ema200?.toFixed(2) || 'N/A'}
-- MACD Histogram: ${m.macdHistogram?.toFixed(4) || 'N/A'}
-- Bollinger Band Position: ${m.bbPosition || 'N/A'}
-- Support Levels: ${m.supports?.map(s => '$' + formatPrice(s)).join(', ') || 'N/A'}
-- Resistance Levels: ${m.resistances?.map(r => '$' + formatPrice(r)).join(', ') || 'N/A'}
-- ATR (14): ${m.atr?.toFixed(4) || 'N/A'}
-- Volume Trend: ${m.volumeTrend || 'N/A'}
-- Trend Direction: ${m.trend || 'N/A'}
-- MTF Confluence: ${m.mtfAnalysis?.confluence || 'N/A'} (${m.mtfAnalysis?.confluenceScore?.toFixed(0) || 0}%)
-- VWAP Position: ${m.vwap?.pricePosition || 'N/A'} (Deviation: ${m.vwap?.deviation?.toFixed(2) || 0}%)
-- VWAP Levels: Lower: $${m.vwap?.lowerBand?.toFixed(2) || 'N/A'} | VWAP: $${m.vwap?.vwap?.toFixed(2) || 'N/A'} | Upper: $${m.vwap?.upperBand?.toFixed(2) || 'N/A'}
-- Pivot Points: S1: $${m.pivotPoints?.s1?.toFixed(2) || 'N/A'} | Pivot: $${m.pivotPoints?.pivot?.toFixed(2) || 'N/A'} | R1: $${m.pivotPoints?.r1?.toFixed(2) || 'N/A'}
-- Pivot Position: ${m.pivotPoints?.position || 'N/A'}
-- Bullish Order Blocks: ${m.orderBlocks?.bullishOB?.length > 0 ? m.orderBlocks.bullishOB.map(ob => `$${formatPrice(ob.midpoint)} (${ob.strength})`).join(', ') : 'None'}
-- Bearish Order Blocks: ${m.orderBlocks?.bearishOB?.length > 0 ? m.orderBlocks.bearishOB.map(ob => `$${formatPrice(ob.midpoint)} (${ob.strength})`).join(', ') : 'None'}
-- Market Structure: ${m.marketStructure?.structure || 'N/A'} ${m.marketStructure?.structureBreak ? `⚠️ ${m.marketStructure.structureBreak}` : ''}
-- Last Swing High: $${m.marketStructure?.lastSwingHigh?.toFixed(2) || 'N/A'}
-- Last Swing Low: $${m.marketStructure?.lastSwingLow?.toFixed(2) || 'N/A'}
-- Ichimoku Signal: ${m.ichimoku?.signal || 'N/A'} (Cloud: ${m.ichimoku?.cloudColor || 'N/A'})
-- Social Sentiment: ${social ? `${social.sentimentLabel} (Score: ${social.sentiment}/100, Galaxy: ${social.galaxyScore})` : 'N/A'}
-- Long/Short Ratio: ${liq?.longShortRatio ? liq.longShortRatio.toFixed(2) : 'N/A'} ${liq?.crowdBias ? `(${liq.crowdBias})` : ''}
-- 24h Liquidations: ${liq ? `Longs: $${formatVolume(liq.longLiquidations24h || 0)} | Shorts: $${formatVolume(liq.shortLiquidations24h || 0)}` : 'N/A'}
-- Liquidation Signal: ${liq?.priceImplication || 'N/A'}`;
+- Price: $${m.price} | 24h: ${m.change.toFixed(2)}% | Vol: $${formatVolume(m.volume)}
+- Trend: ${m.trend || 'N/A'} | Regime: ${m.marketRegime || 'N/A'}
+- RSI: ${m.rsi?.toFixed(1) || 'N/A'} | StochRSI: ${m.stochRsi?.signal || 'N/A'} ${m.stochRsi?.signal === 'OVERSOLD' ? '🟢' : m.stochRsi?.signal === 'OVERBOUGHT' ? '🔴' : ''}
+- ADX: ${m.adx?.adx || 'N/A'} (${m.adx?.trend || 'N/A'}) ${m.adx?.adx >= 25 ? '✅ STRONG' : '⚠️ WEAK'}
+- Supertrend: ${m.supertrend?.direction || 'N/A'} | Signal: ${m.supertrend?.signal || 'N/A'}
+- EMAs: 20=$${m.ema20?.toFixed(2) || 'N/A'} | 50=$${m.ema50?.toFixed(2) || 'N/A'} | 200=$${m.ema200?.toFixed(2) || 'N/A'}
+- Support: ${m.supports?.map(s => '$' + formatPrice(s)).join(', ') || 'N/A'}
+- Resistance: ${m.resistances?.map(r => '$' + formatPrice(r)).join(', ') || 'N/A'}
+- Fibonacci: ${m.fibonacci ? `Near ${m.fibonacci.nearestLevel} | Fib Support: ${m.fibonacci.fibSupport?.level || 'N/A'} ($${m.fibonacci.fibSupport?.price || 'N/A'}) | Fib Resist: ${m.fibonacci.fibResistance?.level || 'N/A'} ($${m.fibonacci.fibResistance?.price || 'N/A'})` : 'N/A'} ${m.fibonacci?.atKeyLevel ? '⚠️ AT KEY LEVEL' : ''}
+- Structure: ${m.trendStructure?.structure || 'N/A'} ${m.trendStructure?.structureBreak ? `🔥 ${m.trendStructure.structureBreak}` : ''} (HH:${m.trendStructure?.hasHigherHighs ? '✓' : '✗'} HL:${m.trendStructure?.hasHigherLows ? '✓' : '✗'} LH:${m.trendStructure?.hasLowerHighs ? '✓' : '✗'} LL:${m.trendStructure?.hasLowerLows ? '✓' : '✗'})
+- Confluence: ${m.confluence?.confluencePercent || 0}% ${m.confluence?.direction || 'NEUTRAL'} (${m.confluence?.quality || 'LOW'}) - Signals: ${m.confluence?.signals?.slice(0,3).join(', ') || 'None'}
+- Funding: ${funding ? (funding.fundingRate > 0 ? '+' : '') + funding.fundingRate.toFixed(4) + '%' : 'N/A'} ${funding && Math.abs(funding.fundingRate) > 0.01 ? '⚠️ HIGH' : ''}
+- OI Change: ${oi ? (oi.change24h > 0 ? '+' : '') + oi.change24h.toFixed(2) + '%' : 'N/A'}
+- L/S Ratio: ${liq?.longShortRatio ? liq.longShortRatio.toFixed(2) : 'N/A'} ${liq?.crowdBias ? `(${liq.crowdBias})` : ''}
+- Liquidations: ${liq ? `L:$${formatVolume(liq.longLiquidations24h || 0)} S:$${formatVolume(liq.shortLiquidations24h || 0)}` : 'N/A'} ${liq?.priceImplication || ''}
+- VWAP: ${m.vwap?.pricePosition || 'N/A'} (${m.vwap?.deviation?.toFixed(2) || 0}% dev)
+- Ichimoku: ${m.ichimoku?.signal || 'N/A'} (${m.ichimoku?.cloudColor || 'N/A'} cloud)`;
   }).join('\n');
+
+  return globalSentiment + coinData;
 }
 
 // JSON response format (shared)
@@ -1956,17 +2605,22 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **FUNDING RATE TRAPS**: High positive funding with price stalling = longs paying heavy fees, potential short squeeze setup.
 6. **RISK/REWARD**: Only pick trades with at least 2:1 R/R ratio. Calculate: (TP - Entry) / (Entry - SL) >= 2
 
-CRITICAL REQUIREMENTS:
+CRITICAL REQUIREMENTS (ALL must be met):
+- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade in direction of higher timeframe trend (check MTF Confluence)
 - Market Regime must be TRENDING (UP or DOWN), NOT VOLATILE or RANGING
 - Must have clear structure break (BULLISH_BOS for longs, BEARISH_BOS for shorts) OR price at strong order block
 - Place SL behind the nearest swing high/low with ATR buffer
 - Entry must be at a favorable level (near support for longs, near resistance for shorts)
+- **Stochastic RSI timing**: For longs prefer OVERSOLD or rising from <30. For shorts prefer OVERBOUGHT or falling from >70
+
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
 
-Select 1-3 setups with the BEST risk/reward profiles. Be paranoid about risk - better to miss a trade than lose capital.`;
+Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than signal weak setups.`;
 }
 
 // GPT-4o - Technical Analyst (focuses on chart patterns, S/R, price action)
@@ -1993,17 +2647,22 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **VWAP ANALYSIS**: Price above VWAP = bullish bias. Price below VWAP = bearish bias. Extended (>3% deviation) = mean reversion expected.
 6. **PIVOT POINTS**: Use daily pivots as targets. S1/S2 for support, R1/R2 for resistance.
 
-CRITICAL REQUIREMENTS:
-- ONLY trade when technical indicators ALIGN (e.g., RSI + MACD + EMA all pointing same direction)
+CRITICAL REQUIREMENTS (ALL must be met):
+- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
+- ONLY trade when technical indicators ALIGN (RSI + MACD + EMA + Supertrend all same direction)
 - Price must be respecting key levels (not in no-man's-land)
 - Volume should confirm the move (INCREASING volume trend preferred)
 - MTF Confluence should be at least PARTIAL alignment
 - Ichimoku signal should support the direction (not IN_CLOUD)
+- **Stochastic RSI**: Use for entry timing - OVERSOLD for longs, OVERBOUGHT for shorts
+
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
 
-Select 1-3 setups with the STRONGEST technical confluence. Focus on clarity - avoid ambiguous setups.`;
+Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than signal weak setups.`;
 }
 
 // GROK - Momentum Hunter (focuses on trend strength, breakouts, volume)
@@ -2032,17 +2691,22 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **ORDER BLOCK MOMENTUM**: Price breaking through order block with momentum = strong continuation signal
 6. **ICHIMOKU MOMENTUM**: STRONG_BULLISH or STRONG_BEARISH signals with TK cross = high momentum
 
-CRITICAL REQUIREMENTS:
+CRITICAL REQUIREMENTS (ALL must be met):
+- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade with the trend (no counter-trend trades)
 - Market Structure must show UPTREND for longs, DOWNTREND for shorts
 - Volume must be INCREASING or STABLE (never DECREASING)
 - Prefer symbols with high 24h change (momentum already present)
 - Entry should be on pullback to VWAP or EMA20, not at extended levels
+- **Stochastic RSI**: K value should be in momentum zone (40-60) or just exiting oversold/overbought
+
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory. No exceptions.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
 
-Select 1-3 setups with the STRONGEST momentum. Speed matters - capture moves early, exit if momentum fades.`;
+Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than chase weak momentum.`;
 }
 
 // Legacy function for backwards compatibility
@@ -2083,6 +2747,9 @@ async function runAiAnalysis() {
 
     // Fetch funding rates first (important for analysis)
     await fetchFundingRates();
+
+    // Fetch USDT Dominance for market sentiment
+    await fetchUSDTDominance();
 
     // Fetch social sentiment and liquidation data (if APIs are configured)
     await Promise.all([
@@ -2144,6 +2811,28 @@ async function runAiAnalysis() {
       const marketStructure = analyzeMarketStructure(candles);
       const marketRegime = detectMarketRegime(candles);
 
+      // NEW: Additional trend strength indicators
+      const adx = calculateADX(candles);
+      const stochRsi = calculateStochRSI(closes);
+      const supertrend = calculateSupertrend(candles);
+
+      // NEW: Fibonacci, Trend Structure, and Confluence
+      const fibonacci = calculateFibonacciLevels(candles);
+      const trendStructure = analyzeTrendStructure(candles);
+
+      // Build partial data for confluence scoring
+      const partialData = {
+        symbol: market.symbol,
+        trend,
+        rsi,
+        stochRsi,
+        adx,
+        supertrend,
+        fibonacci,
+        trendStructure
+      };
+      const confluence = calculateConfluenceScore(partialData);
+
       enrichedData.push({
         ...market,
         rsi,
@@ -2165,7 +2854,15 @@ async function runAiAnalysis() {
         pivotPoints,
         ichimoku,
         marketStructure,
-        marketRegime
+        marketRegime,
+        // Trend strength indicators
+        adx,
+        stochRsi,
+        supertrend,
+        // NEW: Fibonacci, Trend Structure, Confluence
+        fibonacci,
+        trendStructure,
+        confluence
       });
 
       await sleep(30); // Rate limiting
@@ -2236,10 +2933,10 @@ async function runAiAnalysis() {
       }
     }
 
-    // Helper function to check if two entry prices are within wiggle room (5%)
+    // Helper function to check if two entry prices are within wiggle room (2% - strict)
     const isEntryMatch = (entry1, entry2) => {
       const diff = Math.abs(entry1 - entry2) / Math.max(entry1, entry2) * 100;
-      return diff <= 5; // 5% wiggle room (relaxed from 2% for more signals)
+      return diff <= 2; // 2% wiggle room - tight agreement required for quality
     };
 
     // Collect all picks with their source
@@ -2290,15 +2987,29 @@ async function runAiAnalysis() {
         }
       }
 
-      // Only create signal if 2+ AIs agree
-      if (matchingPicks.length >= 2) {
-        const isGoldConsensus = matchingPicks.length >= 3;
-        const isSilverConsensus = matchingPicks.length === 2;
+      // Only create signal if ALL 3 AIs agree (Gold consensus only for quality)
+      if (matchingPicks.length >= 3) {
+        const isGoldConsensus = true; // Now we only accept Gold consensus
+        const isSilverConsensus = false; // No longer accepting silver consensus
         const symbol = matchingPicks[0].symbol;
         const direction = matchingPicks[0].direction;
 
         // Get market data for this symbol (for regime and MTF checks)
         const marketInfo = enrichedData.find(m => m.symbol === symbol);
+
+        // HARD FILTER: ADX must be >= 25 (strong trend required)
+        const adxValue = marketInfo?.adx?.adx || 0;
+        if (adxValue < 25) {
+          console.log(`⛔ ${symbol}: ADX ${adxValue} < 25 - Skipping (weak trend)`);
+          continue;
+        }
+
+        // HARD FILTER: Supertrend must confirm direction
+        const supertrendDir = marketInfo?.supertrend?.direction;
+        if ((direction === 'LONG' && supertrendDir !== 'UP') || (direction === 'SHORT' && supertrendDir !== 'DOWN')) {
+          console.log(`⛔ ${symbol}: Supertrend ${supertrendDir} conflicts with ${direction} - Skipping`);
+          continue;
+        }
 
         // MARKET CONDITIONS - Used for confidence adjustments
         const regime = marketInfo?.marketRegime || 'UNKNOWN';
