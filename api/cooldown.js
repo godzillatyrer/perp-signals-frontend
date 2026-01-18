@@ -100,10 +100,38 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
   };
 }
 
+// Clear cooldown for a specific symbol or all symbols
+async function clearCooldown(symbol = null) {
+  const r = getRedis();
+  if (!r) return { cleared: 0 };
+
+  try {
+    if (symbol) {
+      // Clear specific symbol
+      await r.del(`signal:${symbol}`);
+      return { cleared: 1, symbols: [symbol] };
+    } else {
+      // Clear all signal:* keys
+      // Note: This scans for keys with signal: prefix
+      const keys = await r.keys('signal:*');
+      if (keys && keys.length > 0) {
+        for (const key of keys) {
+          await r.del(key);
+        }
+        return { cleared: keys.length, symbols: keys.map(k => k.replace('signal:', '')) };
+      }
+      return { cleared: 0, symbols: [] };
+    }
+  } catch (e) {
+    console.error('Error clearing cooldown:', e.message);
+    return { cleared: 0, error: e.message };
+  }
+}
+
 export default async function handler(request, response) {
   // CORS headers
   response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (request.method === 'OPTIONS') {
@@ -172,6 +200,29 @@ export default async function handler(request, response) {
         direction,
         entry,
         timestamp: Date.now()
+      });
+    }
+
+    // DELETE - Clear cooldown history
+    if (request.method === 'DELETE') {
+      const { symbol, clearAll } = request.query;
+
+      // Safety check - require either a specific symbol or explicit clearAll=true
+      if (!symbol && clearAll !== 'true') {
+        return response.status(400).json({
+          success: false,
+          error: 'Specify symbol to clear, or use clearAll=true to clear all cooldowns'
+        });
+      }
+
+      const result = await clearCooldown(symbol || null);
+
+      return response.status(200).json({
+        success: true,
+        message: symbol
+          ? `Cleared cooldown for ${symbol}`
+          : `Cleared all ${result.cleared} cooldown records`,
+        ...result
       });
     }
 
