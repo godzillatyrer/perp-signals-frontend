@@ -234,6 +234,410 @@ function filterCorrelatedSignals(signals) {
 }
 
 // ============================================
+// TECHNICAL INDICATORS
+// ============================================
+
+function calculateRSI(closes, period = 14) {
+  if (closes.length < period + 1) return 50;
+
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = closes[i] - closes[i - 1];
+    if (change > 0) gains += change;
+    else losses -= change;
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (change < 0 ? -change : 0)) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+function calculateEMA(data, period) {
+  if (data.length < period) return data[data.length - 1] || 0;
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+function calculateMACD(closes) {
+  if (closes.length < 26) return { macd: 0, signal: 0, histogram: 0 };
+
+  const ema12 = calculateEMA(closes, 12);
+  const ema26 = calculateEMA(closes, 26);
+  const macd = ema12 - ema26;
+
+  const macdLine = [];
+  for (let i = 26; i <= closes.length; i++) {
+    const e12 = calculateEMA(closes.slice(0, i), 12);
+    const e26 = calculateEMA(closes.slice(0, i), 26);
+    macdLine.push(e12 - e26);
+  }
+
+  const signal = macdLine.length >= 9 ? calculateEMA(macdLine, 9) : macd;
+  return { macd, signal, histogram: macd - signal };
+}
+
+function calculateBollingerBands(closes, period = 20, stdDev = 2) {
+  if (closes.length < period) return { upper: 0, middle: 0, lower: 0 };
+
+  const slice = closes.slice(-period);
+  const middle = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((sum, val) => sum + Math.pow(val - middle, 2), 0) / period;
+  const std = Math.sqrt(variance);
+
+  return { upper: middle + std * stdDev, middle, lower: middle - std * stdDev };
+}
+
+function calculateATR(candles, period = 14) {
+  if (candles.length < period + 1) return 0;
+
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+  }
+
+  return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
+}
+
+// ADX - Average Directional Index (Trend Strength)
+// ADX > 25 = Strong trend, ADX < 20 = Weak/No trend
+function calculateADX(candles, period = 14) {
+  if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0, trend: 'WEAK' };
+
+  const plusDMs = [];
+  const minusDMs = [];
+  const trs = [];
+
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevHigh = candles[i - 1].high;
+    const prevLow = candles[i - 1].low;
+    const prevClose = candles[i - 1].close;
+
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+
+    const plusDM = high - prevHigh > prevLow - low ? Math.max(high - prevHigh, 0) : 0;
+    const minusDM = prevLow - low > high - prevHigh ? Math.max(prevLow - low, 0) : 0;
+    plusDMs.push(plusDM);
+    minusDMs.push(minusDM);
+  }
+
+  const smoothedTR = trs.slice(-period).reduce((a, b) => a + b, 0);
+  const smoothedPlusDM = plusDMs.slice(-period).reduce((a, b) => a + b, 0);
+  const smoothedMinusDM = minusDMs.slice(-period).reduce((a, b) => a + b, 0);
+
+  const plusDI = smoothedTR > 0 ? (smoothedPlusDM / smoothedTR) * 100 : 0;
+  const minusDI = smoothedTR > 0 ? (smoothedMinusDM / smoothedTR) * 100 : 0;
+
+  const diDiff = Math.abs(plusDI - minusDI);
+  const diSum = plusDI + minusDI;
+  const dx = diSum > 0 ? (diDiff / diSum) * 100 : 0;
+  const adx = dx;
+
+  let trend = 'WEAK';
+  if (adx >= 50) trend = 'VERY_STRONG';
+  else if (adx >= 25) trend = 'STRONG';
+  else if (adx >= 20) trend = 'MODERATE';
+
+  return { adx: Math.round(adx * 10) / 10, plusDI: Math.round(plusDI * 10) / 10, minusDI: Math.round(minusDI * 10) / 10, trend };
+}
+
+// Stochastic RSI - Better overbought/oversold than regular RSI
+function calculateStochRSI(closes, rsiPeriod = 14, stochPeriod = 14) {
+  if (closes.length < rsiPeriod + stochPeriod) return { k: 50, d: 50, signal: 'NEUTRAL' };
+
+  const rsiValues = [];
+  for (let i = rsiPeriod; i <= closes.length; i++) {
+    const slice = closes.slice(i - rsiPeriod - 1, i);
+    let gains = 0, losses = 0;
+    for (let j = 1; j < slice.length; j++) {
+      const change = slice[j] - slice[j - 1];
+      if (change > 0) gains += change;
+      else losses -= change;
+    }
+    const avgGain = gains / rsiPeriod;
+    const avgLoss = losses / rsiPeriod;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    rsiValues.push(100 - (100 / (1 + rs)));
+  }
+
+  if (rsiValues.length < stochPeriod) return { k: 50, d: 50, signal: 'NEUTRAL' };
+
+  const recentRSI = rsiValues.slice(-stochPeriod);
+  const minRSI = Math.min(...recentRSI);
+  const maxRSI = Math.max(...recentRSI);
+  const currentRSI = recentRSI[recentRSI.length - 1];
+
+  const stochRSI = maxRSI - minRSI > 0 ? ((currentRSI - minRSI) / (maxRSI - minRSI)) * 100 : 50;
+  const k = Math.round(stochRSI * 10) / 10;
+  const d = k;
+
+  let signal = 'NEUTRAL';
+  if (k <= 20) signal = 'OVERSOLD';
+  else if (k >= 80) signal = 'OVERBOUGHT';
+  else if (k > 50) signal = 'BULLISH';
+  else if (k < 50) signal = 'BEARISH';
+
+  return { k, d, signal };
+}
+
+// Supertrend - Clear trend direction indicator
+function calculateSupertrend(candles, period = 10, multiplier = 3) {
+  if (candles.length < period + 1) return { supertrend: 0, direction: 'NEUTRAL', signal: 'HOLD' };
+
+  const atr = calculateATR(candles, period);
+  const lastCandle = candles[candles.length - 1];
+  const hl2 = (lastCandle.high + lastCandle.low) / 2;
+
+  const upperBand = hl2 + (multiplier * atr);
+  const lowerBand = hl2 - (multiplier * atr);
+
+  const close = lastCandle.close;
+  const prevClose = candles[candles.length - 2]?.close || close;
+
+  let direction = 'UP';
+  let supertrend = lowerBand;
+
+  if (close < lowerBand) {
+    direction = 'DOWN';
+    supertrend = upperBand;
+  } else if (close > upperBand) {
+    direction = 'UP';
+    supertrend = lowerBand;
+  } else {
+    direction = prevClose > hl2 ? 'UP' : 'DOWN';
+    supertrend = direction === 'UP' ? lowerBand : upperBand;
+  }
+
+  let signal = 'HOLD';
+  if (direction === 'UP' && close > supertrend) signal = 'BUY';
+  else if (direction === 'DOWN' && close < supertrend) signal = 'SELL';
+
+  return { supertrend: Math.round(supertrend * 100) / 100, direction, signal };
+}
+
+// Fibonacci Retracement Levels
+function calculateFibonacciLevels(candles, lookback = 50) {
+  if (candles.length < lookback) return null;
+
+  const recent = candles.slice(-lookback);
+  let swingHigh = -Infinity, swingLow = Infinity;
+  let swingHighIdx = 0, swingLowIdx = 0;
+
+  for (let i = 0; i < recent.length; i++) {
+    if (recent[i].high > swingHigh) { swingHigh = recent[i].high; swingHighIdx = i; }
+    if (recent[i].low < swingLow) { swingLow = recent[i].low; swingLowIdx = i; }
+  }
+
+  const range = swingHigh - swingLow;
+  const currentPrice = recent[recent.length - 1].close;
+  const isUptrend = swingLowIdx < swingHighIdx;
+
+  let levels;
+  if (isUptrend) {
+    levels = {
+      '0%': swingHigh,
+      '23.6%': swingHigh - range * 0.236,
+      '38.2%': swingHigh - range * 0.382,
+      '50%': swingHigh - range * 0.5,
+      '61.8%': swingHigh - range * 0.618,
+      '78.6%': swingHigh - range * 0.786,
+      '100%': swingLow
+    };
+  } else {
+    levels = {
+      '0%': swingLow,
+      '23.6%': swingLow + range * 0.236,
+      '38.2%': swingLow + range * 0.382,
+      '50%': swingLow + range * 0.5,
+      '61.8%': swingLow + range * 0.618,
+      '78.6%': swingLow + range * 0.786,
+      '100%': swingHigh
+    };
+  }
+
+  // Find nearest level
+  const allLevels = Object.entries(levels).map(([name, price]) => ({ name, price }));
+  let nearestLevel = allLevels[0];
+  let minDist = Math.abs(currentPrice - allLevels[0].price);
+
+  for (const level of allLevels) {
+    const dist = Math.abs(currentPrice - level.price);
+    if (dist < minDist) { minDist = dist; nearestLevel = level; }
+  }
+
+  const atKeyLevel = (minDist / currentPrice * 100) < 1;
+
+  return {
+    swingHigh: Math.round(swingHigh * 100) / 100,
+    swingLow: Math.round(swingLow * 100) / 100,
+    isUptrend,
+    nearestLevel: nearestLevel.name,
+    atKeyLevel,
+    levels
+  };
+}
+
+// VWAP (Volume Weighted Average Price)
+function calculateVWAP(candles) {
+  if (!candles || candles.length < 10) return { vwap: 0, deviation: 0, pricePosition: 'NEUTRAL' };
+
+  let cumulativeTPV = 0;
+  let cumulativeVolume = 0;
+
+  for (const candle of candles) {
+    const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+    cumulativeTPV += typicalPrice * candle.volume;
+    cumulativeVolume += candle.volume;
+  }
+
+  const vwap = cumulativeTPV / cumulativeVolume;
+  const currentPrice = candles[candles.length - 1].close;
+  const deviation = ((currentPrice - vwap) / vwap) * 100;
+
+  return {
+    vwap,
+    deviation,
+    pricePosition: currentPrice > vwap ? 'ABOVE_VWAP' : 'BELOW_VWAP',
+    isExtended: Math.abs(deviation) > 3
+  };
+}
+
+// Ichimoku Cloud
+function calculateIchimoku(candles) {
+  if (!candles || candles.length < 52) return null;
+
+  const getHighLow = (data, period) => {
+    const slice = data.slice(-period);
+    return {
+      high: Math.max(...slice.map(c => c.high)),
+      low: Math.min(...slice.map(c => c.low))
+    };
+  };
+
+  const tenkan9 = getHighLow(candles, 9);
+  const tenkanSen = (tenkan9.high + tenkan9.low) / 2;
+
+  const kijun26 = getHighLow(candles, 26);
+  const kijunSen = (kijun26.high + kijun26.low) / 2;
+
+  const senkouSpanA = (tenkanSen + kijunSen) / 2;
+
+  const senkou52 = getHighLow(candles, 52);
+  const senkouSpanB = (senkou52.high + senkou52.low) / 2;
+
+  const currentPrice = candles[candles.length - 1].close;
+  const cloudTop = Math.max(senkouSpanA, senkouSpanB);
+  const cloudBottom = Math.min(senkouSpanA, senkouSpanB);
+  const cloudColor = senkouSpanA > senkouSpanB ? 'BULLISH' : 'BEARISH';
+
+  let signal = 'NEUTRAL';
+  if (currentPrice > cloudTop && tenkanSen > kijunSen) signal = 'STRONG_BULLISH';
+  else if (currentPrice > cloudTop) signal = 'BULLISH';
+  else if (currentPrice < cloudBottom && tenkanSen < kijunSen) signal = 'STRONG_BEARISH';
+  else if (currentPrice < cloudBottom) signal = 'BEARISH';
+  else signal = 'IN_CLOUD';
+
+  return { cloudColor, signal, tkCross: tenkanSen > kijunSen ? 'BULLISH_TK' : 'BEARISH_TK' };
+}
+
+// ============================================
+// FETCH CANDLESTICK DATA FOR INDICATORS
+// ============================================
+
+async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
+  try {
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const response = await fetchWithTimeout(url, {}, 8000);
+    const data = await response.json();
+
+    if (!Array.isArray(data)) return [];
+
+    return data.map(k => ({
+      time: k[0],
+      open: parseFloat(k[1]),
+      high: parseFloat(k[2]),
+      low: parseFloat(k[3]),
+      close: parseFloat(k[4]),
+      volume: parseFloat(k[5])
+    }));
+  } catch (e) {
+    console.log(`Failed to fetch candles for ${symbol}:`, e.message);
+    return [];
+  }
+}
+
+// Calculate all indicators for a symbol
+async function calculateIndicators(symbol) {
+  const candles = await fetchCandlesticks(symbol, '1h', 100);
+  if (candles.length < 50) {
+    console.log(`Insufficient candles for ${symbol}: ${candles.length}`);
+    return null;
+  }
+
+  const closes = candles.map(c => c.close);
+  const currentPrice = closes[closes.length - 1];
+
+  const rsi = calculateRSI(closes);
+  const ema20 = calculateEMA(closes, 20);
+  const ema50 = calculateEMA(closes, 50);
+  const ema200 = calculateEMA(closes, 200);
+  const macd = calculateMACD(closes);
+  const bollinger = calculateBollingerBands(closes);
+  const atr = calculateATR(candles);
+  const adx = calculateADX(candles);
+  const stochRsi = calculateStochRSI(closes);
+  const supertrend = calculateSupertrend(candles);
+  const fibonacci = calculateFibonacciLevels(candles);
+  const vwap = calculateVWAP(candles);
+  const ichimoku = calculateIchimoku(candles);
+
+  // Determine trend from EMAs
+  let trend = 'NEUTRAL';
+  if (currentPrice > ema20 && ema20 > ema50) trend = 'STRONG UPTREND';
+  else if (currentPrice > ema20) trend = 'WEAK UPTREND';
+  else if (currentPrice < ema20 && ema20 < ema50) trend = 'STRONG DOWNTREND';
+  else if (currentPrice < ema20) trend = 'WEAK DOWNTREND';
+
+  return {
+    symbol,
+    price: currentPrice,
+    rsi: Math.round(rsi * 10) / 10,
+    ema20: Math.round(ema20 * 100) / 100,
+    ema50: Math.round(ema50 * 100) / 100,
+    ema200: Math.round(ema200 * 100) / 100,
+    macd,
+    bollinger,
+    atr: Math.round(atr * 100) / 100,
+    adx,
+    stochRsi,
+    supertrend,
+    fibonacci,
+    vwap,
+    ichimoku,
+    trend
+  };
+}
+
+// ============================================
 // DYNAMIC TP/SL BASED ON VOLATILITY
 // ============================================
 
@@ -496,10 +900,15 @@ async function fetchMarketData() {
 // AI ANALYSIS
 // ============================================
 
-async function buildAnalysisPrompt(marketData) {
-  let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data and identify the BEST trading opportunities.
+async function buildAnalysisPrompt(marketData, indicatorData) {
+  let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data with TECHNICAL INDICATORS and identify the BEST trading opportunities.
 
-CURRENT MARKET DATA:
+CRITICAL REQUIREMENTS:
+- ADX must be >= 25 (strong trend required) - DO NOT signal weak trend coins
+- Supertrend must confirm direction (UP = longs only, DOWN = shorts only)
+- Stochastic RSI should support entry timing (OVERSOLD for longs, OVERBOUGHT for shorts)
+- Price position relative to VWAP and EMAs must align with trade direction
+
 `;
 
   // Add Discord community calls context
@@ -507,14 +916,17 @@ CURRENT MARKET DATA:
     const discordCalls = await getRecentCalls(100);
     if (discordCalls && discordCalls.length > 0) {
       const discordContext = formatCallsForAIContext(discordCalls);
-      prompt = prompt.replace('CURRENT MARKET DATA:', discordContext + '\nCURRENT MARKET DATA:');
+      prompt += discordContext + '\n';
     }
   } catch (e) {
     console.log('Could not fetch Discord calls context:', e.message);
   }
 
+  prompt += 'MARKET DATA WITH TECHNICAL INDICATORS:\n';
+
   for (const symbol of CONFIG.TOP_COINS) {
     const price = marketData.prices[symbol];
+    const indicators = indicatorData[symbol];
     if (!price) continue;
 
     prompt += `\n${symbol}:
@@ -532,21 +944,47 @@ CURRENT MARKET DATA:
     if (marketData.longShortRatio[symbol]) {
       prompt += `\n  Long/Short Ratio: ${marketData.longShortRatio[symbol].toFixed(2)}`;
     }
+
+    // Add technical indicators
+    if (indicators) {
+      prompt += `\n  --- TECHNICAL INDICATORS ---`;
+      prompt += `\n  Trend: ${indicators.trend}`;
+      prompt += `\n  RSI(14): ${indicators.rsi} ${indicators.rsi < 30 ? '🟢 OVERSOLD' : indicators.rsi > 70 ? '🔴 OVERBOUGHT' : ''}`;
+      prompt += `\n  StochRSI: ${indicators.stochRsi?.k} (${indicators.stochRsi?.signal})`;
+      prompt += `\n  ADX: ${indicators.adx?.adx} (${indicators.adx?.trend}) ${indicators.adx?.adx >= 25 ? '✅ STRONG TREND' : '⚠️ WEAK TREND - SKIP'}`;
+      prompt += `\n  +DI/-DI: ${indicators.adx?.plusDI}/${indicators.adx?.minusDI}`;
+      prompt += `\n  Supertrend: ${indicators.supertrend?.direction} (${indicators.supertrend?.signal})`;
+      prompt += `\n  EMAs: 20=${indicators.ema20} | 50=${indicators.ema50} | 200=${indicators.ema200}`;
+      prompt += `\n  MACD: ${indicators.macd?.histogram > 0 ? '📈 Bullish' : '📉 Bearish'} (Hist: ${indicators.macd?.histogram?.toFixed(2)})`;
+      prompt += `\n  Bollinger: Upper=${indicators.bollinger?.upper?.toFixed(2)} | Mid=${indicators.bollinger?.middle?.toFixed(2)} | Lower=${indicators.bollinger?.lower?.toFixed(2)}`;
+      prompt += `\n  ATR(14): ${indicators.atr}`;
+      if (indicators.vwap) {
+        prompt += `\n  VWAP: ${indicators.vwap.pricePosition} (${indicators.vwap.deviation?.toFixed(2)}% dev)${indicators.vwap.isExtended ? ' ⚠️ EXTENDED' : ''}`;
+      }
+      if (indicators.ichimoku) {
+        prompt += `\n  Ichimoku: ${indicators.ichimoku.signal} (${indicators.ichimoku.cloudColor} cloud)`;
+      }
+      if (indicators.fibonacci) {
+        prompt += `\n  Fibonacci: Near ${indicators.fibonacci.nearestLevel}${indicators.fibonacci.atKeyLevel ? ' ⚠️ AT KEY LEVEL' : ''} | Trend: ${indicators.fibonacci.isUptrend ? 'UP' : 'DOWN'}`;
+      }
+    }
   }
 
   prompt += `
 
+ANALYSIS RULES:
+1. **ADX MUST BE >= 25** - Skip ANY coin with ADX < 25 (no exceptions)
+2. **SUPERTREND MUST CONFIRM** - Supertrend UP = LONG only, Supertrend DOWN = SHORT only
+3. **CONFLUENCE REQUIRED** - Multiple indicators must align:
+   - For LONG: RSI < 50 (not overbought), MACD bullish, price above VWAP, Supertrend UP
+   - For SHORT: RSI > 50 (not oversold), MACD bearish, price below VWAP, Supertrend DOWN
+4. **ENTRY TIMING** - Use StochRSI: OVERSOLD for long entries, OVERBOUGHT for short entries
+5. **TREND ALIGNMENT** - EMAs should confirm direction (price > EMA20 > EMA50 for longs)
+
 TASK: Identify 1-3 highest conviction trade setups. For each, provide:
 1. Symbol, Direction (LONG/SHORT), Confidence (0-100%)
-2. Entry price, Stop Loss, Take Profit (with specific prices)
-3. Key reasons (2-3 bullet points)
-
-RULES:
-- Only signals with 80%+ confidence
-- Stop loss within 2-5% of entry
-- Take profit should give minimum 2:1 risk/reward
-- Consider funding rates (negative = shorts paying longs)
-- Consider OI changes and L/S ratio for sentiment
+2. Entry price, Stop Loss (use ATR for sizing), Take Profit
+3. Key indicator reasons (cite specific values)
 
 Respond in this exact JSON format:
 {
@@ -558,7 +996,7 @@ Respond in this exact JSON format:
       "entry": 65000,
       "stopLoss": 63500,
       "takeProfit": 68000,
-      "reasons": ["reason1", "reason2"]
+      "reasons": ["ADX 32 confirms strong trend", "Supertrend UP", "StochRSI oversold at 18"]
     }
   ]
 }`;
@@ -752,7 +1190,7 @@ async function sendTelegramMessage(message, inlineKeyboard = null) {
   }
 }
 
-function formatSignalForTelegram(signal, majorEvent = null) {
+function formatSignalForTelegram(signal, majorEvent = null, indicators = null) {
   const directionEmoji = signal.direction === 'LONG' ? '🚀' : '🔴';
   const consensusType = signal.isGoldConsensus ? '🥇 GOLD CONSENSUS' :
                         signal.isSilverConsensus ? '🥈 SILVER CONSENSUS' : '📊 CONSENSUS';
@@ -792,6 +1230,20 @@ function formatSignalForTelegram(signal, majorEvent = null) {
   message += `   Stop Loss: $${signal.stopLoss.toLocaleString()} (${riskPercent.toFixed(1)}%)\n`;
   message += `   Take Profit: $${signal.takeProfit.toLocaleString()} (${rewardPercent.toFixed(1)}%)\n`;
   message += `   R:R Ratio: 1:${riskReward}\n\n`;
+
+  // Add technical indicators summary
+  if (indicators) {
+    message += `📈 <b>Technical Indicators:</b>\n`;
+    message += `   ADX: ${indicators.adx?.adx} (${indicators.adx?.trend})\n`;
+    message += `   Supertrend: ${indicators.supertrend?.direction}\n`;
+    message += `   RSI: ${indicators.rsi} | StochRSI: ${indicators.stochRsi?.signal}\n`;
+    message += `   MACD: ${indicators.macd?.histogram > 0 ? 'Bullish' : 'Bearish'}\n`;
+    if (indicators.vwap) {
+      message += `   VWAP: ${indicators.vwap.pricePosition}\n`;
+    }
+    message += `\n`;
+  }
+
   message += `🤖 <b>AI Sources:</b> ${aiList}\n\n`;
 
   if (signal.reasons && signal.reasons.length > 0) {
@@ -858,8 +1310,19 @@ export default async function handler(request, response) {
       });
     }
 
-    // Build analysis prompt (now async to include Discord context)
-    const prompt = await buildAnalysisPrompt(marketData);
+    // Fetch technical indicators for all coins
+    console.log('📈 Calculating technical indicators...');
+    const indicatorData = {};
+    for (const symbol of CONFIG.TOP_COINS) {
+      const indicators = await calculateIndicators(symbol);
+      if (indicators) {
+        indicatorData[symbol] = indicators;
+        console.log(`  ${symbol}: ADX=${indicators.adx?.adx} Supertrend=${indicators.supertrend?.direction} RSI=${indicators.rsi}`);
+      }
+    }
+
+    // Build analysis prompt with indicator data
+    const prompt = await buildAnalysisPrompt(marketData, indicatorData);
 
     // Run AI analyses in parallel
     console.log('🤖 Running AI analysis...');
@@ -904,6 +1367,43 @@ export default async function handler(request, response) {
       console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
     }
 
+    // Filter by ADX >= 25 (strong trend required)
+    alertSignals = alertSignals.filter(signal => {
+      const indicators = indicatorData[signal.symbol];
+      if (!indicators || !indicators.adx) {
+        console.log(`⚠️ ${signal.symbol}: No indicator data - allowing signal`);
+        return true;
+      }
+      if (indicators.adx.adx < 25) {
+        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < 25 (weak trend) - BLOCKED`);
+        return false;
+      }
+      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= 25 (${indicators.adx.trend}) - OK`);
+      return true;
+    });
+    console.log(`📊 After ADX filter: ${alertSignals.length} signals`);
+
+    // Filter by Supertrend direction confirmation
+    alertSignals = alertSignals.filter(signal => {
+      const indicators = indicatorData[signal.symbol];
+      if (!indicators || !indicators.supertrend) {
+        console.log(`⚠️ ${signal.symbol}: No supertrend data - allowing signal`);
+        return true;
+      }
+      const supertrendDir = indicators.supertrend.direction;
+      if (signal.direction === 'LONG' && supertrendDir !== 'UP') {
+        console.log(`⛔ ${signal.symbol}: LONG signal but Supertrend is ${supertrendDir} - BLOCKED`);
+        return false;
+      }
+      if (signal.direction === 'SHORT' && supertrendDir !== 'DOWN') {
+        console.log(`⛔ ${signal.symbol}: SHORT signal but Supertrend is ${supertrendDir} - BLOCKED`);
+        return false;
+      }
+      console.log(`✅ ${signal.symbol}: ${signal.direction} confirmed by Supertrend ${supertrendDir} - OK`);
+      return true;
+    });
+    console.log(`🔄 After Supertrend filter: ${alertSignals.length} signals`);
+
     // Apply Redis-based cooldown filter (persistent across invocations)
     const cooldownChecks = await Promise.all(
       alertSignals.map(async signal => {
@@ -925,7 +1425,8 @@ export default async function handler(request, response) {
     // Send Telegram alerts with inline keyboards
     let alertsSent = 0;
     for (const signal of alertSignals) {
-      const message = formatSignalForTelegram(signal, majorEvent);
+      const indicators = indicatorData[signal.symbol];
+      const message = formatSignalForTelegram(signal, majorEvent, indicators);
       const keyboard = createTradeKeyboard(signal);
       const sent = await sendTelegramMessage(message, keyboard);
       if (sent) {
