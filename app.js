@@ -1,7 +1,10 @@
 /* ============================================
    SENTIENT TRADER - AI Crypto Trading Intelligence v3.1
-   Powered by Claude AI + ChatGPT
+   Powered by Claude AI + ChatGPT + Grok
    ============================================ */
+
+// Debug mode - set to true to see detailed API logs
+let DEBUG_MODE = true;
 
 // Configuration
 const CONFIG = {
@@ -11,7 +14,7 @@ const CONFIG = {
   // Claude API
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
   CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
-  CLAUDE_MODEL: 'claude-3-5-sonnet-20241022', // Model used for analysis
+  CLAUDE_MODEL: 'claude-opus-4-5-20250101', // Claude Opus 4.5
   // OpenAI API
   OPENAI_API: 'https://api.openai.com/v1/chat/completions',
   OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
@@ -19,7 +22,7 @@ const CONFIG = {
   // Grok API (xAI)
   GROK_API: 'https://api.x.ai/v1/chat/completions',
   GROK_API_KEY: '', // Will be loaded from localStorage or prompted
-  GROK_MODEL: 'grok-beta', // Using Grok for analysis
+  GROK_MODEL: 'grok-4-1-fast-reasoning', // Grok 4.1 fast reasoning
   // LunarCrush API (Social Sentiment)
   LUNARCRUSH_API: 'https://lunarcrush.com/api4/public',
   LUNARCRUSH_API_KEY: '', // Get free key at lunarcrush.com/developers
@@ -309,6 +312,11 @@ const state = {
     peakBalance: 2000
   },
   aiPredictions: [], // Track individual AI predictions for stats view
+  aiDebugStatus: {
+    claude: { status: 'idle', lastCall: null, lastError: null, callCount: 0, successCount: 0 },
+    openai: { status: 'idle', lastCall: null, lastError: null, callCount: 0, successCount: 0 },
+    grok: { status: 'idle', lastCall: null, lastError: null, callCount: 0, successCount: 0 }
+  },
   soundEnabled: true,
   notificationsEnabled: false
 };
@@ -1104,6 +1112,10 @@ function findSupportResistance(candles, lookback = 50) {
 // ============================================
 
 async function callClaudeAPI(prompt) {
+  const startTime = Date.now();
+  if (DEBUG_MODE) console.log(`🧠 [CLAUDE] Starting API call with model: ${CONFIG.CLAUDE_MODEL}`);
+  updateAiDebugStatus('claude', 'calling');
+
   try {
     const response = await fetch(CONFIG.CLAUDE_API, {
       method: 'POST',
@@ -1115,25 +1127,36 @@ async function callClaudeAPI(prompt) {
       },
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
-        max_tokens: 2048,
+        max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }]
       })
     });
 
+    const elapsed = Date.now() - startTime;
+
     if (!response.ok) {
-      console.error('Claude API error:', response.status);
+      const errorText = await response.text();
+      console.error(`🧠 [CLAUDE] API error ${response.status}: ${errorText}`);
+      updateAiDebugStatus('claude', 'error', `HTTP ${response.status}`);
       return null;
     }
 
     const data = await response.json();
+    if (DEBUG_MODE) console.log(`🧠 [CLAUDE] Success in ${elapsed}ms - Response length: ${data.content?.[0]?.text?.length || 0} chars`);
+    updateAiDebugStatus('claude', 'success', `${elapsed}ms`);
     return data.content[0].text;
   } catch (error) {
-    console.error('Claude API call failed:', error);
+    console.error('🧠 [CLAUDE] API call failed:', error.message);
+    updateAiDebugStatus('claude', 'error', error.message);
     return null;
   }
 }
 
 async function callOpenAIAPI(prompt) {
+  const startTime = Date.now();
+  if (DEBUG_MODE) console.log(`🤖 [OPENAI] Starting API call with model: ${CONFIG.OPENAI_MODEL}`);
+  updateAiDebugStatus('openai', 'calling');
+
   try {
     const response = await fetch(CONFIG.OPENAI_API, {
       method: 'POST',
@@ -1143,7 +1166,7 @@ async function callOpenAIAPI(prompt) {
       },
       body: JSON.stringify({
         model: CONFIG.OPENAI_MODEL,
-        max_tokens: 2048,
+        max_tokens: 4096,
         messages: [
           {
             role: 'system',
@@ -1155,20 +1178,31 @@ async function callOpenAIAPI(prompt) {
       })
     });
 
+    const elapsed = Date.now() - startTime;
+
     if (!response.ok) {
-      console.error('OpenAI API error:', response.status);
+      const errorText = await response.text();
+      console.error(`🤖 [OPENAI] API error ${response.status}: ${errorText}`);
+      updateAiDebugStatus('openai', 'error', `HTTP ${response.status}`);
       return null;
     }
 
     const data = await response.json();
+    if (DEBUG_MODE) console.log(`🤖 [OPENAI] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
+    updateAiDebugStatus('openai', 'success', `${elapsed}ms`);
     return data.choices[0].message.content;
   } catch (error) {
-    console.error('OpenAI API call failed:', error);
+    console.error('🤖 [OPENAI] API call failed:', error.message);
+    updateAiDebugStatus('openai', 'error', error.message);
     return null;
   }
 }
 
 async function callGrokAPI(prompt) {
+  const startTime = Date.now();
+  if (DEBUG_MODE) console.log(`⚡ [GROK] Starting API call with model: ${CONFIG.GROK_MODEL}`);
+  updateAiDebugStatus('grok', 'calling');
+
   try {
     const response = await fetch(CONFIG.GROK_API, {
       method: 'POST',
@@ -1178,7 +1212,7 @@ async function callGrokAPI(prompt) {
       },
       body: JSON.stringify({
         model: CONFIG.GROK_MODEL,
-        max_tokens: 2048,
+        max_tokens: 4096,
         messages: [
           {
             role: 'system',
@@ -1190,15 +1224,22 @@ async function callGrokAPI(prompt) {
       })
     });
 
+    const elapsed = Date.now() - startTime;
+
     if (!response.ok) {
-      console.error('Grok API error:', response.status);
+      const errorText = await response.text();
+      console.error(`⚡ [GROK] API error ${response.status}: ${errorText}`);
+      updateAiDebugStatus('grok', 'error', `HTTP ${response.status}`);
       return null;
     }
 
     const data = await response.json();
+    if (DEBUG_MODE) console.log(`⚡ [GROK] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
+    updateAiDebugStatus('grok', 'success', `${elapsed}ms`);
     return data.choices[0].message.content;
   } catch (error) {
-    console.error('Grok API call failed:', error);
+    console.error('⚡ [GROK] API call failed:', error.message);
+    updateAiDebugStatus('grok', 'error', error.message);
     return null;
   }
 }
@@ -3128,6 +3169,144 @@ function renderAiPredictions() {
 }
 
 // ============================================
+// AI DEBUG STATUS
+// ============================================
+
+function updateAiDebugStatus(ai, status, detail = null) {
+  if (!state.aiDebugStatus[ai]) return;
+
+  const debug = state.aiDebugStatus[ai];
+  debug.status = status;
+  debug.lastCall = Date.now();
+
+  if (status === 'calling') {
+    debug.callCount++;
+  } else if (status === 'success') {
+    debug.successCount++;
+    debug.lastError = null;
+  } else if (status === 'error') {
+    debug.lastError = detail;
+  }
+
+  // Update the debug panel if visible
+  renderDebugPanel();
+}
+
+function renderDebugPanel() {
+  const container = document.getElementById('debugPanel');
+  if (!container) return;
+
+  const getStatusIcon = (status) => {
+    switch(status) {
+      case 'calling': return '🔄';
+      case 'success': return '✅';
+      case 'error': return '❌';
+      default: return '⏸️';
+    }
+  };
+
+  const getStatusClass = (status) => {
+    switch(status) {
+      case 'calling': return 'calling';
+      case 'success': return 'success';
+      case 'error': return 'error';
+      default: return 'idle';
+    }
+  };
+
+  const formatTime = (timestamp) => {
+    if (!timestamp) return 'Never';
+    const diff = (Date.now() - timestamp) / 1000;
+    if (diff < 60) return `${Math.floor(diff)}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  };
+
+  container.innerHTML = `
+    <div class="debug-header">
+      <span class="debug-title">🔧 AI Debug Status</span>
+      <button class="debug-close" onclick="toggleDebugPanel()">×</button>
+    </div>
+    <div class="debug-body">
+      ${['claude', 'openai', 'grok'].map(ai => {
+        const d = state.aiDebugStatus[ai];
+        const configured = ai === 'claude' ? isClaudeConfigured() :
+                          ai === 'openai' ? isOpenAIConfigured() : isGrokConfigured();
+        const model = ai === 'claude' ? CONFIG.CLAUDE_MODEL :
+                      ai === 'openai' ? CONFIG.OPENAI_MODEL : CONFIG.GROK_MODEL;
+        const icon = ai === 'claude' ? '🧠' : ai === 'openai' ? '🤖' : '⚡';
+
+        return `
+          <div class="debug-ai ${getStatusClass(d.status)} ${configured ? '' : 'not-configured'}">
+            <div class="debug-ai-header">
+              <span class="debug-ai-icon">${icon}</span>
+              <span class="debug-ai-name">${ai.toUpperCase()}</span>
+              <span class="debug-ai-status">${getStatusIcon(d.status)}</span>
+            </div>
+            <div class="debug-ai-details">
+              <div class="debug-row">
+                <span class="debug-label">Configured:</span>
+                <span class="debug-value ${configured ? 'yes' : 'no'}">${configured ? 'Yes' : 'No'}</span>
+              </div>
+              <div class="debug-row">
+                <span class="debug-label">Model:</span>
+                <span class="debug-value model">${model}</span>
+              </div>
+              <div class="debug-row">
+                <span class="debug-label">Calls:</span>
+                <span class="debug-value">${d.callCount} (${d.successCount} success)</span>
+              </div>
+              <div class="debug-row">
+                <span class="debug-label">Last Call:</span>
+                <span class="debug-value">${formatTime(d.lastCall)}</span>
+              </div>
+              ${d.lastError ? `
+              <div class="debug-row error">
+                <span class="debug-label">Last Error:</span>
+                <span class="debug-value error">${d.lastError}</span>
+              </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+    <div class="debug-footer">
+      <span>Debug mode: ${DEBUG_MODE ? 'ON' : 'OFF'}</span>
+      <button class="debug-btn" onclick="window.forceAiScan()">Force Scan Now</button>
+    </div>
+  `;
+}
+
+function toggleDebugPanel() {
+  const panel = document.getElementById('debugPanel');
+  if (panel) {
+    panel.classList.toggle('visible');
+    if (panel.classList.contains('visible')) {
+      renderDebugPanel();
+    }
+  }
+}
+
+// Expose debug functions globally
+window.toggleDebug = () => {
+  DEBUG_MODE = !DEBUG_MODE;
+  console.log(`🔧 Debug mode: ${DEBUG_MODE ? 'ON' : 'OFF'}`);
+};
+
+window.forceAiScan = () => {
+  console.log('🔧 Forcing AI scan...');
+  runAiAnalysis();
+};
+
+window.showAiStatus = () => {
+  console.log('🔧 AI Debug Status:');
+  console.log('Claude:', state.aiDebugStatus.claude);
+  console.log('OpenAI:', state.aiDebugStatus.openai);
+  console.log('Grok:', state.aiDebugStatus.grok);
+};
+
+// ============================================
 // TRADE JOURNAL EXPORT
 // ============================================
 
@@ -3795,6 +3974,9 @@ function initEventListeners() {
   // Export buttons
   document.getElementById('exportCsvBtn')?.addEventListener('click', exportToCSV);
   document.getElementById('exportJsonBtn')?.addEventListener('click', exportToJSON);
+
+  // Debug panel
+  document.getElementById('debugBtn')?.addEventListener('click', toggleDebugPanel);
 }
 
 // ============================================
