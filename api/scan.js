@@ -1,19 +1,25 @@
 // Vercel Serverless Function for AI Signal Scanning
 // Runs on cron schedule and sends Telegram alerts
+//
+// NOTE: For proper cooldown tracking across serverless invocations,
+// set up Vercel KV (Dashboard > Storage > Create KV Database).
+// Without Vercel KV, cooldown tracking is limited.
 
 const CONFIG = {
-  // Minimum confidence for alerts (lowered from 85% to 75%)
-  ALERT_CONFIDENCE: 75,
+  // Minimum confidence for alerts - STRICT (raised to 85%)
+  ALERT_CONFIDENCE: 85,
   // Minimum TP percentages by market cap
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
   MIN_TP_PERCENT_MID_CAP: 7,
   // Top coins to analyze
   TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
-  // Signal cooldown in hours (don't repeat same signal within this time)
-  SIGNAL_COOLDOWN_HOURS: 4,
-  // Price move % that overrides cooldown (if price moved this much, allow new signal)
-  PRICE_MOVE_OVERRIDE_PERCENT: 5,
+  // Signal cooldown in hours - EXTENDED to 24 hours (one signal per coin per day)
+  SIGNAL_COOLDOWN_HOURS: 24,
+  // Price move % that overrides cooldown - INCREASED to 10%
+  PRICE_MOVE_OVERRIDE_PERCENT: 10,
+  // Minimum price change to even consider a signal (blocks tiny entry updates)
+  MIN_PRICE_CHANGE_PERCENT: 2,
   // Correlation groups (don't send multiple signals from same group)
   CORRELATION_GROUPS: {
     'LAYER1': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AVAXUSDT', 'DOTUSDT'],
@@ -22,7 +28,9 @@ const CONFIG = {
     'EXCHANGE': ['BNBUSDT']
   },
   // Max signals per correlation group per scan
-  MAX_SIGNALS_PER_GROUP: 1
+  MAX_SIGNALS_PER_GROUP: 1,
+  // GOLD CONSENSUS ONLY - require all 3 AIs to agree
+  REQUIRE_GOLD_CONSENSUS: true
 };
 
 // ============================================
