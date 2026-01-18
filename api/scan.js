@@ -9,8 +9,213 @@ const CONFIG = {
   MIN_TP_PERCENT_LARGE_CAP: 5,
   MIN_TP_PERCENT_MID_CAP: 7,
   // Top coins to analyze
-  TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT']
+  TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
+  // Signal cooldown in hours (don't repeat same signal within this time)
+  SIGNAL_COOLDOWN_HOURS: 4,
+  // Correlation groups (don't send multiple signals from same group)
+  CORRELATION_GROUPS: {
+    'LAYER1': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AVAXUSDT', 'DOTUSDT'],
+    'MEME': ['DOGEUSDT'],
+    'DEFI': ['LINKUSDT', 'ADAUSDT'],
+    'EXCHANGE': ['BNBUSDT']
+  },
+  // Max signals per correlation group per scan
+  MAX_SIGNALS_PER_GROUP: 1
 };
+
+// ============================================
+// ECONOMIC CALENDAR - Major Events to Avoid
+// ============================================
+
+const MAJOR_EVENTS_2025 = [
+  // FOMC Meetings (Federal Reserve)
+  { date: '2025-01-29', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-03-19', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-05-07', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-06-18', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-07-30', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-09-17', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-11-05', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2025-12-17', name: 'FOMC Meeting', type: 'FOMC' },
+  // CPI Releases (usually 8:30 AM ET)
+  { date: '2025-01-15', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-02-12', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-03-12', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-04-10', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-05-13', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-06-11', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-07-11', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-08-13', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-09-10', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-10-10', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-11-13', name: 'CPI Release', type: 'CPI' },
+  { date: '2025-12-10', name: 'CPI Release', type: 'CPI' },
+  // NFP (Non-Farm Payrolls) - First Friday of each month
+  { date: '2025-01-10', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-02-07', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-03-07', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-04-04', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-05-02', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-06-06', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-07-03', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-08-01', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-09-05', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-10-03', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-11-07', name: 'NFP Release', type: 'NFP' },
+  { date: '2025-12-05', name: 'NFP Release', type: 'NFP' },
+  // 2026 events
+  { date: '2026-01-14', name: 'CPI Release', type: 'CPI' },
+  { date: '2026-01-28', name: 'FOMC Meeting', type: 'FOMC' },
+  { date: '2026-01-09', name: 'NFP Release', type: 'NFP' },
+];
+
+// Check if today is a major economic event day
+function isMajorEventDay() {
+  const today = new Date().toISOString().split('T')[0];
+  const event = MAJOR_EVENTS_2025.find(e => e.date === today);
+  if (event) {
+    console.log(`⚠️ Major event today: ${event.name}`);
+    return event;
+  }
+  return null;
+}
+
+// ============================================
+// SIGNAL COOLDOWN (using Telegram history)
+// ============================================
+
+async function getRecentTelegramMessages() {
+  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
+    return [];
+  }
+
+  try {
+    // Get recent messages from the chat to check for duplicates
+    const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getUpdates?limit=50`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.ok && data.result) {
+      const messages = data.result
+        .filter(u => u.message && u.message.text)
+        .map(u => ({
+          text: u.message.text,
+          date: new Date(u.message.date * 1000)
+        }));
+      return messages;
+    }
+  } catch (error) {
+    console.log('Could not fetch Telegram history:', error.message);
+  }
+  return [];
+}
+
+function isSignalOnCooldown(symbol, direction, recentMessages) {
+  const cooldownMs = CONFIG.SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
+  const cutoffTime = new Date(Date.now() - cooldownMs);
+
+  // Check if we sent a similar signal recently
+  for (const msg of recentMessages) {
+    if (msg.date < cutoffTime) continue;
+
+    // Check if message contains this symbol and direction
+    if (msg.text.includes(symbol) && msg.text.includes(direction)) {
+      console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${Math.round((Date.now() - msg.date.getTime()) / 60000)} min ago)`);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ============================================
+// CORRELATION CHECK
+// ============================================
+
+function getCorrelationGroup(symbol) {
+  for (const [group, symbols] of Object.entries(CONFIG.CORRELATION_GROUPS)) {
+    if (symbols.includes(symbol)) {
+      return group;
+    }
+  }
+  return symbol; // If not in a group, use symbol as its own group
+}
+
+function filterCorrelatedSignals(signals) {
+  const groupCounts = {};
+  const filtered = [];
+
+  // Sort by confidence (highest first)
+  const sorted = [...signals].sort((a, b) => b.confidence - a.confidence);
+
+  for (const signal of sorted) {
+    const group = getCorrelationGroup(signal.symbol);
+    const groupKey = `${group}_${signal.direction}`;
+
+    if (!groupCounts[groupKey]) {
+      groupCounts[groupKey] = 0;
+    }
+
+    if (groupCounts[groupKey] < CONFIG.MAX_SIGNALS_PER_GROUP) {
+      filtered.push(signal);
+      groupCounts[groupKey]++;
+    } else {
+      console.log(`🔗 Filtered ${signal.symbol} ${signal.direction} - Already have signal from ${group} group`);
+    }
+  }
+
+  return filtered;
+}
+
+// ============================================
+// DYNAMIC TP/SL BASED ON VOLATILITY
+// ============================================
+
+function calculateVolatility(priceData) {
+  // Calculate volatility as (high - low) / price * 100
+  const volatility = ((priceData.high24h - priceData.low24h) / priceData.price) * 100;
+  return volatility;
+}
+
+function adjustTPSLForVolatility(signal, marketData) {
+  const priceData = marketData.prices[signal.symbol];
+  if (!priceData) return signal;
+
+  const volatility = calculateVolatility(priceData);
+  const adjustedSignal = { ...signal };
+
+  // Volatility multiplier: high volatility = wider TP/SL
+  // Normal volatility ~3-5%, high >7%, low <2%
+  let multiplier = 1;
+  if (volatility > 7) {
+    multiplier = 1.3; // Widen by 30%
+    adjustedSignal.volatilityNote = 'High volatility - widened TP/SL';
+  } else if (volatility > 5) {
+    multiplier = 1.15; // Widen by 15%
+    adjustedSignal.volatilityNote = 'Moderate volatility';
+  } else if (volatility < 2) {
+    multiplier = 0.85; // Tighten by 15%
+    adjustedSignal.volatilityNote = 'Low volatility - tightened TP/SL';
+  }
+
+  // Adjust TP and SL based on direction
+  const entryPrice = signal.entry;
+  const originalTPDist = Math.abs(signal.takeProfit - entryPrice);
+  const originalSLDist = Math.abs(signal.stopLoss - entryPrice);
+
+  if (signal.direction === 'LONG') {
+    adjustedSignal.takeProfit = entryPrice + (originalTPDist * multiplier);
+    adjustedSignal.stopLoss = entryPrice - (originalSLDist * multiplier);
+  } else {
+    adjustedSignal.takeProfit = entryPrice - (originalTPDist * multiplier);
+    adjustedSignal.stopLoss = entryPrice + (originalSLDist * multiplier);
+  }
+
+  adjustedSignal.volatility = volatility.toFixed(1);
+
+  console.log(`📊 ${signal.symbol} volatility: ${volatility.toFixed(1)}% (multiplier: ${multiplier}x)`);
+
+  return adjustedSignal;
+}
 
 // ============================================
 // MARKET DATA FETCHING
@@ -431,7 +636,7 @@ function findConsensusSignals(analyses) {
 // TELEGRAM
 // ============================================
 
-async function sendTelegramMessage(message) {
+async function sendTelegramMessage(message, inlineKeyboard = null) {
   if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
     console.log('Telegram not configured');
     return false;
@@ -439,15 +644,22 @@ async function sendTelegramMessage(message) {
 
   try {
     const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const body = {
+      chat_id: process.env.TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    };
+
+    // Add inline keyboard if provided
+    if (inlineKeyboard) {
+      body.reply_markup = { inline_keyboard: inlineKeyboard };
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
-      })
+      body: JSON.stringify(body)
     });
 
     const data = await response.json();
@@ -462,7 +674,7 @@ async function sendTelegramMessage(message) {
   }
 }
 
-function formatSignalForTelegram(signal) {
+function formatSignalForTelegram(signal, majorEvent = null) {
   const directionEmoji = signal.direction === 'LONG' ? '🚀' : '🔴';
   const consensusType = signal.isGoldConsensus ? '🥇 GOLD CONSENSUS' :
                         signal.isSilverConsensus ? '🥈 SILVER CONSENSUS' : '📊 CONSENSUS';
@@ -480,8 +692,24 @@ function formatSignalForTelegram(signal) {
 
   let message = `${directionEmoji} <b>${signal.direction} ${signal.symbol}</b>\n`;
   message += `${consensusType}\n\n`;
-  message += `📊 <b>Confidence:</b> ${signal.confidence}%\n\n`;
-  message += `💰 <b>Trade Setup:</b>\n`;
+
+  // Add warning if major event day
+  if (majorEvent) {
+    message += `⚠️ <b>CAUTION:</b> ${majorEvent.name} today!\n\n`;
+  }
+
+  message += `📊 <b>Confidence:</b> ${signal.confidence}%\n`;
+
+  // Add volatility info if available
+  if (signal.volatility) {
+    message += `📈 <b>Volatility:</b> ${signal.volatility}%`;
+    if (signal.volatilityNote) {
+      message += ` (${signal.volatilityNote})`;
+    }
+    message += `\n`;
+  }
+
+  message += `\n💰 <b>Trade Setup:</b>\n`;
   message += `   Entry: $${signal.entry.toLocaleString()}\n`;
   message += `   Stop Loss: $${signal.stopLoss.toLocaleString()} (${riskPercent.toFixed(1)}%)\n`;
   message += `   Take Profit: $${signal.takeProfit.toLocaleString()} (${rewardPercent.toFixed(1)}%)\n`;
@@ -500,6 +728,18 @@ function formatSignalForTelegram(signal) {
   return message;
 }
 
+// Create inline keyboard for trade tracking
+function createTradeKeyboard(signal) {
+  const signalId = `${signal.symbol}_${signal.direction}_${Date.now()}`;
+  return [
+    [
+      { text: '✅ Win', callback_data: `win_${signalId}` },
+      { text: '❌ Loss', callback_data: `loss_${signalId}` },
+      { text: '⏭️ Skip', callback_data: `skip_${signalId}` }
+    ]
+  ];
+}
+
 // ============================================
 // MAIN HANDLER
 // ============================================
@@ -508,6 +748,12 @@ export default async function handler(request, response) {
   console.log('🔄 Starting AI scan...');
 
   try {
+    // Check for major economic events
+    const majorEvent = isMajorEventDay();
+    if (majorEvent) {
+      console.log(`⚠️ Major event day: ${majorEvent.name} - Signals will include warning`);
+    }
+
     // Check if we have at least 2 AI APIs configured
     const aiCount = [
       process.env.CLAUDE_API_KEY,
@@ -534,6 +780,10 @@ export default async function handler(request, response) {
       });
     }
 
+    // Get recent Telegram messages for cooldown check
+    const recentMessages = await getRecentTelegramMessages();
+    console.log(`📨 Fetched ${recentMessages.length} recent messages for cooldown check`);
+
     // Build analysis prompt
     const prompt = buildAnalysisPrompt(marketData);
 
@@ -553,7 +803,7 @@ export default async function handler(request, response) {
     console.log(`🎯 Found ${consensusSignals.length} consensus signals`);
 
     // Filter by confidence and TP%
-    const alertSignals = consensusSignals.filter(signal => {
+    let alertSignals = consensusSignals.filter(signal => {
       if (signal.confidence < CONFIG.ALERT_CONFIDENCE) return false;
 
       const tpPercent = Math.abs((signal.takeProfit - signal.entry) / signal.entry * 100);
@@ -568,11 +818,25 @@ export default async function handler(request, response) {
       return tpPercent >= minTP;
     });
 
-    // Send Telegram alerts
+    // Apply cooldown filter
+    alertSignals = alertSignals.filter(signal => {
+      return !isSignalOnCooldown(signal.symbol, signal.direction, recentMessages);
+    });
+    console.log(`⏱️ After cooldown filter: ${alertSignals.length} signals`);
+
+    // Apply correlation filter (don't send multiple signals from same group)
+    alertSignals = filterCorrelatedSignals(alertSignals);
+    console.log(`🔗 After correlation filter: ${alertSignals.length} signals`);
+
+    // Adjust TP/SL based on volatility
+    alertSignals = alertSignals.map(signal => adjustTPSLForVolatility(signal, marketData));
+
+    // Send Telegram alerts with inline keyboards
     let alertsSent = 0;
     for (const signal of alertSignals) {
-      const message = formatSignalForTelegram(signal);
-      const sent = await sendTelegramMessage(message);
+      const message = formatSignalForTelegram(signal, majorEvent);
+      const keyboard = createTradeKeyboard(signal);
+      const sent = await sendTelegramMessage(message, keyboard);
       if (sent) alertsSent++;
     }
 

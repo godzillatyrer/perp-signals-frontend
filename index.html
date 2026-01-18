@@ -267,6 +267,8 @@
         <button class="signal-tab active" data-signal-tab="new">NEW</button>
         <button class="signal-tab" data-signal-tab="all">ALL</button>
         <button class="signal-tab" data-signal-tab="data">💧 DATA</button>
+        <button class="signal-tab" data-signal-tab="news">📰 NEWS</button>
+        <button class="signal-tab" data-signal-tab="calendar">📅 EVENTS</button>
         <button class="signal-tab" data-signal-tab="stats">📊 AI STATS</button>
       </div>
 
@@ -456,6 +458,90 @@
           </div>
           <div class="ai-predictions-list" id="aiPredictionsList">
             <div class="empty-state">No predictions recorded yet</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- News View -->
+      <div class="sidebar-view" id="newsView">
+        <div class="data-section">
+          <div class="data-header">
+            <div class="data-title-wrap">
+              <span class="data-title">📰 Crypto News</span>
+              <span class="data-subtitle">Latest market-moving news</span>
+            </div>
+            <button class="refresh-btn" id="refreshNewsBtn" title="Refresh news">🔄</button>
+          </div>
+
+          <!-- High Priority News Section -->
+          <div class="news-priority-section">
+            <div class="priority-header">
+              <span class="priority-badge high">🔥 HIGH IMPACT</span>
+              <span class="priority-desc">AI-analyzed market movers</span>
+            </div>
+            <div class="news-priority-list" id="highPriorityNews">
+              <div class="empty-state">Analyzing news for high-impact events...</div>
+            </div>
+          </div>
+
+          <!-- All News Section -->
+          <div class="news-all-section">
+            <div class="news-filter-bar">
+              <button class="news-filter active" data-news-filter="all">All</button>
+              <button class="news-filter" data-news-filter="bullish">🟢 Bullish</button>
+              <button class="news-filter" data-news-filter="bearish">🔴 Bearish</button>
+            </div>
+            <div class="news-list" id="newsList">
+              <div class="empty-state">Loading crypto news...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Calendar View -->
+      <div class="sidebar-view" id="calendarView">
+        <div class="data-section">
+          <div class="data-header">
+            <div class="data-title-wrap">
+              <span class="data-title">📅 Economic Calendar</span>
+              <span class="data-subtitle">Major events that move markets</span>
+            </div>
+          </div>
+
+          <!-- Upcoming Events -->
+          <div class="calendar-section">
+            <div class="calendar-section-header">
+              <span class="calendar-badge upcoming">⏰ UPCOMING</span>
+            </div>
+            <div class="calendar-list" id="upcomingEvents">
+              <div class="empty-state">Loading economic events...</div>
+            </div>
+          </div>
+
+          <!-- Event Types Legend -->
+          <div class="calendar-legend">
+            <div class="legend-row">
+              <span class="event-type fomc">FOMC</span>
+              <span class="legend-text">Federal Reserve meetings - High volatility</span>
+            </div>
+            <div class="legend-row">
+              <span class="event-type cpi">CPI</span>
+              <span class="legend-text">Inflation data - Major price moves</span>
+            </div>
+            <div class="legend-row">
+              <span class="event-type nfp">NFP</span>
+              <span class="legend-text">Jobs report - Market sentiment shift</span>
+            </div>
+          </div>
+
+          <!-- Past Events (Last 7 Days) -->
+          <div class="calendar-section">
+            <div class="calendar-section-header">
+              <span class="calendar-badge past">📜 RECENT</span>
+            </div>
+            <div class="calendar-list" id="pastEvents">
+              <div class="empty-state">No recent events</div>
+            </div>
           </div>
         </div>
       </div>

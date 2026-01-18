@@ -231,6 +231,24 @@ Your bot is properly configured and ready to receive trading signals.
   return await sendTelegramMessage(testMessage.trim());
 }
 
+// Manual send signal to Telegram (bypasses enabled/confidence checks)
+async function sendSignalToTelegramManual(signal) {
+  // Check if Telegram is configured (but not necessarily enabled)
+  if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
+    alert('⚠️ Telegram not configured!\n\nPlease go to Settings and add your:\n• Telegram Bot Token\n• Telegram Chat ID');
+    return false;
+  }
+
+  const message = formatSignalForTelegram(signal);
+  const success = await sendTelegramMessage(message);
+
+  if (success) {
+    console.log(`📤 Manually sent ${signal.symbol} signal to Telegram`);
+  }
+
+  return success;
+}
+
 // Prompt for API keys
 function promptForApiKeys() {
   // Claude API Key
@@ -3750,14 +3768,17 @@ function renderSignals() {
           <div class="label">Status</div>
           <div class="value ${hasOpenTrade ? 'green' : signal.isGoldConsensus ? 'gold' : signal.isSilverConsensus ? 'silver' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isGoldConsensus ? '🥇 Gold' : signal.isSilverConsensus ? '🥈 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
         </div>
+        <button class="telegram-send-btn" data-symbol="${signal.symbol}" data-direction="${signal.direction}" title="Send to Telegram">
+          📤 Telegram
+        </button>
       </div>
     </div>
   `}).join('');
 
   container.querySelectorAll('.signal-card').forEach(el => {
     el.addEventListener('click', (e) => {
-      // Don't navigate if clicking the trade button
-      if (e.target.classList.contains('take-trade-btn')) return;
+      // Don't navigate if clicking buttons
+      if (e.target.classList.contains('take-trade-btn') || e.target.classList.contains('telegram-send-btn')) return;
       selectMarket(el.dataset.symbol);
     });
   });
@@ -3774,6 +3795,39 @@ function renderSignals() {
         btn.textContent = '✓ Opened';
         btn.disabled = true;
         btn.classList.add('traded');
+      }
+    });
+  });
+
+  // Manual Telegram send button handlers
+  container.querySelectorAll('.telegram-send-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const symbol = btn.dataset.symbol;
+      const direction = btn.dataset.direction;
+      const signal = signals.find(s => s.symbol === symbol && s.direction === direction);
+
+      if (signal) {
+        btn.disabled = true;
+        btn.textContent = '📤 Sending...';
+
+        const success = await sendSignalToTelegramManual(signal);
+
+        if (success) {
+          btn.textContent = '✅ Sent!';
+          btn.classList.add('sent');
+          setTimeout(() => {
+            btn.textContent = '📤 Telegram';
+            btn.disabled = false;
+            btn.classList.remove('sent');
+          }, 3000);
+        } else {
+          btn.textContent = '❌ Failed';
+          setTimeout(() => {
+            btn.textContent = '📤 Telegram';
+            btn.disabled = false;
+          }, 2000);
+        }
       }
     });
   });
@@ -3982,6 +4036,264 @@ function renderAiPredictions() {
       </div>
     `;
   }).join('');
+}
+
+// ============================================
+// NEWS VIEW
+// ============================================
+
+const CRYPTO_NEWS_SOURCES = [
+  { name: 'CoinDesk', icon: '📰' },
+  { name: 'CoinTelegraph', icon: '📡' },
+  { name: 'The Block', icon: '🧱' },
+  { name: 'Decrypt', icon: '🔓' }
+];
+
+// Mock news data (in production, this would come from an API like CryptoPanic)
+function getMockNews() {
+  return [
+    {
+      title: 'Bitcoin Breaks Through Key Resistance Level',
+      source: 'CoinDesk',
+      time: new Date(Date.now() - 1800000), // 30 min ago
+      sentiment: 'bullish',
+      coins: ['BTC'],
+      isHighImpact: true
+    },
+    {
+      title: 'SEC Delays Decision on Spot ETH ETF Applications',
+      source: 'The Block',
+      time: new Date(Date.now() - 3600000), // 1 hour ago
+      sentiment: 'neutral',
+      coins: ['ETH'],
+      isHighImpact: true
+    },
+    {
+      title: 'Solana DeFi TVL Reaches New All-Time High',
+      source: 'CoinTelegraph',
+      time: new Date(Date.now() - 7200000), // 2 hours ago
+      sentiment: 'bullish',
+      coins: ['SOL'],
+      isHighImpact: false
+    },
+    {
+      title: 'Major Exchange Reports Record Trading Volume',
+      source: 'Decrypt',
+      time: new Date(Date.now() - 10800000), // 3 hours ago
+      sentiment: 'bullish',
+      coins: ['BNB'],
+      isHighImpact: false
+    },
+    {
+      title: 'Whale Moves 10,000 BTC to Unknown Wallet',
+      source: 'CoinDesk',
+      time: new Date(Date.now() - 14400000), // 4 hours ago
+      sentiment: 'bearish',
+      coins: ['BTC'],
+      isHighImpact: true
+    }
+  ];
+}
+
+function renderNewsView() {
+  const newsList = document.getElementById('newsList');
+  const highPriorityNews = document.getElementById('highPriorityNews');
+
+  if (!newsList || !highPriorityNews) return;
+
+  const news = getMockNews();
+  const highImpact = news.filter(n => n.isHighImpact);
+  const allNews = news;
+
+  // Render high priority news
+  if (highImpact.length > 0) {
+    highPriorityNews.innerHTML = highImpact.map(item => renderNewsItem(item, true)).join('');
+  } else {
+    highPriorityNews.innerHTML = '<div class="empty-state">No high-impact news right now</div>';
+  }
+
+  // Render all news
+  newsList.innerHTML = allNews.map(item => renderNewsItem(item, false)).join('');
+
+  // Add news filter functionality
+  document.querySelectorAll('.news-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.news-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const filter = btn.dataset.newsFilter;
+
+      let filtered = allNews;
+      if (filter === 'bullish') {
+        filtered = allNews.filter(n => n.sentiment === 'bullish');
+      } else if (filter === 'bearish') {
+        filtered = allNews.filter(n => n.sentiment === 'bearish');
+      }
+
+      newsList.innerHTML = filtered.map(item => renderNewsItem(item, false)).join('');
+    });
+  });
+}
+
+function renderNewsItem(item, isHighImpact) {
+  const sentimentEmoji = item.sentiment === 'bullish' ? '🟢' :
+                         item.sentiment === 'bearish' ? '🔴' : '⚪';
+  const timeAgo = formatTimeAgo(item.time);
+  const sentimentClass = item.sentiment;
+
+  return `
+    <div class="news-item ${sentimentClass} ${isHighImpact ? 'high-impact' : ''}">
+      <div class="news-item-header">
+        <span class="news-title">${item.title}</span>
+        <span class="news-sentiment">${sentimentEmoji}</span>
+      </div>
+      <div class="news-meta">
+        <span class="news-source">📰 ${item.source}</span>
+        <span class="news-time">${timeAgo}</span>
+      </div>
+      ${item.coins && item.coins.length > 0 ? `
+        <div class="news-coins">
+          ${item.coins.map(c => `<span class="news-coin-tag">${c}</span>`).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function formatTimeAgo(date) {
+  const seconds = Math.floor((new Date() - date) / 1000);
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+// ============================================
+// CALENDAR VIEW
+// ============================================
+
+const ECONOMIC_EVENTS = [
+  // FOMC Meetings (Federal Reserve)
+  { date: '2025-01-29', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-03-19', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-05-07', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-06-18', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-07-30', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-09-17', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-11-05', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2025-12-17', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  // CPI Releases
+  { date: '2025-01-15', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-02-12', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-03-12', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-04-10', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-05-13', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-06-11', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-07-11', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-08-13', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-09-10', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-10-10', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-11-13', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2025-12-10', name: 'CPI Release', type: 'CPI', impact: 3 },
+  // NFP (Non-Farm Payrolls)
+  { date: '2025-01-10', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-02-07', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-03-07', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-04-04', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-05-02', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-06-06', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-07-03', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-08-01', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-09-05', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-10-03', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-11-07', name: 'NFP Release', type: 'NFP', impact: 2 },
+  { date: '2025-12-05', name: 'NFP Release', type: 'NFP', impact: 2 },
+  // 2026 events
+  { date: '2026-01-14', name: 'CPI Release', type: 'CPI', impact: 3 },
+  { date: '2026-01-28', name: 'FOMC Meeting', type: 'FOMC', impact: 3 },
+  { date: '2026-01-09', name: 'NFP Release', type: 'NFP', impact: 2 },
+];
+
+function renderCalendarView() {
+  const upcomingList = document.getElementById('upcomingEvents');
+  const pastList = document.getElementById('pastEvents');
+
+  if (!upcomingList || !pastList) return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const sevenDaysAgo = new Date(today);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  // Sort events by date
+  const sortedEvents = [...ECONOMIC_EVENTS].sort((a, b) =>
+    new Date(a.date) - new Date(b.date)
+  );
+
+  // Split into upcoming and past
+  const upcoming = sortedEvents.filter(e => new Date(e.date) >= today).slice(0, 8);
+  const past = sortedEvents.filter(e => {
+    const eventDate = new Date(e.date);
+    return eventDate < today && eventDate >= sevenDaysAgo;
+  }).reverse().slice(0, 5);
+
+  // Render upcoming events
+  if (upcoming.length > 0) {
+    upcomingList.innerHTML = upcoming.map(event => renderCalendarEvent(event, today)).join('');
+  } else {
+    upcomingList.innerHTML = '<div class="empty-state">No upcoming events</div>';
+  }
+
+  // Render past events
+  if (past.length > 0) {
+    pastList.innerHTML = past.map(event => renderCalendarEvent(event, today, true)).join('');
+  } else {
+    pastList.innerHTML = '<div class="empty-state">No recent events</div>';
+  }
+}
+
+function renderCalendarEvent(event, today, isPast = false) {
+  const eventDate = new Date(event.date);
+  const isToday = eventDate.toDateString() === today.toDateString();
+
+  const daysUntil = Math.ceil((eventDate - today) / (1000 * 60 * 60 * 24));
+  let countdown = '';
+  if (isToday) {
+    countdown = '<span class="event-countdown today">TODAY</span>';
+  } else if (daysUntil === 1) {
+    countdown = '<span class="event-countdown">Tomorrow</span>';
+  } else if (daysUntil > 0) {
+    countdown = `<span class="event-countdown">In ${daysUntil} days</span>`;
+  } else if (isPast) {
+    countdown = `<span class="event-countdown">${Math.abs(daysUntil)} days ago</span>`;
+  }
+
+  const formattedDate = eventDate.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric'
+  });
+
+  const impactDots = Array(3).fill(0).map((_, i) =>
+    `<span class="impact-dot ${i < event.impact ? 'active' : ''}"></span>`
+  ).join('');
+
+  return `
+    <div class="calendar-event ${event.type.toLowerCase()} ${isToday ? 'today' : ''}">
+      <div class="event-header">
+        <span class="event-name">${event.name}</span>
+        <span class="event-type ${event.type.toLowerCase()}">${event.type}</span>
+      </div>
+      <div class="event-date">
+        <span>📅 ${formattedDate}</span>
+        ${countdown}
+      </div>
+      <div class="event-impact">
+        <span>Impact:</span>
+        <div class="impact-dots">${impactDots}</div>
+      </div>
+    </div>
+  `;
 }
 
 // ============================================
@@ -4807,23 +5119,31 @@ function initEventListeners() {
     });
   }
 
-  // Signal tabs (New/All)
+  // Signal tabs (New/All/Data/News/Calendar/Stats)
   document.querySelectorAll('.signal-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
 
-      const tabType = tab.dataset.signalTab; // 'new', 'all', 'data', or 'stats'
+      const tabType = tab.dataset.signalTab;
 
       // Handle sidebar view switching
       // Hide all views first
       document.getElementById('signalsView')?.classList.remove('active');
       document.getElementById('dataView')?.classList.remove('active');
+      document.getElementById('newsView')?.classList.remove('active');
+      document.getElementById('calendarView')?.classList.remove('active');
       document.getElementById('statsView')?.classList.remove('active');
 
       if (tabType === 'data') {
         document.getElementById('dataView')?.classList.add('active');
         renderDataView();
+      } else if (tabType === 'news') {
+        document.getElementById('newsView')?.classList.add('active');
+        renderNewsView();
+      } else if (tabType === 'calendar') {
+        document.getElementById('calendarView')?.classList.add('active');
+        renderCalendarView();
       } else if (tabType === 'stats') {
         document.getElementById('statsView')?.classList.add('active');
         renderStatsView();
