@@ -2287,6 +2287,7 @@ async function runAiAnalysis() {
         }
       }
       state.signalHistory = state.signalHistory.slice(0, 100);
+      saveSignalHistory(); // Persist signal history to localStorage
 
       state.aiSignals = filteredSignals;
 
@@ -2685,6 +2686,7 @@ async function runScan() {
   }
   // Keep only last 100 signals in history
   state.signalHistory = state.signalHistory.slice(0, 100);
+  saveSignalHistory(); // Persist signal history to localStorage
 
   const highConfSignals = newSignals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE);
   for (const signal of highConfSignals) {
@@ -4386,6 +4388,34 @@ function loadTrades() {
   }
 }
 
+function saveSignalHistory() {
+  try {
+    // Save last 100 signals to localStorage
+    const historyToSave = state.signalHistory.slice(0, 100).map(signal => ({
+      ...signal,
+      isNew: false // Mark as not new when reloading
+    }));
+    localStorage.setItem('sentient_signal_history', JSON.stringify(historyToSave));
+  } catch (e) {
+    console.error('Failed to save signal history:', e);
+  }
+}
+
+function loadSignalHistory() {
+  try {
+    const saved = localStorage.getItem('sentient_signal_history');
+    if (saved) {
+      const history = JSON.parse(saved);
+      // Filter out signals older than 24 hours
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+      state.signalHistory = history.filter(s => s.timestamp > oneDayAgo);
+      console.log(`📜 Loaded ${state.signalHistory.length} signals from history`);
+    }
+  } catch (e) {
+    console.error('Failed to load signal history:', e);
+  }
+}
+
 function resetBalance() {
   if (!confirm('Are you sure you want to reset your balance to $2000? This will close all open positions and clear trade history.')) {
     return;
@@ -4856,6 +4886,12 @@ function initSettingsModal() {
 async function init() {
   loadTrades();
   loadPerformanceStats();
+  loadSignalHistory();
+
+  // Render loaded signal history immediately
+  if (state.signalHistory.length > 0) {
+    setTimeout(() => renderSignals(), 100);
+  }
 
   // Load API keys from localStorage
   const keysLoaded = loadApiKeys();
