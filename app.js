@@ -4460,6 +4460,70 @@ function initEventListeners() {
     });
   });
 
+  // Mobile navigation
+  document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.dataset.view;
+
+      // Update active button
+      document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Handle different views
+      const sidebarRight = document.querySelector('.sidebar-right');
+      const mainContent = document.querySelector('.main-content');
+
+      switch(view) {
+        case 'chart':
+          sidebarRight?.classList.remove('mobile-active');
+          mainContent.style.display = 'flex';
+          // Resize chart when returning to chart view
+          setTimeout(() => {
+            if (state.chart) state.chart.resize(
+              document.getElementById('chart')?.clientWidth || window.innerWidth,
+              document.getElementById('chart')?.clientHeight || 400
+            );
+          }, 100);
+          break;
+
+        case 'signals':
+          sidebarRight?.classList.add('mobile-active');
+          mainContent.style.display = 'none';
+          // Activate signals tab
+          document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+          document.querySelector('.tab-btn[data-tab="signals"]')?.classList.add('active');
+          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
+          document.getElementById('signalsView')?.classList.add('active');
+          break;
+
+        case 'data':
+          sidebarRight?.classList.add('mobile-active');
+          mainContent.style.display = 'none';
+          // Activate data tab
+          document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+          document.querySelector('.tab-btn[data-tab="data"]')?.classList.add('active');
+          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
+          document.getElementById('dataView')?.classList.add('active');
+          break;
+
+        case 'portfolio':
+          sidebarRight?.classList.add('mobile-active');
+          mainContent.style.display = 'none';
+          // Activate stats tab
+          document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+          document.querySelector('.tab-btn[data-tab="stats"]')?.classList.add('active');
+          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
+          document.getElementById('statsView')?.classList.add('active');
+          break;
+
+        case 'settings':
+          // Open settings modal
+          document.querySelector('.settings-modal')?.classList.add('active');
+          break;
+      }
+    });
+  });
+
   // Timeframe buttons
   document.querySelectorAll('.tf-btn').forEach(btn => {
     btn.addEventListener('click', () => {

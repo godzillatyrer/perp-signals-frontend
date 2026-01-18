@@ -2305,6 +2305,13 @@ body {
 }
 
 /* ============================================
+   MOBILE NAVIGATION (hidden on desktop)
+   ============================================ */
+.mobile-nav {
+  display: none;
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 @media (max-width: 1600px) {
@@ -2342,16 +2349,270 @@ body {
 }
 
 @media (max-width: 768px) {
+  :root {
+    --nav-height: 56px;
+  }
+
+  body {
+    font-size: 14px;
+  }
+
   .app-container {
     grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    height: 100vh;
+  }
+
+  /* Hide desktop sidebars */
+  .sidebar-left {
+    display: none;
   }
 
   .sidebar-right {
+    position: fixed;
+    bottom: 60px;
+    left: 0;
+    right: 0;
+    top: 0;
+    z-index: 100;
     display: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .sidebar-right.mobile-active {
+    display: flex;
   }
 
   .alert-bar {
     display: none;
+  }
+
+  /* Mobile bottom navigation */
+  .mobile-nav {
+    display: flex !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    z-index: 1000;
+    padding: 0;
+  }
+
+  .mobile-nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 8px 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .mobile-nav-btn .nav-icon {
+    font-size: 20px;
+  }
+
+  .mobile-nav-btn.active {
+    color: var(--accent);
+  }
+
+  .mobile-nav-btn:active {
+    background: var(--bg-active);
+  }
+
+  /* Main content adjustments */
+  .main-content {
+    padding-bottom: 60px;
+  }
+
+  .chart-header {
+    padding: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chart-header .symbol-info {
+    width: 100%;
+  }
+
+  .chart-header .symbol-info h2 {
+    font-size: 18px;
+  }
+
+  .timeframe-selector {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .timeframe-selector .tf-btn {
+    flex: 1;
+    padding: 10px 8px;
+    font-size: 12px;
+  }
+
+  /* Signal cards mobile */
+  .signal-card {
+    padding: 14px;
+  }
+
+  .signal-card .signal-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .signal-card .symbol {
+    font-size: 16px;
+  }
+
+  .signal-card .confidence {
+    font-size: 14px;
+    padding: 6px 12px;
+  }
+
+  /* Data sections mobile */
+  .data-section {
+    padding: 14px;
+  }
+
+  .data-title {
+    font-size: 13px;
+  }
+
+  .liq-item,
+  .ls-item,
+  .sentiment-item {
+    padding: 12px;
+    font-size: 13px;
+  }
+
+  .liq-item .symbol,
+  .ls-item .symbol {
+    font-size: 14px;
+    min-width: 55px;
+  }
+
+  .liq-item .longs,
+  .liq-item .shorts {
+    font-size: 12px;
+  }
+
+  .ls-item .pct {
+    font-size: 12px;
+    min-width: 40px;
+  }
+
+  .ls-item .ratio-bar {
+    margin: 0 10px;
+  }
+
+  /* Sidebar tabs mobile */
+  .sidebar-tabs {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .sidebar-tabs .tab-btn {
+    padding: 10px 12px;
+    font-size: 11px;
+  }
+
+  /* Portfolio section mobile */
+  .portfolio-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .stat-card {
+    padding: 12px;
+  }
+
+  .stat-card .value {
+    font-size: 16px;
+  }
+
+  /* Trade buttons mobile */
+  .trade-actions {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .trade-actions button {
+    width: 100%;
+    padding: 14px;
+    font-size: 14px;
+  }
+
+  /* Settings modal mobile */
+  .settings-content {
+    width: 95%;
+    max-width: none;
+    max-height: 85vh;
+    margin: 10px;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Data legend mobile */
+  .data-legend {
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .data-legend .legend-item {
+    font-size: 11px;
+  }
+
+  /* Hide desktop elements on mobile */
+  .chart-tools,
+  .advanced-controls {
+    display: none;
+  }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+  .chart-header .symbol-info h2 {
+    font-size: 16px;
+  }
+
+  .timeframe-selector .tf-btn {
+    padding: 8px 6px;
+    font-size: 11px;
+  }
+
+  .liq-item .data {
+    gap: 8px;
+  }
+
+  .liq-item .longs,
+  .liq-item .shorts {
+    font-size: 11px;
+  }
+
+  .liq-item .signal {
+    padding: 3px 6px;
+    font-size: 9px;
+    min-width: 50px;
+  }
+
+  .portfolio-stats {
+    grid-template-columns: 1fr;
   }
 }
 
