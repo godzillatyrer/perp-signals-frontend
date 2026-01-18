@@ -198,6 +198,45 @@ function cleanExpiredSignals() {
   }
 }
 
+// ============================================
+// REDIS-BASED COOLDOWN (Synced with serverless function)
+// ============================================
+
+async function checkRedisCooldown(symbol, direction, entry) {
+  try {
+    const params = new URLSearchParams({
+      symbol,
+      direction: direction || '',
+      price: entry ? entry.toString() : ''
+    });
+    const response = await fetch(`/api/cooldown?${params}`);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (e) {
+    console.warn('Redis cooldown check failed, falling back to localStorage:', e.message);
+  }
+  // Fallback to localStorage check
+  return isSignalOnCooldown(symbol, direction, entry);
+}
+
+async function recordRedisCooldown(symbol, direction, entry) {
+  try {
+    const response = await fetch('/api/cooldown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, direction, entry })
+    });
+    if (response.ok) {
+      console.log(`📝 Recorded ${symbol} cooldown to Redis`);
+      return true;
+    }
+  } catch (e) {
+    console.warn('Redis cooldown save failed:', e.message);
+  }
+  return false;
+}
+
 // Clean expired signals on load
 cleanExpiredSignals();
 
@@ -353,10 +392,10 @@ async function sendTelegramSignalAlert(signal) {
     return false;
   }
 
-  // Check cooldown - prevent spam
-  const cooldownCheck = isSignalOnCooldown(signal.symbol, signal.direction, signal.entry);
+  // Check cooldown via Redis (synced with serverless function) - prevent spam
+  const cooldownCheck = await checkRedisCooldown(signal.symbol, signal.direction, signal.entry);
   if (cooldownCheck.onCooldown) {
-    console.log(`🚫 ${signal.symbol}: Blocked by cooldown (${cooldownCheck.hoursRemaining}h remaining)`);
+    console.log(`🚫 ${signal.symbol}: Blocked by Redis cooldown (${cooldownCheck.hoursRemaining}h remaining)`);
     return false;
   }
 
@@ -364,9 +403,10 @@ async function sendTelegramSignalAlert(signal) {
   const keyboard = createTradeKeyboard(signal);
   const success = await sendTelegramMessage(message, 'HTML', keyboard);
 
-  // Record the signal if sent successfully
+  // Record the signal to both Redis and localStorage if sent successfully
   if (success) {
-    recordSentSignal(signal.symbol, signal.direction, signal.entry);
+    recordSentSignal(signal.symbol, signal.direction, signal.entry); // localStorage backup
+    await recordRedisCooldown(signal.symbol, signal.direction, signal.entry); // Redis primary
   }
 
   return success;
@@ -393,7 +433,7 @@ Your bot is properly configured and ready to receive trading signals.
   return await sendTelegramMessage(testMessage.trim());
 }
 
-// Manual send signal to Telegram (bypasses enabled/confidence checks but still tracks cooldown)
+// Manual send signal to Telegram (bypasses enabled/confidence checks but respects cooldown)
 async function sendSignalToTelegramManual(signal) {
   // Check if Telegram is configured (but not necessarily enabled)
   if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
@@ -401,10 +441,15 @@ async function sendSignalToTelegramManual(signal) {
     return false;
   }
 
-  // Warn about cooldown but don't block manual sends
-  const cooldownCheck = isSignalOnCooldown(signal.symbol, signal.direction, signal.entry);
+  // Check cooldown via Redis - block manual sends too (they were causing duplicates)
+  const cooldownCheck = await checkRedisCooldown(signal.symbol, signal.direction, signal.entry);
   if (cooldownCheck.onCooldown) {
-    console.warn(`⚠️ ${signal.symbol}: This coin is on cooldown (${cooldownCheck.hoursRemaining}h remaining) - sending anyway (manual override)`);
+    const override = confirm(`⚠️ ${signal.symbol} is on cooldown (${cooldownCheck.hoursRemaining}h remaining).\n\nSending anyway will cause duplicate signals.\n\nAre you sure you want to override?`);
+    if (!override) {
+      console.log(`🚫 ${signal.symbol}: Manual send cancelled by user (cooldown active)`);
+      return false;
+    }
+    console.warn(`⚠️ ${signal.symbol}: Manual override - sending despite cooldown`);
   }
 
   const message = formatSignalForTelegram(signal);
@@ -412,8 +457,9 @@ async function sendSignalToTelegramManual(signal) {
   const success = await sendTelegramMessage(message, 'HTML', keyboard);
 
   if (success) {
-    // Record the signal to prevent automatic duplicates
+    // Record the signal to both Redis and localStorage
     recordSentSignal(signal.symbol, signal.direction, signal.entry);
+    await recordRedisCooldown(signal.symbol, signal.direction, signal.entry);
     console.log(`📤 Manually sent ${signal.symbol} signal to Telegram with Win/Loss buttons`);
   }
 
@@ -3994,10 +4040,14 @@ async function runAiAnalysis() {
       const silverCount = filteredSignals.filter(s => s.isSilverConsensus).length;
       console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${goldCount} gold 🥇, ${silverCount} silver 🥈)`);
 
-      // Show consensus notification for high-confidence signals (85%+)
-      const highConfSignals = filteredSignals.filter(s => s.confidence >= CONFIG.ALERT_CONFIDENCE);
-      if (highConfSignals.length > 0) {
-        showConsensusNotification(highConfSignals);
+      // Show consensus notification for GOLD consensus + high-confidence signals only (85%+)
+      // CRITICAL: Only send alerts for Gold consensus (all 3 AIs agree) to prevent spam
+      const alertableSignals = filteredSignals.filter(s =>
+        s.confidence >= CONFIG.ALERT_CONFIDENCE &&
+        s.isGoldConsensus === true  // ONLY Gold consensus - skip Silver
+      );
+      if (alertableSignals.length > 0) {
+        showConsensusNotification(alertableSignals);
       }
 
       // Auto-trade if enabled (prioritize consensus signals)
@@ -4022,9 +4072,21 @@ async function runAiAnalysis() {
   renderAlertBar();
 }
 
+// Track which signals have been alerted in this session to prevent duplicate alerts
+const alertedSignalsThisSession = new Set();
+
 // Show special notification for consensus signals
 function showConsensusNotification(consensusSignals) {
   for (const signal of consensusSignals) {
+    // Create a unique key for this signal (symbol + direction)
+    const signalKey = `${signal.symbol}_${signal.direction}`;
+
+    // Skip if already alerted in this session (prevents spam from "updated" signals)
+    if (alertedSignalsThisSession.has(signalKey)) {
+      console.log(`⏭️ ${signal.symbol}: Already alerted this session - skipping notification`);
+      continue;
+    }
+
     // Play consensus sound
     playAlertSound('consensus');
 
@@ -4051,8 +4113,11 @@ function showConsensusNotification(consensusSignals) {
       { symbol: signal.symbol, important: true, tag: 'consensus-' + signal.symbol }
     );
 
-    // Send Telegram alert
+    // Send Telegram alert (this also checks Redis cooldown)
     sendTelegramSignalAlert(signal);
+
+    // Mark as alerted for this session
+    alertedSignalsThisSession.add(signalKey);
   }
 }
 
