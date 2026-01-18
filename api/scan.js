@@ -14,8 +14,8 @@ const CONFIG = {
   MIN_TP_PERCENT_MID_CAP: 7,
   // Top coins to analyze
   TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
-  // Signal cooldown in hours - EXTENDED to 24 hours (one signal per coin per day)
-  SIGNAL_COOLDOWN_HOURS: 24,
+  // Signal cooldown in hours - 12 hours per coin
+  SIGNAL_COOLDOWN_HOURS: 12,
   // Price move % that overrides cooldown - INCREASED to 10%
   PRICE_MOVE_OVERRIDE_PERCENT: 10,
   // Minimum price change to even consider a signal (blocks tiny entry updates)
