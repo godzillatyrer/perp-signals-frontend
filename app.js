@@ -4517,8 +4517,8 @@ function initEventListeners() {
           break;
 
         case 'settings':
-          // Open settings modal
-          document.querySelector('.settings-modal')?.classList.add('active');
+          // Open settings modal properly (loads saved values)
+          openSettingsModal();
           break;
       }
     });
