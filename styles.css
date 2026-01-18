@@ -2279,6 +2279,73 @@ select:focus-visible {
   line-height: 1.4;
 }
 
+/* Dissenting AI (3rd AI opinion for silver consensus) */
+.dissenting-ai {
+  padding: 10px 12px;
+  background: rgba(136, 136, 136, 0.1);
+  border-radius: 6px;
+  margin-top: 8px;
+  border-left: 3px solid #666;
+}
+
+.dissenting-ai.warning {
+  background: rgba(255, 166, 87, 0.12);
+  border-left-color: #ffa657;
+}
+
+.dissenting-ai.neutral {
+  background: rgba(136, 136, 136, 0.08);
+  border-left-color: #666;
+}
+
+.dissent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.dissent-icon {
+  font-size: 12px;
+}
+
+.dissent-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.dissent-content {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.dissent-direction {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.dissent-direction.long {
+  background: var(--green);
+  color: #000;
+}
+
+.dissent-direction.short {
+  background: var(--red);
+  color: #fff;
+}
+
+.dissent-reason {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-style: italic;
+}
+
 .signal-footer {
   display: grid;
   grid-template-columns: repeat(3, 1fr) auto;

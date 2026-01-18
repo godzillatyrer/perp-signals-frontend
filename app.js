@@ -98,7 +98,7 @@ function loadApiKey() {
 // TELEGRAM ALERTS
 // ============================================
 
-async function sendTelegramMessage(message, parseMode = 'HTML') {
+async function sendTelegramMessage(message, parseMode = 'HTML', inlineKeyboard = null) {
   if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
     console.warn('⚠️ Telegram not configured');
     return false;
@@ -106,15 +106,22 @@ async function sendTelegramMessage(message, parseMode = 'HTML') {
 
   try {
     const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const body = {
+      chat_id: CONFIG.TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: parseMode,
+      disable_web_page_preview: true
+    };
+
+    // Add inline keyboard if provided
+    if (inlineKeyboard) {
+      body.reply_markup = { inline_keyboard: inlineKeyboard };
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CONFIG.TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: parseMode,
-        disable_web_page_preview: true
-      })
+      body: JSON.stringify(body)
     });
 
     const result = await response.json();
@@ -129,6 +136,18 @@ async function sendTelegramMessage(message, parseMode = 'HTML') {
     console.error('❌ Telegram send failed:', error);
     return false;
   }
+}
+
+// Create inline keyboard for trade tracking
+function createTradeKeyboard(signal) {
+  const signalId = `${signal.symbol}_${signal.direction}_${Date.now()}`;
+  return [
+    [
+      { text: '✅ Win', callback_data: `win_${signalId}` },
+      { text: '❌ Loss', callback_data: `loss_${signalId}` },
+      { text: '⏭️ Skip', callback_data: `skip_${signalId}` }
+    ]
+  ];
 }
 
 function formatSignalForTelegram(signal) {
@@ -190,6 +209,27 @@ ${emoji} <b>${signal.symbol}</b> ${direction}
     message += `\n<b>🌍 Market:</b> ${regimeEmoji} ${signal.marketRegime}`;
   }
 
+  // Add 3rd AI dissenting opinion for silver consensus
+  if (signal.isSilverConsensus && signal.dissentingAi) {
+    const aiName = signal.dissentingAi.source.charAt(0).toUpperCase() + signal.dissentingAi.source.slice(1);
+    const aiEmoji = signal.dissentingAi.source === 'claude' ? '🧠' :
+                    signal.dissentingAi.source === 'openai' ? '🤖' : '⚡';
+
+    message += `\n\n<b>${signal.dissentingAi.type === 'OPPOSITE_DIRECTION' ? '⚠️' : '🤔'} 3rd AI (${aiEmoji} ${aiName}):</b>`;
+
+    if (signal.dissentingAi.type === 'OPPOSITE_DIRECTION') {
+      const dissDir = signal.dissentingAi.direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+      const dissEntry = parseFloat(signal.dissentingAi.entry).toFixed(signal.dissentingAi.entry < 1 ? 6 : 2);
+      message += `\n${dissDir} at $${dissEntry} (${signal.dissentingAi.confidence}%)`;
+      message += `\n<i>${signal.dissentingAi.reasoning?.substring(0, 60) || 'Different analysis'}...</i>`;
+    } else if (signal.dissentingAi.type === 'DIFFERENT_ENTRY') {
+      const dissEntry = parseFloat(signal.dissentingAi.entry).toFixed(signal.dissentingAi.entry < 1 ? 6 : 2);
+      message += `\nSame direction, entry at $${dissEntry}`;
+    } else {
+      message += `\nDid not signal this coin`;
+    }
+  }
+
   message += `\n\n⏰ ${new Date().toLocaleString()}`;
   message += `\n\n<i>Sentient Trader AI</i>`;
 
@@ -207,7 +247,8 @@ async function sendTelegramSignalAlert(signal) {
   }
 
   const message = formatSignalForTelegram(signal);
-  return await sendTelegramMessage(message);
+  const keyboard = createTradeKeyboard(signal);
+  return await sendTelegramMessage(message, 'HTML', keyboard);
 }
 
 async function sendTelegramTestMessage() {
@@ -240,10 +281,11 @@ async function sendSignalToTelegramManual(signal) {
   }
 
   const message = formatSignalForTelegram(signal);
-  const success = await sendTelegramMessage(message);
+  const keyboard = createTradeKeyboard(signal);
+  const success = await sendTelegramMessage(message, 'HTML', keyboard);
 
   if (success) {
-    console.log(`📤 Manually sent ${signal.symbol} signal to Telegram`);
+    console.log(`📤 Manually sent ${signal.symbol} signal to Telegram with Win/Loss buttons`);
   }
 
   return success;
@@ -2366,6 +2408,43 @@ async function runAiAnalysis() {
         const primaryTrigger = entryTriggers[0] || 'MOMENTUM';
         const primaryCondition = entryConditions[0] || 'Price momentum confirmation';
 
+        // DISSENTING AI: Find what the 3rd AI thinks (for silver consensus)
+        let dissentingAi = null;
+        if (isSilverConsensus) {
+          const allAis = ['claude', 'openai', 'grok'];
+          const agreeingAis = aiSources;
+          const missingAi = allAis.find(ai => !agreeingAis.includes(ai));
+
+          if (missingAi) {
+            // Check if the missing AI had any opinion on this symbol
+            const dissentingPick = allPicks.find(p => p.source === missingAi && p.symbol === symbol);
+
+            if (dissentingPick) {
+              // 3rd AI had a different opinion on the same coin
+              dissentingAi = {
+                source: missingAi,
+                direction: dissentingPick.direction,
+                entry: dissentingPick.entry,
+                confidence: dissentingPick.confidence,
+                reasoning: dissentingPick.reasoning || 'Different technical analysis',
+                agrees: dissentingPick.direction === direction, // Same direction but different entry?
+                type: dissentingPick.direction === direction ? 'DIFFERENT_ENTRY' : 'OPPOSITE_DIRECTION'
+              };
+              console.log(`🤔 ${missingAi} dissents on ${symbol}: ${dissentingPick.direction} at $${dissentingPick.entry.toLocaleString()} (vs ${direction} at $${avgEntry.toLocaleString()})`);
+            } else {
+              // 3rd AI didn't have any opinion on this coin
+              dissentingAi = {
+                source: missingAi,
+                direction: null,
+                confidence: null,
+                reasoning: 'Did not signal this coin',
+                type: 'NO_SIGNAL'
+              };
+              console.log(`🤷 ${missingAi} has no opinion on ${symbol}`);
+            }
+          }
+        }
+
         const signal = {
           symbol: symbol,
           direction: direction,
@@ -2393,7 +2472,8 @@ async function runAiAnalysis() {
           mtfScore: mtfScore,
           entryTrigger: primaryTrigger,
           entryCondition: primaryCondition,
-          aiWeights: matchingPicks.reduce((acc, p) => { acc[p.source] = getAiWeight(p.source).toFixed(2); return acc; }, {})
+          aiWeights: matchingPicks.reduce((acc, p) => { acc[p.source] = getAiWeight(p.source).toFixed(2); return acc; }, {}),
+          dissentingAi: dissentingAi // 3rd AI opinion for silver consensus
         };
 
         allSignals.push(signal);
@@ -3731,6 +3811,26 @@ function renderSignals() {
         <div class="entry-condition">
           <span class="condition-label">📋 When to enter:</span>
           <span class="condition-text">${signal.entryCondition}</span>
+        </div>
+        ` : ''}
+        ${signal.dissentingAi && signal.isSilverConsensus ? `
+        <div class="dissenting-ai ${signal.dissentingAi.type === 'OPPOSITE_DIRECTION' ? 'warning' : 'neutral'}">
+          <div class="dissent-header">
+            <span class="dissent-icon">${signal.dissentingAi.type === 'OPPOSITE_DIRECTION' ? '⚠️' : signal.dissentingAi.type === 'NO_SIGNAL' ? '🤷' : '🤔'}</span>
+            <span class="dissent-label">3rd AI (${signal.dissentingAi.source.charAt(0).toUpperCase() + signal.dissentingAi.source.slice(1)}):</span>
+          </div>
+          <div class="dissent-content">
+            ${signal.dissentingAi.type === 'OPPOSITE_DIRECTION' ? `
+              <span class="dissent-direction ${signal.dissentingAi.direction.toLowerCase()}">${signal.dissentingAi.direction}</span> at ${formatPrice(signal.dissentingAi.entry)} (${signal.dissentingAi.confidence}%)
+            ` : signal.dissentingAi.type === 'DIFFERENT_ENTRY' ? `
+              Same direction, different entry: ${formatPrice(signal.dissentingAi.entry)}
+            ` : `
+              Did not signal this coin
+            `}
+          </div>
+          ${signal.dissentingAi.reasoning && signal.dissentingAi.type !== 'NO_SIGNAL' ? `
+          <div class="dissent-reason">${signal.dissentingAi.reasoning.substring(0, 80)}${signal.dissentingAi.reasoning.length > 80 ? '...' : ''}</div>
+          ` : ''}
         </div>
         ` : ''}
         ${(state.socialSentiment[signal.symbol] || state.liquidationData[signal.symbol]) ? `
