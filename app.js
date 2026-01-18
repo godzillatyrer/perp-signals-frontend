@@ -4075,6 +4075,55 @@ async function runAiAnalysis() {
 // Track which signals have been alerted in this session to prevent duplicate alerts
 const alertedSignalsThisSession = new Set();
 
+// Load and display cooldown status from Redis
+async function loadCooldownStatus() {
+  const cooldownInfo = document.getElementById('cooldownInfo');
+  if (!cooldownInfo) return;
+
+  try {
+    // Fetch all cooldowns by checking common symbols
+    const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
+    const cooldowns = [];
+
+    for (const symbol of symbols) {
+      try {
+        const response = await fetch(`/api/cooldown?symbol=${symbol}`);
+        const data = await response.json();
+        if (data.onCooldown) {
+          cooldowns.push({
+            symbol: symbol.replace('USDT', ''),
+            hoursRemaining: data.hoursRemaining,
+            lastSignal: data.lastSignal
+          });
+        }
+      } catch (e) {
+        // Skip failed checks
+      }
+    }
+
+    if (cooldowns.length === 0) {
+      cooldownInfo.innerHTML = `
+        <div style="color: #4ade80;">✅ No active cooldowns</div>
+        <div style="color: #888; font-size: 11px; margin-top: 4px;">All coins can receive signals</div>
+      `;
+    } else {
+      const list = cooldowns.map(c =>
+        `<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <span style="color: #f59e0b;">${c.symbol}</span>
+          <span style="color: #888;">${c.hoursRemaining}h remaining</span>
+        </div>`
+      ).join('');
+
+      cooldownInfo.innerHTML = `
+        <div style="color: #f59e0b; margin-bottom: 8px;">⏳ ${cooldowns.length} coin(s) on cooldown:</div>
+        ${list}
+      `;
+    }
+  } catch (e) {
+    cooldownInfo.innerHTML = `<div style="color: #888;">Could not load cooldown status</div>`;
+  }
+}
+
 // Show special notification for consensus signals
 function showConsensusNotification(consensusSignals) {
   for (const signal of consensusSignals) {
@@ -6870,6 +6919,9 @@ function openSettingsModal() {
   // Update API status display
   updateSettingsApiStatus();
 
+  // Load cooldown status
+  loadCooldownStatus();
+
   modal.classList.add('active');
 }
 
@@ -7165,6 +7217,45 @@ function initSettingsModal() {
   if (addDiscordCallBtn) {
     addDiscordCallBtn.addEventListener('click', showAddDiscordCallModal);
   }
+
+  // Clear cooldowns button
+  const clearCooldownsBtn = document.getElementById('clearAllCooldownsBtn');
+  if (clearCooldownsBtn) {
+    clearCooldownsBtn.addEventListener('click', async () => {
+      if (!confirm('Are you sure you want to clear all cooldowns?\n\nThis will allow all coins to send signals again immediately.')) {
+        return;
+      }
+
+      clearCooldownsBtn.disabled = true;
+      clearCooldownsBtn.textContent = '🗑️ Clearing...';
+
+      try {
+        const response = await fetch('/api/cooldown?clearAll=true', { method: 'DELETE' });
+        const result = await response.json();
+
+        if (result.success) {
+          clearCooldownsBtn.textContent = `✅ Cleared ${result.cleared} cooldowns`;
+          // Also clear the session tracking
+          alertedSignalsThisSession.clear();
+          // Refresh cooldown display
+          loadCooldownStatus();
+        } else {
+          clearCooldownsBtn.textContent = '❌ Failed';
+        }
+      } catch (e) {
+        console.error('Failed to clear cooldowns:', e);
+        clearCooldownsBtn.textContent = '❌ Error';
+      }
+
+      setTimeout(() => {
+        clearCooldownsBtn.textContent = '🗑️ Clear All Cooldowns';
+        clearCooldownsBtn.disabled = false;
+      }, 3000);
+    });
+  }
+
+  // Load cooldown status when settings modal opens
+  loadCooldownStatus();
 
   // Escape key to close
   document.addEventListener('keydown', (e) => {
