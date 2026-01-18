@@ -27,7 +27,9 @@ const CONFIG = {
   LUNARCRUSH_API: 'https://lunarcrush.com/api4/public',
   LUNARCRUSH_API_KEY: '', // Get free key at lunarcrush.com/developers
   // Coinglass API (Liquidation & Derivatives Data) - Using v4 API
-  COINGLASS_API: 'https://open-api-v4.coinglass.com/api',
+  // Note: Using CORS proxy because Coinglass doesn't allow browser CORS
+  COINGLASS_API_BASE: 'https://open-api-v4.coinglass.com/api',
+  COINGLASS_PROXY: 'https://corsproxy.io/?', // CORS proxy for browser requests
   COINGLASS_API_KEY: '', // Get free key at coinglass.com/api
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
@@ -510,6 +512,13 @@ async function fetchBatchSocialSentiment(symbols) {
 // COINGLASS API (LIQUIDATION DATA) - V4 API
 // ============================================
 
+// Helper to build Coinglass URL with CORS proxy
+function getCoinglassUrl(endpoint) {
+  const baseUrl = `${CONFIG.COINGLASS_API_BASE}${endpoint}`;
+  // Use CORS proxy for browser requests
+  return `${CONFIG.COINGLASS_PROXY}${encodeURIComponent(baseUrl)}`;
+}
+
 async function fetchLiquidationData(symbol) {
   if (!isCoinglassConfigured()) {
     if (DEBUG_MODE) console.log('💧 [COINGLASS] Not configured');
@@ -520,9 +529,9 @@ async function fetchLiquidationData(symbol) {
     const cleanSymbol = symbol.replace('USDT', '');
     // V4 API endpoint: /futures/liquidation/aggregated-history
     // This gets aggregated liquidation data across all exchanges for a coin
-    const url = `${CONFIG.COINGLASS_API}/futures/liquidation/aggregated-history?symbol=${cleanSymbol}&interval=h24`;
+    const url = getCoinglassUrl(`/futures/liquidation/aggregated-history?symbol=${cleanSymbol}&interval=h24`);
 
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS V4] Fetching: ${url}`);
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS V4] Fetching via proxy...`);
 
     const response = await fetch(url, {
       headers: {
@@ -585,7 +594,7 @@ async function fetchLiquidationFromCoinList(symbol) {
   try {
     const cleanSymbol = symbol.replace('USDT', '');
     // V4 API endpoint: /futures/liquidation/coin-list - gets all coins at once
-    const url = `${CONFIG.COINGLASS_API}/futures/liquidation/coin-list`;
+    const url = getCoinglassUrl('/futures/liquidation/coin-list');
 
     if (DEBUG_MODE) console.log(`💧 [COINGLASS COINLIST] Fetching: ${url}`);
 
@@ -650,7 +659,7 @@ async function fetchLongShortRatio(symbol) {
   try {
     const cleanSymbol = symbol.replace('USDT', '');
     // V4 API endpoint for long/short ratio
-    const url = `${CONFIG.COINGLASS_API}/futures/global-long-short-account-ratio/history?symbol=${cleanSymbol}&interval=h1`;
+    const url = getCoinglassUrl(`/futures/global-long-short-account-ratio/history?symbol=${cleanSymbol}&interval=h1`);
 
     if (DEBUG_MODE) console.log(`💧 [COINGLASS LS V4] Fetching: ${url}`);
 
@@ -712,7 +721,7 @@ async function fetchLongShortFromOpenInterest(symbol) {
   try {
     const cleanSymbol = symbol.replace('USDT', '');
     // V4 API endpoint for open interest with long/short
-    const url = `${CONFIG.COINGLASS_API}/futures/open-interest/ohlc-aggregated-history?symbol=${cleanSymbol}&interval=h1`;
+    const url = getCoinglassUrl(`/futures/open-interest/ohlc-aggregated-history?symbol=${cleanSymbol}&interval=h1`);
 
     if (DEBUG_MODE) console.log(`💧 [COINGLASS OI V4] Fetching: ${url}`);
 
