@@ -892,6 +892,8 @@ function showApiKeyStatus() {
 // State
 const state = {
   markets: [],
+  marketLoadStatus: 'idle',
+  marketLoadError: null,
   signals: [], // Only used as fallback if AI not configured
   trades: [],
   aiSignals: [], // AI-generated signals (PRIMARY source)
@@ -975,7 +977,7 @@ const state = {
   aiRejectionLog: []
 };
 
-const getAiWinRate = (source) => {
+const getAiWinRateForSource = (source) => {
   const stats = state.performanceStats;
   if (source === 'claude') {
     const total = stats.claudeWins + stats.claudeLosses;
@@ -1003,12 +1005,12 @@ const getAiSampleSize = (source) => {
 const isAiEligible = (source) => {
   const sampleSize = getAiSampleSize(source);
   if (sampleSize < 3) return true;
-  return getAiWinRate(source) >= CONFIG.MIN_AI_WINRATE;
+  return getAiWinRateForSource(source) >= CONFIG.MIN_AI_WINRATE;
 };
 
 const buildAiPerformanceContext = (source) => {
   const sampleSize = getAiSampleSize(source);
-  const winRate = Math.round(getAiWinRate(source) * 100);
+  const winRate = Math.round(getAiWinRateForSource(source) * 100);
   if (sampleSize === 0) {
     return 'Performance: No tracked trades yet.';
   }
@@ -1100,104 +1102,6 @@ const summarizeFilterReasons = () => {
     .map(([reason, count]) => `${reason} (${count})`)
     .join(', ');
   return `Most common filters: ${top}.`;
-};
-
-const validateAiPick = (pick, marketInfo) => {
-  const normalized = normalizeAiPick(pick);
-  if (!normalized) return { valid: false, reason: 'Invalid shape' };
-  if (normalized.confidence < 0 || normalized.confidence > 100) return { valid: false, reason: 'Confidence out of range' };
-
-  const isLong = normalized.direction === 'LONG';
-  if (isLong && !(normalized.stopLoss < normalized.entry && normalized.takeProfit > normalized.entry)) {
-    return { valid: false, reason: 'Invalid long levels' };
-  }
-  if (!isLong && !(normalized.stopLoss > normalized.entry && normalized.takeProfit < normalized.entry)) {
-    return { valid: false, reason: 'Invalid short levels' };
-  }
-
-  const risk = Math.abs(normalized.entry - normalized.stopLoss);
-  const reward = Math.abs(normalized.takeProfit - normalized.entry);
-  const riskReward = reward / Math.max(risk, 1e-9);
-  if (riskReward < CONFIG.MIN_RISK_REWARD) {
-    return { valid: false, reason: `RR ${riskReward.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD}` };
-  }
-
-  if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
-    return { valid: false, reason: `ATR ${marketInfo.atrPercent.toFixed(2)}% too low` };
-  }
-  if (marketInfo?.volumeTrend === 'DECREASING') {
-    return { valid: false, reason: 'Volume decreasing' };
-  }
-  const regime = marketInfo?.marketRegime;
-  if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
-    return { valid: false, reason: `Regime ${regime}` };
-  }
-
-  return { valid: true, pick: normalized };
-};
-
-const getAiWinRate = (source) => {
-  const stats = state.performanceStats;
-  if (source === 'claude') {
-    const total = stats.claudeWins + stats.claudeLosses;
-    return total > 0 ? stats.claudeWins / total : 0.5;
-  }
-  if (source === 'openai') {
-    const total = stats.openaiWins + stats.openaiLosses;
-    return total > 0 ? stats.openaiWins / total : 0.5;
-  }
-  if (source === 'grok') {
-    const total = stats.grokWins + stats.grokLosses;
-    return total > 0 ? stats.grokWins / total : 0.5;
-  }
-  return 0.5;
-};
-
-const getAiSampleSize = (source) => {
-  const stats = state.performanceStats;
-  if (source === 'claude') return stats.claudeWins + stats.claudeLosses;
-  if (source === 'openai') return stats.openaiWins + stats.openaiLosses;
-  if (source === 'grok') return stats.grokWins + stats.grokLosses;
-  return 0;
-};
-
-const isAiEligible = (source) => {
-  const sampleSize = getAiSampleSize(source);
-  if (sampleSize < 3) return true;
-  return getAiWinRate(source) >= CONFIG.MIN_AI_WINRATE;
-};
-
-const buildAiPerformanceContext = (source) => {
-  const sampleSize = getAiSampleSize(source);
-  const winRate = Math.round(getAiWinRate(source) * 100);
-  if (sampleSize === 0) {
-    return 'Performance: No tracked trades yet.';
-  }
-  return `Performance: ${winRate}% win rate over ${sampleSize} tracked trades.`;
-};
-
-const normalizeAiPick = (pick) => {
-  if (!pick || typeof pick !== 'object') return null;
-  const entry = Number(pick.entry);
-  const takeProfit = Number(pick.takeProfit);
-  const stopLoss = Number(pick.stopLoss);
-  const confidence = Number(pick.confidence);
-  const direction = typeof pick.direction === 'string' ? pick.direction.toUpperCase() : '';
-  const entryTrigger = normalizeEntryTrigger(pick.entryTrigger);
-
-  if (!isValidNumber(entry) || !isValidNumber(takeProfit) || !isValidNumber(stopLoss)) return null;
-  if (!isValidNumber(confidence)) return null;
-  if (!['LONG', 'SHORT'].includes(direction)) return null;
-
-  return {
-    ...pick,
-    entry,
-    takeProfit,
-    stopLoss,
-    confidence,
-    direction,
-    entryTrigger: entryTrigger || null
-  };
 };
 
 const validateAiPick = (pick, marketInfo) => {
@@ -1961,10 +1865,13 @@ async function fetchBybitMarkets() {
 
 // Fetch markets with fallback
 async function fetchMarkets() {
+  state.marketLoadStatus = 'loading';
+  state.marketLoadError = null;
   try {
     const markets = await fetchBinanceMarkets();
     state.dataSource = 'binance';
     updateDataSource('Binance', true);
+    state.marketLoadStatus = 'ready';
     return markets;
   } catch (error) {
     console.warn('Binance failed, trying Bybit...', error);
@@ -1972,11 +1879,14 @@ async function fetchMarkets() {
       const markets = await fetchBybitMarkets();
       state.dataSource = 'bybit';
       updateDataSource('Bybit', true);
+      state.marketLoadStatus = 'ready';
       return markets;
     } catch (error2) {
       console.error('All exchanges failed:', error2);
       updateDataSource('Offline', false);
-      return state.markets;
+      state.marketLoadStatus = 'error';
+      state.marketLoadError = 'Unable to load markets. Check your connection or exchange access.';
+      return [];
     }
   }
 }
@@ -3753,22 +3663,6 @@ async function runAiAnalysis() {
           continue;
         }
 
-        const regime = marketInfo?.marketRegime || 'UNKNOWN';
-        if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
-          console.log(`⛔ ${symbol}: Market regime ${regime} - Skipping`);
-          continue;
-        }
-
-        if (marketInfo?.volumeTrend === 'DECREASING') {
-          console.log(`⛔ ${symbol}: Volume trend decreasing - Skipping`);
-          continue;
-        }
-
-        if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
-          console.log(`⛔ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - Skipping`);
-          continue;
-        }
-
         // HARD FILTER: Supertrend must confirm direction
         const supertrendDir = marketInfo?.supertrend?.direction;
         if ((direction === 'LONG' && supertrendDir !== 'UP') || (direction === 'SHORT' && supertrendDir !== 'DOWN')) {
@@ -5026,6 +4920,14 @@ function updateEquityChart() {
 function renderMarkets() {
   const container = document.getElementById('marketList');
   if (!container) return;
+
+  if (!state.markets.length) {
+    const message = state.marketLoadStatus === 'error'
+      ? state.marketLoadError
+      : 'Loading markets...';
+    container.innerHTML = `<div class="empty-state">${message}</div>`;
+    return;
+  }
 
   const html = state.markets.map(market => {
     const signal = state.signals.find(s => s.symbol === market.symbol);
