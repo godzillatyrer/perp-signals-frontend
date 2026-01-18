@@ -16,6 +16,24 @@ const CONFIG = {
 // MARKET DATA FETCHING
 // ============================================
 
+// Helper function for fetch with timeout
+async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
 async function fetchMarketData() {
   const data = {
     prices: {},
@@ -25,26 +43,118 @@ async function fetchMarketData() {
     longShortRatio: {}
   };
 
-  try {
-    // Fetch prices from Binance
-    const pricesRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
-    const pricesData = await pricesRes.json();
+  // Try multiple data sources for prices
+  let pricesLoaded = false;
 
-    for (const coin of CONFIG.TOP_COINS) {
-      const ticker = pricesData.find(t => t.symbol === coin);
-      if (ticker) {
-        data.prices[coin] = {
-          price: parseFloat(ticker.lastPrice),
-          change24h: parseFloat(ticker.priceChangePercent),
-          high24h: parseFloat(ticker.highPrice),
-          low24h: parseFloat(ticker.lowPrice),
-          volume: parseFloat(ticker.quoteVolume)
-        };
+  // Source 1: Try Binance Spot API (more reliable)
+  if (!pricesLoaded) {
+    try {
+      console.log('Trying Binance Spot API...');
+      const pricesRes = await fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr', {}, 8000);
+      const pricesData = await pricesRes.json();
+
+      if (Array.isArray(pricesData)) {
+        for (const coin of CONFIG.TOP_COINS) {
+          const ticker = pricesData.find(t => t.symbol === coin);
+          if (ticker) {
+            data.prices[coin] = {
+              price: parseFloat(ticker.lastPrice),
+              change24h: parseFloat(ticker.priceChangePercent),
+              high24h: parseFloat(ticker.highPrice),
+              low24h: parseFloat(ticker.lowPrice),
+              volume: parseFloat(ticker.quoteVolume)
+            };
+          }
+        }
+        pricesLoaded = Object.keys(data.prices).length > 0;
+        console.log(`Binance Spot: loaded ${Object.keys(data.prices).length} prices`);
       }
+    } catch (e) {
+      console.log('Binance Spot failed:', e.message);
     }
+  }
 
-    // Fetch funding rates from Coinglass (if API key provided)
-    if (process.env.COINGLASS_API_KEY) {
+  // Source 2: Try Binance Futures API
+  if (!pricesLoaded) {
+    try {
+      console.log('Trying Binance Futures API...');
+      const pricesRes = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/24hr', {}, 8000);
+      const pricesData = await pricesRes.json();
+
+      if (Array.isArray(pricesData)) {
+        for (const coin of CONFIG.TOP_COINS) {
+          const ticker = pricesData.find(t => t.symbol === coin);
+          if (ticker) {
+            data.prices[coin] = {
+              price: parseFloat(ticker.lastPrice),
+              change24h: parseFloat(ticker.priceChangePercent),
+              high24h: parseFloat(ticker.highPrice),
+              low24h: parseFloat(ticker.lowPrice),
+              volume: parseFloat(ticker.quoteVolume)
+            };
+          }
+        }
+        pricesLoaded = Object.keys(data.prices).length > 0;
+        console.log(`Binance Futures: loaded ${Object.keys(data.prices).length} prices`);
+      }
+    } catch (e) {
+      console.log('Binance Futures failed:', e.message);
+    }
+  }
+
+  // Source 3: Try CoinGecko as fallback (no API key needed)
+  if (!pricesLoaded) {
+    try {
+      console.log('Trying CoinGecko API...');
+      const cgIds = {
+        'BTCUSDT': 'bitcoin',
+        'ETHUSDT': 'ethereum',
+        'SOLUSDT': 'solana',
+        'BNBUSDT': 'binancecoin',
+        'XRPUSDT': 'ripple',
+        'DOGEUSDT': 'dogecoin',
+        'ADAUSDT': 'cardano',
+        'AVAXUSDT': 'avalanche-2',
+        'LINKUSDT': 'chainlink',
+        'DOTUSDT': 'polkadot'
+      };
+
+      const ids = Object.values(cgIds).join(',');
+      const cgRes = await fetchWithTimeout(
+        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h`,
+        {},
+        8000
+      );
+      const cgData = await cgRes.json();
+
+      if (Array.isArray(cgData)) {
+        for (const [symbol, cgId] of Object.entries(cgIds)) {
+          const coin = cgData.find(c => c.id === cgId);
+          if (coin) {
+            data.prices[symbol] = {
+              price: coin.current_price,
+              change24h: coin.price_change_percentage_24h || 0,
+              high24h: coin.high_24h || coin.current_price,
+              low24h: coin.low_24h || coin.current_price,
+              volume: coin.total_volume || 0
+            };
+          }
+        }
+        pricesLoaded = Object.keys(data.prices).length > 0;
+        console.log(`CoinGecko: loaded ${Object.keys(data.prices).length} prices`);
+      }
+    } catch (e) {
+      console.log('CoinGecko failed:', e.message);
+    }
+  }
+
+  if (!pricesLoaded) {
+    console.error('All price sources failed!');
+    return data;
+  }
+
+  // Fetch funding rates from Coinglass (if API key provided)
+  if (process.env.COINGLASS_API_KEY) {
       try {
         const fundingRes = await fetch('https://open-api-v3.coinglass.com/api/futures/fundingRate/current?exchange=Binance', {
           headers: { 'CG-API-KEY': process.env.COINGLASS_API_KEY }
@@ -106,9 +216,6 @@ async function fetchMarketData() {
         console.log('Coinglass L/S ratio unavailable:', e.message);
       }
     }
-  } catch (error) {
-    console.error('Error fetching market data:', error);
-  }
 
   return data;
 }
