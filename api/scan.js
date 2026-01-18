@@ -1,9 +1,9 @@
 // Vercel Serverless Function for AI Signal Scanning
 // Runs on cron schedule and sends Telegram alerts
 //
-// NOTE: For proper cooldown tracking across serverless invocations,
-// set up Vercel KV (Dashboard > Storage > Create KV Database).
-// Without Vercel KV, cooldown tracking is limited.
+// Uses Upstash Redis for persistent cooldown tracking across invocations
+
+import { Redis } from '@upstash/redis';
 
 const CONFIG = {
   // Minimum confidence for alerts - STRICT (raised to 85%)
@@ -91,21 +91,105 @@ function isMajorEventDay() {
 }
 
 // ============================================
-// SIGNAL TRACKING (In-memory for this invocation)
+// SIGNAL TRACKING (Persistent via Upstash Redis)
 // ============================================
-// NOTE: getUpdates() only returns messages sent TO the bot, not BY the bot.
-// For proper cross-invocation cooldown tracking, use Vercel KV.
-// This in-memory tracker at least prevents duplicates within the same scan.
+// Stores: { direction, entry, timestamp } for each symbol
+// Cooldown: 24 hours, unless direction flips or price moves 10%+
 
-const signalsSentThisRun = new Set();
+let redis = null;
 
-function markSignalSent(symbol) {
-  signalsSentThisRun.add(symbol);
-  console.log(`📝 Marked ${symbol} as sent this run`);
+function getRedis() {
+  if (!redis && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    redis = new Redis({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN
+    });
+  }
+  return redis;
 }
 
-function wasSignalSentThisRun(symbol) {
-  return signalsSentThisRun.has(symbol);
+async function getLastSignal(symbol) {
+  const r = getRedis();
+  if (!r) return null;
+
+  try {
+    const data = await r.get(`signal:${symbol}`);
+    return data;
+  } catch (e) {
+    console.log(`Redis get error for ${symbol}:`, e.message);
+    return null;
+  }
+}
+
+async function saveSignal(symbol, direction, entry) {
+  const r = getRedis();
+  if (!r) {
+    console.log(`📝 Redis not configured - signal not persisted`);
+    return;
+  }
+
+  try {
+    const data = {
+      direction,
+      entry,
+      timestamp: Date.now()
+    };
+    // Store with 48-hour expiry (auto-cleanup)
+    await r.set(`signal:${symbol}`, JSON.stringify(data), { ex: 48 * 60 * 60 });
+    console.log(`📝 Saved ${symbol} ${direction} @ ${entry} to Redis`);
+  } catch (e) {
+    console.log(`Redis save error for ${symbol}:`, e.message);
+  }
+}
+
+async function isSignalOnCooldown(symbol, direction, currentPrice) {
+  const lastSignalRaw = await getLastSignal(symbol);
+  if (!lastSignalRaw) {
+    console.log(`✅ ${symbol}: No previous signal found - OK to send`);
+    return false;
+  }
+
+  let lastSignal;
+  try {
+    lastSignal = typeof lastSignalRaw === 'string' ? JSON.parse(lastSignalRaw) : lastSignalRaw;
+  } catch (e) {
+    console.log(`✅ ${symbol}: Could not parse last signal - OK to send`);
+    return false;
+  }
+
+  const hoursSinceLast = (Date.now() - lastSignal.timestamp) / (1000 * 60 * 60);
+
+  // Cooldown expired
+  if (hoursSinceLast >= CONFIG.SIGNAL_COOLDOWN_HOURS) {
+    console.log(`✅ ${symbol}: Cooldown expired (${hoursSinceLast.toFixed(1)}h ago) - OK to send`);
+    return false;
+  }
+
+  // Direction flipped (LONG -> SHORT or vice versa)
+  if (lastSignal.direction && lastSignal.direction !== direction) {
+    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction} → ${direction} - OK to send`);
+    return false;
+  }
+
+  // Price moved significantly (10%+)
+  if (lastSignal.entry && currentPrice) {
+    const priceChange = Math.abs((currentPrice - lastSignal.entry) / lastSignal.entry * 100);
+    if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
+      console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% - OK to send`);
+      return false;
+    }
+
+    // Price barely moved - definitely on cooldown
+    if (priceChange < CONFIG.MIN_PRICE_CHANGE_PERCENT) {
+      console.log(`🚫 ${symbol}: Price only moved ${priceChange.toFixed(1)}% (< ${CONFIG.MIN_PRICE_CHANGE_PERCENT}%) - BLOCKED`);
+      return true;
+    }
+  }
+
+  // Still on cooldown
+  const hoursRemaining = (CONFIG.SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
+  console.log(`⏳ ${symbol}: On cooldown (${hoursRemaining}h remaining) - BLOCKED`);
+  return true;
 }
 
 // ============================================
@@ -807,14 +891,15 @@ export default async function handler(request, response) {
       console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
     }
 
-    // Apply in-memory cooldown filter (prevents duplicates within this scan run)
-    alertSignals = alertSignals.filter(signal => {
-      if (wasSignalSentThisRun(signal.symbol)) {
-        console.log(`⏱️ ${signal.symbol}: Already sent this run - Skipping`);
-        return false;
-      }
-      return true;
-    });
+    // Apply Redis-based cooldown filter (persistent across invocations)
+    const cooldownChecks = await Promise.all(
+      alertSignals.map(async signal => {
+        const currentPrice = marketData.prices[signal.symbol]?.price || signal.entry;
+        const onCooldown = await isSignalOnCooldown(signal.symbol, signal.direction, currentPrice);
+        return { signal, onCooldown };
+      })
+    );
+    alertSignals = cooldownChecks.filter(c => !c.onCooldown).map(c => c.signal);
     console.log(`⏱️ After cooldown filter: ${alertSignals.length} signals`);
 
     // Apply correlation filter (don't send multiple signals from same group)
@@ -832,7 +917,8 @@ export default async function handler(request, response) {
       const sent = await sendTelegramMessage(message, keyboard);
       if (sent) {
         alertsSent++;
-        markSignalSent(signal.symbol);
+        // Save to Redis for cooldown tracking
+        await saveSignal(signal.symbol, signal.direction, signal.entry);
         console.log(`✅ Sent alert for ${signal.symbol} ${signal.direction}`);
       }
     }
