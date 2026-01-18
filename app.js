@@ -1136,6 +1136,104 @@ const validateAiPick = (pick, marketInfo) => {
   return { valid: true, pick: normalized };
 };
 
+const getAiWinRate = (source) => {
+  const stats = state.performanceStats;
+  if (source === 'claude') {
+    const total = stats.claudeWins + stats.claudeLosses;
+    return total > 0 ? stats.claudeWins / total : 0.5;
+  }
+  if (source === 'openai') {
+    const total = stats.openaiWins + stats.openaiLosses;
+    return total > 0 ? stats.openaiWins / total : 0.5;
+  }
+  if (source === 'grok') {
+    const total = stats.grokWins + stats.grokLosses;
+    return total > 0 ? stats.grokWins / total : 0.5;
+  }
+  return 0.5;
+};
+
+const getAiSampleSize = (source) => {
+  const stats = state.performanceStats;
+  if (source === 'claude') return stats.claudeWins + stats.claudeLosses;
+  if (source === 'openai') return stats.openaiWins + stats.openaiLosses;
+  if (source === 'grok') return stats.grokWins + stats.grokLosses;
+  return 0;
+};
+
+const isAiEligible = (source) => {
+  const sampleSize = getAiSampleSize(source);
+  if (sampleSize < 3) return true;
+  return getAiWinRate(source) >= CONFIG.MIN_AI_WINRATE;
+};
+
+const buildAiPerformanceContext = (source) => {
+  const sampleSize = getAiSampleSize(source);
+  const winRate = Math.round(getAiWinRate(source) * 100);
+  if (sampleSize === 0) {
+    return 'Performance: No tracked trades yet.';
+  }
+  return `Performance: ${winRate}% win rate over ${sampleSize} tracked trades.`;
+};
+
+const normalizeAiPick = (pick) => {
+  if (!pick || typeof pick !== 'object') return null;
+  const entry = Number(pick.entry);
+  const takeProfit = Number(pick.takeProfit);
+  const stopLoss = Number(pick.stopLoss);
+  const confidence = Number(pick.confidence);
+  const direction = typeof pick.direction === 'string' ? pick.direction.toUpperCase() : '';
+  const entryTrigger = normalizeEntryTrigger(pick.entryTrigger);
+
+  if (!isValidNumber(entry) || !isValidNumber(takeProfit) || !isValidNumber(stopLoss)) return null;
+  if (!isValidNumber(confidence)) return null;
+  if (!['LONG', 'SHORT'].includes(direction)) return null;
+
+  return {
+    ...pick,
+    entry,
+    takeProfit,
+    stopLoss,
+    confidence,
+    direction,
+    entryTrigger: entryTrigger || null
+  };
+};
+
+const validateAiPick = (pick, marketInfo) => {
+  const normalized = normalizeAiPick(pick);
+  if (!normalized) return { valid: false, reason: 'Invalid shape' };
+  if (normalized.confidence < 0 || normalized.confidence > 100) return { valid: false, reason: 'Confidence out of range' };
+
+  const isLong = normalized.direction === 'LONG';
+  if (isLong && !(normalized.stopLoss < normalized.entry && normalized.takeProfit > normalized.entry)) {
+    return { valid: false, reason: 'Invalid long levels' };
+  }
+  if (!isLong && !(normalized.stopLoss > normalized.entry && normalized.takeProfit < normalized.entry)) {
+    return { valid: false, reason: 'Invalid short levels' };
+  }
+
+  const risk = Math.abs(normalized.entry - normalized.stopLoss);
+  const reward = Math.abs(normalized.takeProfit - normalized.entry);
+  const riskReward = reward / Math.max(risk, 1e-9);
+  if (riskReward < CONFIG.MIN_RISK_REWARD) {
+    return { valid: false, reason: `RR ${riskReward.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD}` };
+  }
+
+  if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+    return { valid: false, reason: `ATR ${marketInfo.atrPercent.toFixed(2)}% too low` };
+  }
+  if (marketInfo?.volumeTrend === 'DECREASING') {
+    return { valid: false, reason: 'Volume decreasing' };
+  }
+  const regime = marketInfo?.marketRegime;
+  if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
+    return { valid: false, reason: `Regime ${regime}` };
+  }
+
+  return { valid: true, pick: normalized };
+};
+
 // Utility Functions
 const formatPrice = (price, decimals = 2) => {
   if (price >= 1000) return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -3652,6 +3750,22 @@ async function runAiAnalysis() {
         if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
           console.log(`⛔ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - Skipping`);
           recordFilterReason('ATR too low');
+          continue;
+        }
+
+        const regime = marketInfo?.marketRegime || 'UNKNOWN';
+        if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
+          console.log(`⛔ ${symbol}: Market regime ${regime} - Skipping`);
+          continue;
+        }
+
+        if (marketInfo?.volumeTrend === 'DECREASING') {
+          console.log(`⛔ ${symbol}: Volume trend decreasing - Skipping`);
+          continue;
+        }
+
+        if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+          console.log(`⛔ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - Skipping`);
           continue;
         }
 
