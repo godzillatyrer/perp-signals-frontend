@@ -231,6 +231,24 @@ Your bot is properly configured and ready to receive trading signals.
   return await sendTelegramMessage(testMessage.trim());
 }
 
+// Manual send signal to Telegram (bypasses enabled/confidence checks)
+async function sendSignalToTelegramManual(signal) {
+  // Check if Telegram is configured (but not necessarily enabled)
+  if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
+    alert('⚠️ Telegram not configured!\n\nPlease go to Settings and add your:\n• Telegram Bot Token\n• Telegram Chat ID');
+    return false;
+  }
+
+  const message = formatSignalForTelegram(signal);
+  const success = await sendTelegramMessage(message);
+
+  if (success) {
+    console.log(`📤 Manually sent ${signal.symbol} signal to Telegram`);
+  }
+
+  return success;
+}
+
 // Prompt for API keys
 function promptForApiKeys() {
   // Claude API Key
@@ -3750,14 +3768,17 @@ function renderSignals() {
           <div class="label">Status</div>
           <div class="value ${hasOpenTrade ? 'green' : signal.isGoldConsensus ? 'gold' : signal.isSilverConsensus ? 'silver' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'cyan' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isGoldConsensus ? '🥇 Gold' : signal.isSilverConsensus ? '🥈 Priority' : signal.confidence >= CONFIG.AI_MIN_CONFIDENCE ? 'Auto-Trade' : 'Watching'}</div>
         </div>
+        <button class="telegram-send-btn" data-symbol="${signal.symbol}" data-direction="${signal.direction}" title="Send to Telegram">
+          📤 Telegram
+        </button>
       </div>
     </div>
   `}).join('');
 
   container.querySelectorAll('.signal-card').forEach(el => {
     el.addEventListener('click', (e) => {
-      // Don't navigate if clicking the trade button
-      if (e.target.classList.contains('take-trade-btn')) return;
+      // Don't navigate if clicking buttons
+      if (e.target.classList.contains('take-trade-btn') || e.target.classList.contains('telegram-send-btn')) return;
       selectMarket(el.dataset.symbol);
     });
   });
@@ -3774,6 +3795,39 @@ function renderSignals() {
         btn.textContent = '✓ Opened';
         btn.disabled = true;
         btn.classList.add('traded');
+      }
+    });
+  });
+
+  // Manual Telegram send button handlers
+  container.querySelectorAll('.telegram-send-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const symbol = btn.dataset.symbol;
+      const direction = btn.dataset.direction;
+      const signal = signals.find(s => s.symbol === symbol && s.direction === direction);
+
+      if (signal) {
+        btn.disabled = true;
+        btn.textContent = '📤 Sending...';
+
+        const success = await sendSignalToTelegramManual(signal);
+
+        if (success) {
+          btn.textContent = '✅ Sent!';
+          btn.classList.add('sent');
+          setTimeout(() => {
+            btn.textContent = '📤 Telegram';
+            btn.disabled = false;
+            btn.classList.remove('sent');
+          }, 3000);
+        } else {
+          btn.textContent = '❌ Failed';
+          setTimeout(() => {
+            btn.textContent = '📤 Telegram';
+            btn.disabled = false;
+          }, 2000);
+        }
       }
     });
   });

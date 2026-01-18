@@ -2281,11 +2281,12 @@ select:focus-visible {
 
 .signal-footer {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, 1fr) auto;
   gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   background: var(--bg-dark);
+  align-items: center;
 }
 
 .footer-stat {
@@ -2306,6 +2307,40 @@ select:focus-visible {
 
 .footer-stat .value.green { color: var(--green); }
 .footer-stat .value.red { color: var(--red); }
+
+/* Manual Telegram Send Button */
+.telegram-send-btn {
+  background: linear-gradient(135deg, #0088cc 0%, #00aaff 100%);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.telegram-send-btn:hover {
+  background: linear-gradient(135deg, #0099dd 0%, #00bbff 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 136, 204, 0.4);
+}
+
+.telegram-send-btn:active {
+  transform: translateY(0);
+}
+
+.telegram-send-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.telegram-send-btn.sent {
+  background: linear-gradient(135deg, var(--green) 0%, #00cc88 100%);
+}
 
 /* Data Source */
 .data-source {
