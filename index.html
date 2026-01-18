@@ -574,6 +574,45 @@
             </label>
           </div>
         </div>
+
+        <div class="settings-section">
+          <h3>📱 Telegram Alerts</h3>
+          <p class="settings-desc">Get signal alerts directly to your Telegram</p>
+
+          <div class="api-input-group">
+            <label for="telegramBotToken">
+              <span class="api-icon">🤖</span>
+              Bot Token
+            </label>
+            <div class="api-input-wrapper">
+              <input type="password" id="telegramBotToken" placeholder="123456789:ABCdefGHI..." autocomplete="off">
+              <button class="toggle-visibility" data-target="telegramBotToken">👁</button>
+            </div>
+            <span class="api-hint">Create bot via <a href="https://t.me/BotFather" target="_blank">@BotFather</a> on Telegram</span>
+          </div>
+
+          <div class="api-input-group">
+            <label for="telegramChatId">
+              <span class="api-icon">💬</span>
+              Chat ID
+            </label>
+            <div class="api-input-wrapper">
+              <input type="text" id="telegramChatId" placeholder="Your chat ID or group ID..." autocomplete="off">
+              <button class="toggle-visibility" data-target="telegramChatId">👁</button>
+            </div>
+            <span class="api-hint">Get via <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> or use group ID for groups</span>
+          </div>
+
+          <div class="settings-row">
+            <label>Enable Telegram Alerts</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="telegramToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <button class="test-telegram-btn" id="testTelegramBtn">📤 Send Test Message</button>
+        </div>
       </div>
       <div class="settings-footer">
         <div class="api-status" id="settingsApiStatus">

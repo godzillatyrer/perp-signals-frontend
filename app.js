@@ -31,6 +31,10 @@ const CONFIG = {
   COINGLASS_API_BASE: 'https://open-api-v4.coinglass.com/api',
   COINGLASS_PROXY: 'https://corsproxy.io/?', // CORS proxy for browser requests
   COINGLASS_API_KEY: '', // Get free key at coinglass.com/api
+  // Telegram Bot (Alerts)
+  TELEGRAM_BOT_TOKEN: '', // Get from @BotFather
+  TELEGRAM_CHAT_ID: '', // Get from @userinfobot
+  TELEGRAM_ENABLED: false,
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
@@ -62,25 +66,169 @@ function loadApiKeys() {
   const grokKey = localStorage.getItem('grok_api_key');
   const lunarcrushKey = localStorage.getItem('lunarcrush_api_key');
   const coinglassKey = localStorage.getItem('coinglass_api_key');
+  const telegramToken = localStorage.getItem('telegram_bot_token');
+  const telegramChatId = localStorage.getItem('telegram_chat_id');
+  const telegramEnabled = localStorage.getItem('telegram_enabled');
 
   if (claudeKey) CONFIG.CLAUDE_API_KEY = claudeKey;
   if (openaiKey) CONFIG.OPENAI_API_KEY = openaiKey;
   if (grokKey) CONFIG.GROK_API_KEY = grokKey;
   if (lunarcrushKey) CONFIG.LUNARCRUSH_API_KEY = lunarcrushKey;
   if (coinglassKey) CONFIG.COINGLASS_API_KEY = coinglassKey;
+  if (telegramToken) CONFIG.TELEGRAM_BOT_TOKEN = telegramToken;
+  if (telegramChatId) CONFIG.TELEGRAM_CHAT_ID = telegramChatId;
+  CONFIG.TELEGRAM_ENABLED = telegramEnabled === 'true';
 
   return {
     claude: !!claudeKey,
     openai: !!openaiKey,
     grok: !!grokKey,
     lunarcrush: !!lunarcrushKey,
-    coinglass: !!coinglassKey
+    coinglass: !!coinglassKey,
+    telegram: !!(telegramToken && telegramChatId)
   };
 }
 
 // Legacy function for backwards compatibility
 function loadApiKey() {
   return loadApiKeys().claude;
+}
+
+// ============================================
+// TELEGRAM ALERTS
+// ============================================
+
+async function sendTelegramMessage(message, parseMode = 'HTML') {
+  if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
+    console.warn('⚠️ Telegram not configured');
+    return false;
+  }
+
+  try {
+    const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CONFIG.TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: parseMode,
+        disable_web_page_preview: true
+      })
+    });
+
+    const result = await response.json();
+    if (!result.ok) {
+      console.error('❌ Telegram error:', result.description);
+      return false;
+    }
+
+    console.log('📱 Telegram message sent successfully');
+    return true;
+  } catch (error) {
+    console.error('❌ Telegram send failed:', error);
+    return false;
+  }
+}
+
+function formatSignalForTelegram(signal) {
+  const direction = signal.direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+  const emoji = signal.direction === 'LONG' ? '📈' : '📉';
+  const consensusType = signal.isGoldConsensus ? '🥇 GOLD CONSENSUS' :
+                        signal.isSilverConsensus ? '🥈 SILVER CONSENSUS' :
+                        '🎯 AI SIGNAL';
+
+  // Format price values
+  const entry = parseFloat(signal.entry).toFixed(signal.entry < 1 ? 6 : 2);
+  const tp = parseFloat(signal.tp).toFixed(signal.tp < 1 ? 6 : 2);
+  const sl = parseFloat(signal.sl).toFixed(signal.sl < 1 ? 6 : 2);
+  const tpPercent = signal.tpPercent ? signal.tpPercent.toFixed(1) :
+                    (((signal.tp - signal.entry) / signal.entry) * 100 * (signal.direction === 'LONG' ? 1 : -1)).toFixed(1);
+
+  // AI sources
+  const aiSources = signal.aiSources || [];
+  const aiList = aiSources.length > 0 ? aiSources.map(ai => {
+    if (ai === 'claude') return '🧠 Claude';
+    if (ai === 'openai') return '🤖 GPT-4o';
+    if (ai === 'grok') return '⚡ Grok';
+    return ai;
+  }).join(' + ') : 'AI Analysis';
+
+  // Build message
+  let message = `
+<b>${consensusType}</b>
+━━━━━━━━━━━━━━━━━━━━━
+
+${emoji} <b>${signal.symbol}</b> ${direction}
+🎯 Confidence: <b>${signal.confidence}%</b>
+
+<b>📊 Trade Setup:</b>
+├ Entry: <code>${entry}</code>
+├ Take Profit: <code>${tp}</code> (+${tpPercent}%)
+└ Stop Loss: <code>${sl}</code>
+
+<b>🤖 AI Sources:</b> ${aiList}
+`;
+
+  // Add reasons if available
+  if (signal.reasons && signal.reasons.length > 0) {
+    message += `\n<b>📋 Analysis:</b>\n`;
+    signal.reasons.slice(0, 4).forEach(reason => {
+      message += `• ${reason}\n`;
+    });
+  }
+
+  // Add entry trigger if available
+  if (signal.entryTrigger) {
+    message += `\n<b>⚡ Entry Trigger:</b> ${signal.entryTrigger}`;
+  }
+
+  // Add market regime if available
+  if (signal.marketRegime) {
+    const regimeEmoji = signal.marketRegime === 'TRENDING' ? '📈' :
+                        signal.marketRegime === 'RANGING' ? '↔️' : '⚠️';
+    message += `\n<b>🌍 Market:</b> ${regimeEmoji} ${signal.marketRegime}`;
+  }
+
+  message += `\n\n⏰ ${new Date().toLocaleString()}`;
+  message += `\n\n<i>Sentient Trader AI</i>`;
+
+  return message.trim();
+}
+
+async function sendTelegramSignalAlert(signal) {
+  if (!CONFIG.TELEGRAM_ENABLED) {
+    return false;
+  }
+
+  // Only send alerts for high-confidence signals
+  if (signal.confidence < CONFIG.ALERT_CONFIDENCE) {
+    return false;
+  }
+
+  const message = formatSignalForTelegram(signal);
+  return await sendTelegramMessage(message);
+}
+
+async function sendTelegramTestMessage() {
+  const testMessage = `
+<b>🧪 Test Message from Sentient Trader</b>
+━━━━━━━━━━━━━━━━━━━━━
+
+✅ Telegram alerts are working!
+
+Your bot is properly configured and ready to receive trading signals.
+
+<b>What you'll receive:</b>
+• 🥇 Gold Consensus signals (all 3 AIs agree)
+• 🥈 Silver Consensus signals (2 AIs agree)
+• 🎯 High-confidence AI signals (85%+)
+
+<i>Sentient Trader AI</i>
+⏰ ${new Date().toLocaleString()}
+`;
+
+  return await sendTelegramMessage(testMessage.trim());
 }
 
 // Prompt for API keys
@@ -2349,6 +2497,9 @@ function showConsensusNotification(consensusSignals) {
       `${signal.aiSources.length} AIs agree: ${signal.direction} with ${signal.confidence}% confidence`,
       { symbol: signal.symbol, important: true, tag: 'consensus-' + signal.symbol }
     );
+
+    // Send Telegram alert
+    sendTelegramSignalAlert(signal);
   }
 }
 
@@ -4728,6 +4879,14 @@ function openSettingsModal() {
   document.getElementById('soundToggle').checked = state.soundEnabled;
   document.getElementById('notificationToggle').checked = state.notificationsEnabled;
 
+  // Load Telegram settings
+  const telegramBotToken = document.getElementById('telegramBotToken');
+  const telegramChatId = document.getElementById('telegramChatId');
+  const telegramToggle = document.getElementById('telegramToggle');
+  if (telegramBotToken) telegramBotToken.value = CONFIG.TELEGRAM_BOT_TOKEN || '';
+  if (telegramChatId) telegramChatId.value = CONFIG.TELEGRAM_CHAT_ID || '';
+  if (telegramToggle) telegramToggle.checked = CONFIG.TELEGRAM_ENABLED;
+
   // Update API status display
   updateSettingsApiStatus();
 
@@ -4862,6 +5021,32 @@ function saveSettings() {
     localStorage.removeItem('coinglass_api_key');
   }
 
+  // Save Telegram settings
+  const telegramToken = document.getElementById('telegramBotToken')?.value?.trim() || '';
+  const telegramChatId = document.getElementById('telegramChatId')?.value?.trim() || '';
+  const telegramEnabled = document.getElementById('telegramToggle')?.checked ?? false;
+
+  if (telegramToken && telegramToken.length > 10) {
+    CONFIG.TELEGRAM_BOT_TOKEN = telegramToken;
+    localStorage.setItem('telegram_bot_token', telegramToken);
+    console.log('✅ Telegram Bot Token saved');
+  } else {
+    CONFIG.TELEGRAM_BOT_TOKEN = '';
+    localStorage.removeItem('telegram_bot_token');
+  }
+
+  if (telegramChatId && telegramChatId.length > 0) {
+    CONFIG.TELEGRAM_CHAT_ID = telegramChatId;
+    localStorage.setItem('telegram_chat_id', telegramChatId);
+    console.log('✅ Telegram Chat ID saved');
+  } else {
+    CONFIG.TELEGRAM_CHAT_ID = '';
+    localStorage.removeItem('telegram_chat_id');
+  }
+
+  CONFIG.TELEGRAM_ENABLED = telegramEnabled;
+  localStorage.setItem('telegram_enabled', telegramEnabled.toString());
+
   // Save toggle states
   state.aiAutoTradeEnabled = document.getElementById('aiAutoTradeToggle')?.checked ?? true;
   state.soundEnabled = document.getElementById('soundToggle')?.checked ?? true;
@@ -4931,6 +5116,48 @@ function initSettingsModal() {
       input.addEventListener('input', updateSettingsApiStatus);
     }
   });
+
+  // Test Telegram button
+  const testTelegramBtn = document.getElementById('testTelegramBtn');
+  if (testTelegramBtn) {
+    testTelegramBtn.addEventListener('click', async () => {
+      testTelegramBtn.disabled = true;
+      testTelegramBtn.textContent = '📤 Sending...';
+
+      // Temporarily save current input values to CONFIG for test
+      const botToken = document.getElementById('telegramBotToken')?.value?.trim();
+      const chatId = document.getElementById('telegramChatId')?.value?.trim();
+
+      if (!botToken || !chatId) {
+        testTelegramBtn.textContent = '❌ Missing Token/ID';
+        setTimeout(() => { testTelegramBtn.textContent = '📤 Send Test Message'; testTelegramBtn.disabled = false; }, 2000);
+        return;
+      }
+
+      // Temporarily set config for test
+      const origToken = CONFIG.TELEGRAM_BOT_TOKEN;
+      const origChatId = CONFIG.TELEGRAM_CHAT_ID;
+      CONFIG.TELEGRAM_BOT_TOKEN = botToken;
+      CONFIG.TELEGRAM_CHAT_ID = chatId;
+
+      const success = await sendTelegramTestMessage();
+
+      // Restore original config (will be properly saved when user clicks Save)
+      CONFIG.TELEGRAM_BOT_TOKEN = origToken;
+      CONFIG.TELEGRAM_CHAT_ID = origChatId;
+
+      if (success) {
+        testTelegramBtn.textContent = '✅ Message Sent!';
+      } else {
+        testTelegramBtn.textContent = '❌ Failed - Check Token/ID';
+      }
+
+      setTimeout(() => {
+        testTelegramBtn.textContent = '📤 Send Test Message';
+        testTelegramBtn.disabled = false;
+      }, 3000);
+    });
+  }
 
   // Escape key to close
   document.addEventListener('keydown', (e) => {

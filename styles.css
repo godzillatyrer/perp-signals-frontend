@@ -3125,6 +3125,40 @@ select:focus-visible {
   text-decoration: underline;
 }
 
+.test-telegram-btn {
+  width: 100%;
+  margin-top: 16px;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, #0088cc, #00aced);
+  border: none;
+  border-radius: var(--radius);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.test-telegram-btn:hover {
+  background: linear-gradient(135deg, #006699, #0088cc);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 136, 204, 0.4);
+}
+
+.test-telegram-btn:active {
+  transform: translateY(0);
+}
+
+.test-telegram-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .settings-row {
   display: flex;
   align-items: center;
