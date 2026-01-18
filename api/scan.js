@@ -198,11 +198,9 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
     return false;
   }
 
-  // Direction flipped (LONG -> SHORT or vice versa)
-  if (lastSignal.direction && lastSignal.direction !== direction) {
-    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction} → ${direction} - OK to send`);
-    return false;
-  }
+  // NOTE: Direction flip bypass REMOVED - 12h cooldown applies regardless of direction
+  // The same coin should not get signals within 12h, whether LONG or SHORT
+  // This prevents oscillating signals when AI recommendations flip back and forth
 
   // Price moved significantly (10%+)
   if (lastSignal.entry && currentPrice) {
