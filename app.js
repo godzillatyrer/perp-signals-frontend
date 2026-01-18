@@ -969,7 +969,171 @@ const state = {
     grok: { status: 'idle', lastCall: null, lastError: null, callCount: 0, successCount: 0 }
   },
   soundEnabled: true,
-  notificationsEnabled: false
+  notificationsEnabled: false,
+  signalBlockStats: {},
+  lastSignalSummary: '',
+  aiRejectionLog: []
+};
+
+const getAiWinRate = (source) => {
+  const stats = state.performanceStats;
+  if (source === 'claude') {
+    const total = stats.claudeWins + stats.claudeLosses;
+    return total > 0 ? stats.claudeWins / total : 0.5;
+  }
+  if (source === 'openai') {
+    const total = stats.openaiWins + stats.openaiLosses;
+    return total > 0 ? stats.openaiWins / total : 0.5;
+  }
+  if (source === 'grok') {
+    const total = stats.grokWins + stats.grokLosses;
+    return total > 0 ? stats.grokWins / total : 0.5;
+  }
+  return 0.5;
+};
+
+const getAiSampleSize = (source) => {
+  const stats = state.performanceStats;
+  if (source === 'claude') return stats.claudeWins + stats.claudeLosses;
+  if (source === 'openai') return stats.openaiWins + stats.openaiLosses;
+  if (source === 'grok') return stats.grokWins + stats.grokLosses;
+  return 0;
+};
+
+const isAiEligible = (source) => {
+  const sampleSize = getAiSampleSize(source);
+  if (sampleSize < 3) return true;
+  return getAiWinRate(source) >= CONFIG.MIN_AI_WINRATE;
+};
+
+const buildAiPerformanceContext = (source) => {
+  const sampleSize = getAiSampleSize(source);
+  const winRate = Math.round(getAiWinRate(source) * 100);
+  if (sampleSize === 0) {
+    return 'Performance: No tracked trades yet.';
+  }
+  return `Performance: ${winRate}% win rate over ${sampleSize} tracked trades.`;
+};
+
+const normalizeAiPick = (pick) => {
+  if (!pick || typeof pick !== 'object') return null;
+  const entry = Number(pick.entry);
+  const takeProfit = Number(pick.takeProfit);
+  const stopLoss = Number(pick.stopLoss);
+  const confidence = Number(pick.confidence);
+  const direction = typeof pick.direction === 'string' ? pick.direction.toUpperCase() : '';
+  const entryTrigger = normalizeEntryTrigger(pick.entryTrigger);
+
+  if (!isValidNumber(entry) || !isValidNumber(takeProfit) || !isValidNumber(stopLoss)) return null;
+  if (!isValidNumber(confidence)) return null;
+  if (!['LONG', 'SHORT'].includes(direction)) return null;
+
+  return {
+    ...pick,
+    entry,
+    takeProfit,
+    stopLoss,
+    confidence,
+    direction,
+    entryTrigger: entryTrigger || null
+  };
+};
+
+const recordSignalRejection = (reason) => {
+  if (!reason) return;
+  state.aiRejectionLog.unshift({ reason, timestamp: Date.now() });
+  state.aiRejectionLog = state.aiRejectionLog.slice(0, 50);
+};
+
+const summarizeRejections = () => {
+  if (state.aiRejectionLog.length === 0) return 'No recent rejection data.';
+  const counts = state.aiRejectionLog.reduce((acc, item) => {
+    acc[item.reason] = (acc[item.reason] || 0) + 1;
+    return acc;
+  }, {});
+  const top = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${reason} (${count})`)
+    .join(', ');
+  return `Recent rejection patterns: ${top}.`;
+};
+
+const computeSignalQuality = (signal, marketInfo) => {
+  const components = [];
+  const base = Math.min(100, Math.max(0, signal.confidence || 0));
+  components.push(base * 0.45);
+
+  const rr = signal.riskReward || 0;
+  const rrScore = Math.min(100, rr * 20);
+  components.push(rrScore * 0.15);
+
+  const mtfScore = marketInfo?.mtfAnalysis?.confluenceScore || 0;
+  components.push(Math.min(100, mtfScore) * 0.15);
+
+  const volumeTrend = marketInfo?.volumeTrend || 'UNKNOWN';
+  const volumeScore = volumeTrend === 'INCREASING' ? 100 : volumeTrend === 'STABLE' ? 70 : 40;
+  components.push(volumeScore * 0.1);
+
+  const atrPercent = marketInfo?.atrPercent ?? 0;
+  const atrScore = atrPercent >= 1 ? 90 : atrPercent >= 0.6 ? 70 : 40;
+  components.push(atrScore * 0.1);
+
+  const regime = marketInfo?.marketRegime || 'UNKNOWN';
+  const regimeScore = ['TRENDING_UP', 'TRENDING_DOWN'].includes(regime) ? 90 : regime === 'VOLATILE' ? 50 : 60;
+  components.push(regimeScore * 0.05);
+
+  return Math.round(components.reduce((sum, val) => sum + val, 0));
+};
+
+const recordFilterReason = (reason) => {
+  if (!reason) return;
+  state.signalBlockStats[reason] = (state.signalBlockStats[reason] || 0) + 1;
+};
+
+const summarizeFilterReasons = () => {
+  const entries = Object.entries(state.signalBlockStats);
+  if (entries.length === 0) return 'No signals met the quality filters yet.';
+  const top = entries
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${reason} (${count})`)
+    .join(', ');
+  return `Most common filters: ${top}.`;
+};
+
+const validateAiPick = (pick, marketInfo) => {
+  const normalized = normalizeAiPick(pick);
+  if (!normalized) return { valid: false, reason: 'Invalid shape' };
+  if (normalized.confidence < 0 || normalized.confidence > 100) return { valid: false, reason: 'Confidence out of range' };
+
+  const isLong = normalized.direction === 'LONG';
+  if (isLong && !(normalized.stopLoss < normalized.entry && normalized.takeProfit > normalized.entry)) {
+    return { valid: false, reason: 'Invalid long levels' };
+  }
+  if (!isLong && !(normalized.stopLoss > normalized.entry && normalized.takeProfit < normalized.entry)) {
+    return { valid: false, reason: 'Invalid short levels' };
+  }
+
+  const risk = Math.abs(normalized.entry - normalized.stopLoss);
+  const reward = Math.abs(normalized.takeProfit - normalized.entry);
+  const riskReward = reward / Math.max(risk, 1e-9);
+  if (riskReward < CONFIG.MIN_RISK_REWARD) {
+    return { valid: false, reason: `RR ${riskReward.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD}` };
+  }
+
+  if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+    return { valid: false, reason: `ATR ${marketInfo.atrPercent.toFixed(2)}% too low` };
+  }
+  if (marketInfo?.volumeTrend === 'DECREASING') {
+    return { valid: false, reason: 'Volume decreasing' };
+  }
+  const regime = marketInfo?.marketRegime;
+  if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
+    return { valid: false, reason: `Regime ${regime}` };
+  }
+
+  return { valid: true, pick: normalized };
 };
 
 const getAiWinRate = (source) => {
@@ -3088,6 +3252,7 @@ const AI_RESPONSE_FORMAT = `
 function buildClaudePrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('claude');
+  const rejectionSummary = summarizeRejections();
   return `You are CLAUDE, a RISK MANAGEMENT specialist for crypto perpetual futures trading. Your expertise:
 - Optimal stop loss placement using market structure
 - Identifying bull traps and bear traps
@@ -3096,6 +3261,7 @@ function buildClaudePrompt(marketData) {
 - Protecting capital above all else
 
 ${performance}
+${rejectionSummary}
 
 MARKET DATA:
 ${dataStr}
@@ -3130,6 +3296,7 @@ Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty top
 function buildOpenAIPrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('openai');
+  const rejectionSummary = summarizeRejections();
   return `You are GPT-4o, a TECHNICAL ANALYSIS specialist for crypto perpetual futures trading. Your expertise:
 - Chart pattern recognition (head & shoulders, triangles, wedges)
 - Support/resistance level identification
@@ -3138,6 +3305,7 @@ function buildOpenAIPrompt(marketData) {
 - Breakout and breakdown identification
 
 ${performance}
+${rejectionSummary}
 
 MARKET DATA:
 ${dataStr}
@@ -3175,6 +3343,7 @@ Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty top
 function buildGrokPrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('grok');
+  const rejectionSummary = summarizeRejections();
   return `You are GROK, a MOMENTUM TRADING specialist for crypto perpetual futures trading. Your expertise:
 - Identifying trend strength and acceleration
 - Catching breakouts early
@@ -3183,6 +3352,7 @@ function buildGrokPrompt(marketData) {
 - Riding strong trends
 
 ${performance}
+${rejectionSummary}
 
 MARKET DATA:
 ${dataStr}
@@ -3234,6 +3404,7 @@ async function runAiAnalysis() {
   }
 
   state.isAiScanning = true;
+  state.signalBlockStats = {};
   const aiNames = [];
   if (isClaudeConfigured()) aiNames.push('Claude');
   if (isOpenAIConfigured()) aiNames.push('GPT-4o');
@@ -3428,6 +3599,8 @@ async function runAiAnalysis() {
                   if (validation.valid) {
                     claudePicks.push({ ...validation.pick, reasoning: pick.reasoning, keyLevels: pick.keyLevels });
                   } else {
+                    recordSignalRejection(validation.reason);
+                    recordFilterReason(validation.reason);
                     console.log(`⛔ Claude pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
@@ -3445,6 +3618,8 @@ async function runAiAnalysis() {
                   if (validation.valid) {
                     openaiPicks.push({ ...validation.pick, reasoning: pick.reasoning, keyLevels: pick.keyLevels });
                   } else {
+                    recordSignalRejection(validation.reason);
+                    recordFilterReason(validation.reason);
                     console.log(`⛔ GPT-4o pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
@@ -3461,6 +3636,8 @@ async function runAiAnalysis() {
                   if (validation.valid) {
                     grokPicks.push({ ...validation.pick, reasoning: pick.reasoning, keyLevels: pick.keyLevels });
                   } else {
+                    recordSignalRejection(validation.reason);
+                    recordFilterReason(validation.reason);
                     console.log(`⛔ Grok pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
@@ -3553,6 +3730,26 @@ async function runAiAnalysis() {
         const adxValue = marketInfo?.adx?.adx || 0;
         if (adxValue < 25) {
           console.log(`⛔ ${symbol}: ADX ${adxValue} < 25 - Skipping (weak trend)`);
+          recordFilterReason('ADX < 25');
+          continue;
+        }
+
+        const regime = marketInfo?.marketRegime || 'UNKNOWN';
+        if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
+          console.log(`⛔ ${symbol}: Market regime ${regime} - Skipping`);
+          recordFilterReason(`Regime ${regime}`);
+          continue;
+        }
+
+        if (marketInfo?.volumeTrend === 'DECREASING') {
+          console.log(`⛔ ${symbol}: Volume trend decreasing - Skipping`);
+          recordFilterReason('Volume decreasing');
+          continue;
+        }
+
+        if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+          console.log(`⛔ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - Skipping`);
+          recordFilterReason('ATR too low');
           continue;
         }
 
@@ -3576,6 +3773,7 @@ async function runAiAnalysis() {
         const supertrendDir = marketInfo?.supertrend?.direction;
         if ((direction === 'LONG' && supertrendDir !== 'UP') || (direction === 'SHORT' && supertrendDir !== 'DOWN')) {
           console.log(`⛔ ${symbol}: Supertrend ${supertrendDir} conflicts with ${direction} - Skipping`);
+          recordFilterReason('Supertrend mismatch');
           continue;
         }
 
@@ -3680,6 +3878,7 @@ async function runAiAnalysis() {
         const riskReward = Math.abs(bestTP - avgEntry) / Math.abs(avgEntry - safestSL);
         if (riskReward < CONFIG.MIN_RISK_REWARD) {
           console.log(`⛔ ${symbol}: Risk/Reward ${riskReward.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD} - Skipping`);
+          recordFilterReason('Risk/Reward too low');
           continue;
         }
 
@@ -3729,6 +3928,8 @@ async function runAiAnalysis() {
           }
         }
 
+        const qualityScore = computeSignalQuality({ confidence: boostedConf, riskReward }, marketInfo);
+
         const signal = {
           symbol: symbol,
           direction: direction,
@@ -3737,6 +3938,7 @@ async function runAiAnalysis() {
           tp: bestTP,
           sl: safestSL,
           riskReward: riskReward,
+          qualityScore: qualityScore,
           timeframe: 'AI',
           reasons: reasons,
           isAiGenerated: true,
@@ -3779,6 +3981,7 @@ async function runAiAnalysis() {
           entry: avgEntry,
           tp: bestTP,
           sl: safestSL,
+          qualityScore: qualityScore,
           aiSources: aiSources,
           isGoldConsensus: isGoldConsensus,
           isSilverConsensus: isSilverConsensus,
@@ -3795,6 +3998,7 @@ async function runAiAnalysis() {
     // Log if no consensus found but individual AIs had picks
     if (allSignals.length === 0 && allPicks.length > 0) {
       console.log(`⚠️ No consensus: ${allPicks.length} individual picks but no 2+ AI agreement`);
+      recordFilterReason('No consensus');
     }
 
     // Sort by gold consensus first, then silver, then confidence
@@ -3824,12 +4028,14 @@ async function runAiAnalysis() {
 
       if (tpPercent < minTP) {
         console.log(`⏭️ Filtered out ${symbol} - TP ${tpPercent.toFixed(1)}% below minimum ${minTP}%`);
+        recordFilterReason('TP below minimum');
         return false;
       }
       return true;
     });
 
     if (filteredSignals.length > 0) {
+      state.lastSignalSummary = '';
       state.lastAiAnalysis = { claudeAnalysis, openaiAnalysis, grokAnalysis };
 
       // Add to signal history (only filtered signals with good TP%)
@@ -3868,6 +4074,8 @@ async function runAiAnalysis() {
       updateAiBadges();
       renderDataView();
       updateAllSRFromAISignals();
+    } else {
+      state.lastSignalSummary = `No high-quality signals right now. ${summarizeFilterReasons()}`;
     }
   } catch (error) {
     console.error('AI Analysis failed:', error);
@@ -4918,6 +5126,7 @@ function detectMarketRegime(candles) {
 function renderSignals() {
   const container = document.getElementById('signalsList');
   if (!container) return;
+  const banner = document.getElementById('signalStatusBanner');
 
   // When AI is configured, use AI signals; otherwise fall back to traditional signals
   // "new" tab uses signalHistory (which includes AI signals), "all" tab uses aiSignals or signals
@@ -4949,6 +5158,7 @@ function renderSignals() {
             <a href="https://platform.openai.com" target="_blank">platform.openai.com</a>
           </p>
         </div>`;
+      if (banner) banner.style.display = 'none';
     } else {
       const aiCount = countConfiguredAIs();
       if (aiCount < 2) {
@@ -4956,9 +5166,16 @@ function renderSignals() {
       } else {
         container.innerHTML = '<div class="empty-state">Waiting for AI consensus... Next scan in a few minutes.<br><br>🥇 Gold = All 3 AIs agree<br>🥈 Silver = 2 AIs agree</div>';
       }
+      if (banner) {
+        const message = state.lastSignalSummary || 'No AI signals available yet.';
+        banner.innerHTML = `<span class="banner-icon">⚠️</span><strong>No Trade:</strong> ${message}`;
+        banner.style.display = 'flex';
+      }
     }
     return;
   }
+
+  if (banner) banner.style.display = 'none';
 
   // For "new" tab, show recent signals first (already sorted by time)
   // For "all" tab, sort by confidence
@@ -4970,6 +5187,8 @@ function renderSignals() {
     const isRecent = Date.now() - signal.timestamp < 300000; // 5 minutes
     const isNew = signal.isNew && isRecent;
     const hasOpenTrade = state.trades.some(t => t.status === 'open' && t.symbol === signal.symbol);
+    const qualityScore = signal.qualityScore ?? Math.round(signal.confidence || 0);
+    const qualityClass = qualityScore >= 80 ? 'quality-high' : qualityScore >= 65 ? 'quality-mid' : 'quality-low';
 
     // Build AI source badge
     let aiSourceBadge = '';
@@ -5058,6 +5277,7 @@ function renderSignals() {
         <div class="signal-confidence">
           <span class="conf-label">Confidence:</span>
           <span class="conf-value">${signal.confidence}%</span>
+          <span class="signal-quality-badge ${qualityClass}">Q${qualityScore}</span>
           <span class="signal-time">${timeAgo(signal.timestamp)}</span>
         </div>
       </div>
@@ -5886,6 +6106,11 @@ function exportToJSON() {
     aiSignals: state.aiSignals,
     aiPredictions: state.aiPredictions,
     performanceStats: state.performanceStats,
+    signalDiagnostics: {
+      lastSignalSummary: state.lastSignalSummary,
+      filterStats: state.signalBlockStats,
+      rejectionLog: state.aiRejectionLog
+    },
     config: {
       minConfidence: CONFIG.AI_MIN_CONFIDENCE,
       alertConfidence: CONFIG.ALERT_CONFIDENCE,
