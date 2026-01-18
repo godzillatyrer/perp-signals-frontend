@@ -42,7 +42,7 @@ const CONFIG = {
   CACHE_TTL: 30000,
   MIN_CONFIDENCE: 65,
   HIGH_CONFIDENCE: 85, // Alert threshold - only notify for 85%+
-  ALERT_CONFIDENCE: 85, // Minimum confidence for alerts/notifications
+  ALERT_CONFIDENCE: 75, // Minimum confidence for alerts/notifications (lowered from 85%)
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
@@ -2240,38 +2240,13 @@ async function runAiAnalysis() {
         // Get market data for this symbol (for regime and MTF checks)
         const marketInfo = enrichedData.find(m => m.symbol === symbol);
 
-        // MARKET REGIME FILTER - DISABLED for more signals
+        // MARKET CONDITIONS - Used for confidence adjustments
         const regime = marketInfo?.marketRegime || 'UNKNOWN';
-        // const isValidRegime = regime === 'TRENDING_UP' || regime === 'TRENDING_DOWN';
-        // if (!isValidRegime && regime !== 'UNKNOWN') {
-        //   console.log(`⏭️ Filtered ${symbol} ${direction} - Market regime is ${regime} (need TRENDING)`);
-        //   continue; // Skip this signal
-        // }
-
-        // REGIME DIRECTION CHECK - DISABLED for more signals
-        // if (regime === 'TRENDING_UP' && direction === 'SHORT') {
-        //   console.log(`⏭️ Filtered ${symbol} SHORT - Regime is TRENDING_UP (counter-trend)`);
-        //   continue;
-        // }
-        // if (regime === 'TRENDING_DOWN' && direction === 'LONG') {
-        //   console.log(`⏭️ Filtered ${symbol} LONG - Regime is TRENDING_DOWN (counter-trend)`);
-        //   continue;
-        // }
-        console.log(`✅ Consensus found: ${symbol} ${direction} - Regime: ${regime}`);
-
-        // MTF ALIGNMENT FILTER - DISABLED for more signals
         const mtfConfluence = marketInfo?.mtfAnalysis?.confluence || 'N/A';
         const mtfScore = marketInfo?.mtfAnalysis?.confluenceScore || 0;
         const isMtfAligned = mtfConfluence === 'BULLISH' && direction === 'LONG' ||
                             mtfConfluence === 'BEARISH' && direction === 'SHORT' ||
-                            mtfScore >= 60; // At least 60% alignment
-
-        // MTF filter disabled - allow all consensus signals through
-        // if (isSilverConsensus && !isMtfAligned && mtfConfluence !== 'N/A') {
-        //   console.log(`⏭️ Filtered ${symbol} ${direction} - MTF not aligned (${mtfConfluence}, ${mtfScore}%)`);
-        //   continue;
-        // }
-        console.log(`📊 Signal passing: ${symbol} ${direction} - MTF: ${mtfConfluence} (${mtfScore}%)`);
+                            mtfScore >= 60;
 
         // Average the values from matching picks
         const avgEntry = matchingPicks.reduce((sum, p) => sum + p.entry, 0) / matchingPicks.length;
@@ -2282,7 +2257,7 @@ async function runAiAnalysis() {
         const getAiWeight = (source) => {
           if (source === 'claude') {
             const total = stats.claudeWins + stats.claudeLosses;
-            return total >= 3 ? (stats.claudeWins / total) : 0.5; // Need 3+ trades for weight
+            return total >= 3 ? (stats.claudeWins / total) : 0.5;
           }
           if (source === 'openai') {
             const total = stats.openaiWins + stats.openaiLosses;
@@ -2305,14 +2280,54 @@ async function runAiAnalysis() {
         }
         const performanceWeightedConf = totalWeight > 0 ? weightedConf / totalWeight : avgConf;
 
-        // Boost confidence based on consensus level and apply weighting
-        const baseConf = (avgConf + performanceWeightedConf) / 2; // Blend simple and weighted
-        let boostedConf = Math.min(98, Math.round(baseConf + (isGoldConsensus ? 10 : 5)));
+        // CONFIDENCE ADJUSTMENT SYSTEM
+        const baseConf = (avgConf + performanceWeightedConf) / 2;
+        let adjustedConf = baseConf;
+        const adjustments = [];
 
-        // Additional boost for MTF alignment
-        if (isMtfAligned && mtfScore >= 75) {
-          boostedConf = Math.min(98, boostedConf + 3);
+        // BONUS: Consensus level
+        if (isGoldConsensus) {
+          adjustedConf += 10;
+          adjustments.push('+10% (Gold consensus - 3 AIs)');
+        } else {
+          adjustedConf += 5;
+          adjustments.push('+5% (Silver consensus - 2 AIs)');
         }
+
+        // BONUS: Strong MTF alignment
+        if (isMtfAligned && mtfScore >= 75) {
+          adjustedConf += 3;
+          adjustments.push('+3% (Strong MTF alignment)');
+        }
+
+        // PENALTY: Non-trending market (ranging/choppy)
+        const isRanging = regime === 'RANGING' || regime === 'CHOPPY' || regime === 'SIDEWAYS';
+        if (isRanging) {
+          adjustedConf -= 5;
+          adjustments.push('-5% (Ranging market)');
+        }
+
+        // PENALTY: Counter-trend trade
+        const isCounterTrend = (regime === 'TRENDING_UP' && direction === 'SHORT') ||
+                               (regime === 'TRENDING_DOWN' && direction === 'LONG');
+        if (isCounterTrend) {
+          adjustedConf -= 10;
+          adjustments.push('-10% (Counter-trend)');
+        }
+
+        // PENALTY: MTF not aligned
+        if (!isMtfAligned && mtfConfluence !== 'N/A' && mtfConfluence !== 'NEUTRAL') {
+          adjustedConf -= 5;
+          adjustments.push('-5% (MTF misaligned)');
+        }
+
+        // Clamp confidence between 50-98%
+        let boostedConf = Math.max(50, Math.min(98, Math.round(adjustedConf)));
+
+        // Log confidence calculation
+        console.log(`✅ ${symbol} ${direction}: Base ${baseConf.toFixed(0)}% → Final ${boostedConf}%`);
+        console.log(`   Adjustments: ${adjustments.join(', ')}`);
+        console.log(`   Regime: ${regime}, MTF: ${mtfConfluence} (${mtfScore}%)`);
 
         // Use most aggressive TP from all matching picks
         const bestTP = direction === 'LONG'

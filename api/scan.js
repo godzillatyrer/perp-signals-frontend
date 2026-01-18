@@ -2,8 +2,8 @@
 // Runs on cron schedule and sends Telegram alerts
 
 const CONFIG = {
-  // Minimum confidence for alerts
-  ALERT_CONFIDENCE: 85,
+  // Minimum confidence for alerts (lowered from 85% to 75%)
+  ALERT_CONFIDENCE: 75,
   // Minimum TP percentages by market cap
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
