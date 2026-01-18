@@ -91,143 +91,21 @@ function isMajorEventDay() {
 }
 
 // ============================================
-// SIGNAL COOLDOWN (Smart - with direction flip & price move detection)
+// SIGNAL TRACKING (In-memory for this invocation)
 // ============================================
+// NOTE: getUpdates() only returns messages sent TO the bot, not BY the bot.
+// For proper cross-invocation cooldown tracking, use Vercel KV.
+// This in-memory tracker at least prevents duplicates within the same scan.
 
-async function getRecentTelegramMessages() {
-  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
-    return [];
-  }
+const signalsSentThisRun = new Set();
 
-  try {
-    // Get recent messages from the chat to check for duplicates
-    const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getUpdates?limit=50`;
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.ok && data.result) {
-      const messages = data.result
-        .filter(u => u.message && u.message.text)
-        .map(u => ({
-          text: u.message.text,
-          date: new Date(u.message.date * 1000)
-        }));
-      return messages;
-    }
-  } catch (error) {
-    console.log('Could not fetch Telegram history:', error.message);
-  }
-  return [];
+function markSignalSent(symbol) {
+  signalsSentThisRun.add(symbol);
+  console.log(`📝 Marked ${symbol} as sent this run`);
 }
 
-// Parse signal details from a Telegram message
-function parseSignalFromMessage(msgText) {
-  const result = { symbol: null, direction: null, entryPrice: null };
-
-  // Try multiple patterns for direction and symbol
-  // Pattern 1: "🚀 LONG BTCUSDT" or "🔴 SHORT BTCUSDT"
-  let headerMatch = msgText.match(/(LONG|SHORT)\s+([A-Z]+USDT)/);
-  if (headerMatch) {
-    result.direction = headerMatch[1];
-    result.symbol = headerMatch[2];
-  }
-
-  // Pattern 2: "BTCUSDT 🟢 LONG" or "BTCUSDT 🔴 SHORT" (frontend format)
-  if (!result.symbol) {
-    headerMatch = msgText.match(/([A-Z]+USDT)\s+.*?(LONG|SHORT)/);
-    if (headerMatch) {
-      result.symbol = headerMatch[1];
-      result.direction = headerMatch[2];
-    }
-  }
-
-  // Try multiple patterns for entry price
-  // Pattern 1: "Entry: $95,000" or "Entry: $0.00001234"
-  let entryMatch = msgText.match(/Entry:\s*\$?([\d,]+\.?\d*)/);
-
-  // Pattern 2: "Entry: <code>1.92</code>" (frontend format with HTML tags)
-  if (!entryMatch || !entryMatch[1]) {
-    entryMatch = msgText.match(/Entry:\s*(?:<code>)?([\d.]+)(?:<\/code>)?/);
-  }
-
-  if (entryMatch && entryMatch[1]) {
-    result.entryPrice = parseFloat(entryMatch[1].replace(/,/g, ''));
-  }
-
-  return result;
-}
-
-// Find the last signal sent for a specific symbol
-function findLastSignalForSymbol(symbol, recentMessages, cooldownMs) {
-  const cutoffTime = new Date(Date.now() - cooldownMs);
-
-  // Sort messages by date descending (newest first)
-  const sorted = [...recentMessages].sort((a, b) => b.date - a.date);
-
-  for (const msg of sorted) {
-    if (msg.date < cutoffTime) continue;
-
-    const parsed = parseSignalFromMessage(msg.text);
-    if (parsed.symbol === symbol) {
-      return {
-        direction: parsed.direction,
-        entryPrice: parsed.entryPrice,
-        date: msg.date
-      };
-    }
-  }
-  return null;
-}
-
-function isSignalOnCooldown(symbol, direction, currentPrice, recentMessages) {
-  const cooldownMs = CONFIG.SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
-  const minCooldownMs = 30 * 60 * 1000; // Minimum 30 minutes between any signals for same coin
-
-  // Find the last signal we sent for this symbol
-  const lastSignal = findLastSignalForSymbol(symbol, recentMessages, cooldownMs);
-
-  // No recent signal for this symbol - not on cooldown
-  if (!lastSignal) {
-    return false;
-  }
-
-  const minutesAgo = Math.round((Date.now() - lastSignal.date.getTime()) / 60000);
-  const timeSinceLastMs = Date.now() - lastSignal.date.getTime();
-
-  // Calculate price change
-  let priceChange = 0;
-  if (lastSignal.entryPrice && currentPrice) {
-    priceChange = Math.abs((currentPrice - lastSignal.entryPrice) / lastSignal.entryPrice * 100);
-  }
-
-  // BLOCK: If price only moved slightly (< 2%), always block regardless of direction
-  // This prevents spam like 2.04 → 2.03 entry alerts
-  if (priceChange < 2) {
-    console.log(`🚫 ${symbol}: Price only moved ${priceChange.toFixed(1)}% (< 2%) - BLOCKING duplicate signal`);
-    return true; // Block the signal
-  }
-
-  // BLOCK: Minimum 30 minutes between signals even with direction change
-  if (timeSinceLastMs < minCooldownMs) {
-    console.log(`⏳ ${symbol}: Only ${minutesAgo} min since last signal (min 30 min) - BLOCKING`);
-    return true; // Block the signal
-  }
-
-  // OVERRIDE 1: Direction has flipped AND price moved enough AND enough time passed
-  if (lastSignal.direction && lastSignal.direction !== direction) {
-    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction}→${direction} + ${priceChange.toFixed(1)}% move - ALLOWING`);
-    return false; // Allow the signal
-  }
-
-  // OVERRIDE 2: Significant price move (>5%) since last signal
-  if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
-    console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% since last signal - ALLOWING new signal`);
-    return false; // Allow the signal
-  }
-
-  // Same direction, not enough price movement - ON COOLDOWN
-  console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${minutesAgo} min ago, only ${priceChange.toFixed(1)}% move)`);
-  return true;
+function wasSignalSentThisRun(symbol) {
+  return signalsSentThisRun.has(symbol);
 }
 
 // ============================================
@@ -883,10 +761,6 @@ export default async function handler(request, response) {
       });
     }
 
-    // Get recent Telegram messages for cooldown check
-    const recentMessages = await getRecentTelegramMessages();
-    console.log(`📨 Fetched ${recentMessages.length} recent messages for cooldown check`);
-
     // Build analysis prompt
     const prompt = buildAnalysisPrompt(marketData);
 
@@ -921,10 +795,25 @@ export default async function handler(request, response) {
       return tpPercent >= minTP;
     });
 
-    // Apply smart cooldown filter (allows direction flips & significant price moves)
+    // Filter by Gold consensus only (all 3 AIs must agree)
+    if (CONFIG.REQUIRE_GOLD_CONSENSUS) {
+      alertSignals = alertSignals.filter(signal => {
+        if (!signal.isGoldConsensus) {
+          console.log(`⛔ ${signal.symbol}: Not Gold consensus (only ${signal.aiSources.length} AIs) - Skipping`);
+          return false;
+        }
+        return true;
+      });
+      console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
+    }
+
+    // Apply in-memory cooldown filter (prevents duplicates within this scan run)
     alertSignals = alertSignals.filter(signal => {
-      const currentPrice = marketData.prices[signal.symbol]?.price || signal.entry;
-      return !isSignalOnCooldown(signal.symbol, signal.direction, currentPrice, recentMessages);
+      if (wasSignalSentThisRun(signal.symbol)) {
+        console.log(`⏱️ ${signal.symbol}: Already sent this run - Skipping`);
+        return false;
+      }
+      return true;
     });
     console.log(`⏱️ After cooldown filter: ${alertSignals.length} signals`);
 
@@ -941,7 +830,11 @@ export default async function handler(request, response) {
       const message = formatSignalForTelegram(signal, majorEvent);
       const keyboard = createTradeKeyboard(signal);
       const sent = await sendTelegramMessage(message, keyboard);
-      if (sent) alertsSent++;
+      if (sent) {
+        alertsSent++;
+        markSignalSent(signal.symbol);
+        console.log(`✅ Sent alert for ${signal.symbol} ${signal.direction}`);
+      }
     }
 
     console.log(`📤 Sent ${alertsSent} Telegram alerts`);
