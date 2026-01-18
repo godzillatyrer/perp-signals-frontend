@@ -5,8 +5,7 @@ import { Redis } from '@upstash/redis';
 
 const CONFIG = {
   SIGNAL_COOLDOWN_HOURS: 12,
-  PRICE_MOVE_OVERRIDE_PERCENT: 10,
-  MIN_PRICE_CHANGE_PERCENT: 2
+  PRICE_MOVE_OVERRIDE_PERCENT: 10  // Only 10%+ price move can override cooldown
 };
 
 let redis = null;
@@ -67,7 +66,7 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
 
   const hoursSinceLast = (Date.now() - lastSignal.timestamp) / (1000 * 60 * 60);
 
-  // Cooldown expired
+  // Cooldown expired (12h passed)
   if (hoursSinceLast >= CONFIG.SIGNAL_COOLDOWN_HOURS) {
     return {
       onCooldown: false,
@@ -75,7 +74,7 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
     };
   }
 
-  // Check price movement
+  // Check price movement - ONLY 10%+ can override
   if (lastSignal.entry && currentPrice) {
     const priceChange = Math.abs((currentPrice - lastSignal.entry) / lastSignal.entry * 100);
 
@@ -83,28 +82,20 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
     if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
       return {
         onCooldown: false,
-        reason: `Price moved ${priceChange.toFixed(1)}% - override allowed`
-      };
-    }
-
-    // Price barely moved - definitely blocked
-    if (priceChange < CONFIG.MIN_PRICE_CHANGE_PERCENT) {
-      const hoursRemaining = (CONFIG.SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
-      return {
-        onCooldown: true,
-        hoursRemaining,
-        reason: `Price only moved ${priceChange.toFixed(1)}% (< ${CONFIG.MIN_PRICE_CHANGE_PERCENT}%)`,
-        lastSignal
+        reason: `Price moved ${priceChange.toFixed(1)}% (>= 10%) - override allowed`
       };
     }
   }
 
-  // On cooldown
+  // ON COOLDOWN - Block signal regardless of small price movements
   const hoursRemaining = (CONFIG.SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
+  const priceInfo = lastSignal.entry && currentPrice
+    ? ` (price moved ${Math.abs((currentPrice - lastSignal.entry) / lastSignal.entry * 100).toFixed(1)}%, need 10%+ to override)`
+    : '';
   return {
     onCooldown: true,
     hoursRemaining,
-    reason: `On cooldown (${hoursRemaining}h remaining)`,
+    reason: `On cooldown (${hoursRemaining}h remaining)${priceInfo}`,
     lastSignal
   };
 }

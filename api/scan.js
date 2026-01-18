@@ -16,12 +16,10 @@ const CONFIG = {
   MIN_TP_PERCENT_MID_CAP: 7,
   // Top coins to analyze
   TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
-  // Signal cooldown in hours - 12 hours per coin
+  // Signal cooldown in hours - 12 hours per coin (same coin cannot signal again)
   SIGNAL_COOLDOWN_HOURS: 12,
-  // Price move % that overrides cooldown - INCREASED to 10%
+  // Price move % that overrides cooldown - ONLY 10%+ can bypass 12h cooldown
   PRICE_MOVE_OVERRIDE_PERCENT: 10,
-  // Minimum price change to even consider a signal (blocks tiny entry updates)
-  MIN_PRICE_CHANGE_PERCENT: 2,
   // Correlation groups (don't send multiple signals from same group)
   CORRELATION_GROUPS: {
     'LAYER1': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AVAXUSDT', 'DOTUSDT'],
@@ -202,24 +200,18 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
   // The same coin should not get signals within 12h, whether LONG or SHORT
   // This prevents oscillating signals when AI recommendations flip back and forth
 
-  // Price moved significantly (10%+)
+  // Check price movement - ONLY 10%+ can override cooldown
   if (lastSignal.entry && currentPrice) {
     const priceChange = Math.abs((currentPrice - lastSignal.entry) / lastSignal.entry * 100);
     if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
-      console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% - OK to send`);
+      console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% (>= 10%) - OK to send`);
       return false;
-    }
-
-    // Price barely moved - definitely on cooldown
-    if (priceChange < CONFIG.MIN_PRICE_CHANGE_PERCENT) {
-      console.log(`🚫 ${symbol}: Price only moved ${priceChange.toFixed(1)}% (< ${CONFIG.MIN_PRICE_CHANGE_PERCENT}%) - BLOCKED`);
-      return true;
     }
   }
 
-  // Still on cooldown
+  // ON COOLDOWN - Block signal regardless of small price movements
   const hoursRemaining = (CONFIG.SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
-  console.log(`⏳ ${symbol}: On cooldown (${hoursRemaining}h remaining) - BLOCKED`);
+  console.log(`🚫 ${symbol}: On cooldown (${hoursRemaining}h remaining) - BLOCKED`);
   return true;
 }
 

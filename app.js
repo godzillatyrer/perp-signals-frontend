@@ -3684,10 +3684,14 @@ async function runAiAnalysis() {
       const silverCount = filteredSignals.filter(s => s.isSilverConsensus).length;
       console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${goldCount} gold 🥇, ${silverCount} silver 🥈)`);
 
-      // Show consensus notification for high-confidence signals (85%+)
-      const highConfSignals = filteredSignals.filter(s => s.confidence >= CONFIG.ALERT_CONFIDENCE);
-      if (highConfSignals.length > 0) {
-        showConsensusNotification(highConfSignals);
+      // Show consensus notification for GOLD consensus + high-confidence signals only (85%+)
+      // CRITICAL: Only send alerts for Gold consensus (all 3 AIs agree) to prevent spam
+      const alertableSignals = filteredSignals.filter(s =>
+        s.confidence >= CONFIG.ALERT_CONFIDENCE &&
+        s.isGoldConsensus === true  // ONLY Gold consensus - skip Silver
+      );
+      if (alertableSignals.length > 0) {
+        showConsensusNotification(alertableSignals);
       }
 
       // Auto-trade if enabled (prioritize consensus signals)
@@ -3710,9 +3714,21 @@ async function runAiAnalysis() {
   renderAlertBar();
 }
 
+// Track which signals have been alerted in this session to prevent duplicate alerts
+const alertedSignalsThisSession = new Set();
+
 // Show special notification for consensus signals
 function showConsensusNotification(consensusSignals) {
   for (const signal of consensusSignals) {
+    // Create a unique key for this signal (symbol + direction)
+    const signalKey = `${signal.symbol}_${signal.direction}`;
+
+    // Skip if already alerted in this session (prevents spam from "updated" signals)
+    if (alertedSignalsThisSession.has(signalKey)) {
+      console.log(`⏭️ ${signal.symbol}: Already alerted this session - skipping notification`);
+      continue;
+    }
+
     // Play consensus sound
     playAlertSound('consensus');
 
@@ -3739,8 +3755,11 @@ function showConsensusNotification(consensusSignals) {
       { symbol: signal.symbol, important: true, tag: 'consensus-' + signal.symbol }
     );
 
-    // Send Telegram alert
+    // Send Telegram alert (this also checks Redis cooldown)
     sendTelegramSignalAlert(signal);
+
+    // Mark as alerted for this session
+    alertedSignalsThisSession.add(signalKey);
   }
 }
 
