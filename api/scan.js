@@ -116,16 +116,33 @@ async function getRecentTelegramMessages() {
 function parseSignalFromMessage(msgText) {
   const result = { symbol: null, direction: null, entryPrice: null };
 
-  // Parse direction and symbol: "🚀 LONG BTCUSDT" or "🔴 SHORT BTCUSDT"
-  const headerMatch = msgText.match(/(LONG|SHORT)\s+([A-Z]+USDT)/);
+  // Try multiple patterns for direction and symbol
+  // Pattern 1: "🚀 LONG BTCUSDT" or "🔴 SHORT BTCUSDT"
+  let headerMatch = msgText.match(/(LONG|SHORT)\s+([A-Z]+USDT)/);
   if (headerMatch) {
     result.direction = headerMatch[1];
     result.symbol = headerMatch[2];
   }
 
-  // Parse entry price: "Entry: $95,000" or "Entry: $0.00001234"
-  const entryMatch = msgText.match(/Entry:\s*\$?([\d,]+\.?\d*)/);
-  if (entryMatch) {
+  // Pattern 2: "BTCUSDT 🟢 LONG" or "BTCUSDT 🔴 SHORT" (frontend format)
+  if (!result.symbol) {
+    headerMatch = msgText.match(/([A-Z]+USDT)\s+.*?(LONG|SHORT)/);
+    if (headerMatch) {
+      result.symbol = headerMatch[1];
+      result.direction = headerMatch[2];
+    }
+  }
+
+  // Try multiple patterns for entry price
+  // Pattern 1: "Entry: $95,000" or "Entry: $0.00001234"
+  let entryMatch = msgText.match(/Entry:\s*\$?([\d,]+\.?\d*)/);
+
+  // Pattern 2: "Entry: <code>1.92</code>" (frontend format with HTML tags)
+  if (!entryMatch || !entryMatch[1]) {
+    entryMatch = msgText.match(/Entry:\s*(?:<code>)?([\d.]+)(?:<\/code>)?/);
+  }
+
+  if (entryMatch && entryMatch[1]) {
     result.entryPrice = parseFloat(entryMatch[1].replace(/,/g, ''));
   }
 
@@ -156,6 +173,7 @@ function findLastSignalForSymbol(symbol, recentMessages, cooldownMs) {
 
 function isSignalOnCooldown(symbol, direction, currentPrice, recentMessages) {
   const cooldownMs = CONFIG.SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
+  const minCooldownMs = 30 * 60 * 1000; // Minimum 30 minutes between any signals for same coin
 
   // Find the last signal we sent for this symbol
   const lastSignal = findLastSignalForSymbol(symbol, recentMessages, cooldownMs);
@@ -166,25 +184,41 @@ function isSignalOnCooldown(symbol, direction, currentPrice, recentMessages) {
   }
 
   const minutesAgo = Math.round((Date.now() - lastSignal.date.getTime()) / 60000);
+  const timeSinceLastMs = Date.now() - lastSignal.date.getTime();
 
-  // OVERRIDE 1: Direction has flipped (LONG→SHORT or SHORT→LONG)
+  // Calculate price change
+  let priceChange = 0;
+  if (lastSignal.entryPrice && currentPrice) {
+    priceChange = Math.abs((currentPrice - lastSignal.entryPrice) / lastSignal.entryPrice * 100);
+  }
+
+  // BLOCK: If price only moved slightly (< 2%), always block regardless of direction
+  // This prevents spam like 2.04 → 2.03 entry alerts
+  if (priceChange < 2) {
+    console.log(`🚫 ${symbol}: Price only moved ${priceChange.toFixed(1)}% (< 2%) - BLOCKING duplicate signal`);
+    return true; // Block the signal
+  }
+
+  // BLOCK: Minimum 30 minutes between signals even with direction change
+  if (timeSinceLastMs < minCooldownMs) {
+    console.log(`⏳ ${symbol}: Only ${minutesAgo} min since last signal (min 30 min) - BLOCKING`);
+    return true; // Block the signal
+  }
+
+  // OVERRIDE 1: Direction has flipped AND price moved enough AND enough time passed
   if (lastSignal.direction && lastSignal.direction !== direction) {
-    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction}→${direction} - ALLOWING signal (was sent ${minutesAgo} min ago)`);
+    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction}→${direction} + ${priceChange.toFixed(1)}% move - ALLOWING`);
     return false; // Allow the signal
   }
 
-  // OVERRIDE 2: Significant price move since last signal
-  if (lastSignal.entryPrice && currentPrice) {
-    const priceChange = Math.abs((currentPrice - lastSignal.entryPrice) / lastSignal.entryPrice * 100);
-
-    if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
-      console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% since last signal - ALLOWING new signal`);
-      return false; // Allow the signal
-    }
+  // OVERRIDE 2: Significant price move (>5%) since last signal
+  if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
+    console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% since last signal - ALLOWING new signal`);
+    return false; // Allow the signal
   }
 
-  // Same direction, no significant price move - ON COOLDOWN
-  console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${minutesAgo} min ago, same direction, price stable)`);
+  // Same direction, not enough price movement - ON COOLDOWN
+  console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${minutesAgo} min ago, only ${priceChange.toFixed(1)}% move)`);
   return true;
 }
 
