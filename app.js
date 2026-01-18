@@ -598,13 +598,25 @@ async function fetchFromCoinglassCoinList(symbol) {
 
 // Parse Coinglass coin data
 function parseCoinglassData(symbol, coinData) {
-  // Try various possible field names from coin-list response
+  // Debug: Log the first coin's structure to see actual field names
+  if (DEBUG_MODE && symbol === 'BTCUSDT') {
+    console.log('💧 [COINGLASS] BTC raw data:', coinData);
+    console.log('💧 [COINGLASS] BTC keys:', Object.keys(coinData));
+  }
+
+  // Parse liquidation values - check all possible field names
+  // The coin-list endpoint returns aggregated data
   const totalLongLiq = parseFloat(
     coinData.longLiquidationUsd ||
     coinData.longVolUsd ||
     coinData.h24LongLiquidationUsd ||
     coinData.buyLiquidationUsd ||
     coinData.longLiqUsd24h ||
+    coinData.longLiqUsd ||
+    coinData.totalLongLiqUsd ||
+    coinData.liqLongUsd ||
+    coinData.volLong ||
+    coinData.long ||
     0
   );
   const totalShortLiq = parseFloat(
@@ -613,12 +625,17 @@ function parseCoinglassData(symbol, coinData) {
     coinData.h24ShortLiquidationUsd ||
     coinData.sellLiquidationUsd ||
     coinData.shortLiqUsd24h ||
+    coinData.shortLiqUsd ||
+    coinData.totalShortLiqUsd ||
+    coinData.liqShortUsd ||
+    coinData.volShort ||
+    coinData.short ||
     0
   );
 
   // Try to get long/short account ratio from the same data
-  const longRate = parseFloat(coinData.longRate || coinData.longRatio || coinData.longAccount || 50);
-  const shortRate = parseFloat(coinData.shortRate || coinData.shortRatio || coinData.shortAccount || 50);
+  const longRate = parseFloat(coinData.longRate || coinData.longRatio || coinData.longAccount || coinData.longAccountRatio || coinData.buyRatio || 50);
+  const shortRate = parseFloat(coinData.shortRate || coinData.shortRatio || coinData.shortAccount || coinData.shortAccountRatio || coinData.sellRatio || 50);
 
   state.liquidationData[symbol] = {
     longLiquidations24h: totalLongLiq,
