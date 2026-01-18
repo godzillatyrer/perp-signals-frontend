@@ -12,6 +12,8 @@ const CONFIG = {
   TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
   // Signal cooldown in hours (don't repeat same signal within this time)
   SIGNAL_COOLDOWN_HOURS: 4,
+  // Price move % that overrides cooldown (if price moved this much, allow new signal)
+  PRICE_MOVE_OVERRIDE_PERCENT: 5,
   // Correlation groups (don't send multiple signals from same group)
   CORRELATION_GROUPS: {
     'LAYER1': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AVAXUSDT', 'DOTUSDT'],
@@ -81,7 +83,7 @@ function isMajorEventDay() {
 }
 
 // ============================================
-// SIGNAL COOLDOWN (using Telegram history)
+// SIGNAL COOLDOWN (Smart - with direction flip & price move detection)
 // ============================================
 
 async function getRecentTelegramMessages() {
@@ -110,21 +112,80 @@ async function getRecentTelegramMessages() {
   return [];
 }
 
-function isSignalOnCooldown(symbol, direction, recentMessages) {
-  const cooldownMs = CONFIG.SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
+// Parse signal details from a Telegram message
+function parseSignalFromMessage(msgText) {
+  const result = { symbol: null, direction: null, entryPrice: null };
+
+  // Parse direction and symbol: "🚀 LONG BTCUSDT" or "🔴 SHORT BTCUSDT"
+  const headerMatch = msgText.match(/(LONG|SHORT)\s+([A-Z]+USDT)/);
+  if (headerMatch) {
+    result.direction = headerMatch[1];
+    result.symbol = headerMatch[2];
+  }
+
+  // Parse entry price: "Entry: $95,000" or "Entry: $0.00001234"
+  const entryMatch = msgText.match(/Entry:\s*\$?([\d,]+\.?\d*)/);
+  if (entryMatch) {
+    result.entryPrice = parseFloat(entryMatch[1].replace(/,/g, ''));
+  }
+
+  return result;
+}
+
+// Find the last signal sent for a specific symbol
+function findLastSignalForSymbol(symbol, recentMessages, cooldownMs) {
   const cutoffTime = new Date(Date.now() - cooldownMs);
 
-  // Check if we sent a similar signal recently
-  for (const msg of recentMessages) {
+  // Sort messages by date descending (newest first)
+  const sorted = [...recentMessages].sort((a, b) => b.date - a.date);
+
+  for (const msg of sorted) {
     if (msg.date < cutoffTime) continue;
 
-    // Check if message contains this symbol and direction
-    if (msg.text.includes(symbol) && msg.text.includes(direction)) {
-      console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${Math.round((Date.now() - msg.date.getTime()) / 60000)} min ago)`);
-      return true;
+    const parsed = parseSignalFromMessage(msg.text);
+    if (parsed.symbol === symbol) {
+      return {
+        direction: parsed.direction,
+        entryPrice: parsed.entryPrice,
+        date: msg.date
+      };
     }
   }
-  return false;
+  return null;
+}
+
+function isSignalOnCooldown(symbol, direction, currentPrice, recentMessages) {
+  const cooldownMs = CONFIG.SIGNAL_COOLDOWN_HOURS * 60 * 60 * 1000;
+
+  // Find the last signal we sent for this symbol
+  const lastSignal = findLastSignalForSymbol(symbol, recentMessages, cooldownMs);
+
+  // No recent signal for this symbol - not on cooldown
+  if (!lastSignal) {
+    return false;
+  }
+
+  const minutesAgo = Math.round((Date.now() - lastSignal.date.getTime()) / 60000);
+
+  // OVERRIDE 1: Direction has flipped (LONG→SHORT or SHORT→LONG)
+  if (lastSignal.direction && lastSignal.direction !== direction) {
+    console.log(`🔄 ${symbol}: Direction flipped ${lastSignal.direction}→${direction} - ALLOWING signal (was sent ${minutesAgo} min ago)`);
+    return false; // Allow the signal
+  }
+
+  // OVERRIDE 2: Significant price move since last signal
+  if (lastSignal.entryPrice && currentPrice) {
+    const priceChange = Math.abs((currentPrice - lastSignal.entryPrice) / lastSignal.entryPrice * 100);
+
+    if (priceChange >= CONFIG.PRICE_MOVE_OVERRIDE_PERCENT) {
+      console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% since last signal - ALLOWING new signal`);
+      return false; // Allow the signal
+    }
+  }
+
+  // Same direction, no significant price move - ON COOLDOWN
+  console.log(`⏳ ${symbol} ${direction} on cooldown (sent ${minutesAgo} min ago, same direction, price stable)`);
+  return true;
 }
 
 // ============================================
@@ -818,9 +879,10 @@ export default async function handler(request, response) {
       return tpPercent >= minTP;
     });
 
-    // Apply cooldown filter
+    // Apply smart cooldown filter (allows direction flips & significant price moves)
     alertSignals = alertSignals.filter(signal => {
-      return !isSignalOnCooldown(signal.symbol, signal.direction, recentMessages);
+      const currentPrice = marketData.prices[signal.symbol]?.price || signal.entry;
+      return !isSignalOnCooldown(signal.symbol, signal.direction, currentPrice, recentMessages);
     });
     console.log(`⏱️ After cooldown filter: ${alertSignals.length} signals`);
 
