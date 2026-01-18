@@ -1668,6 +1668,64 @@ function getAIPerformance(aiSource) {
   return 'N/A';
 }
 
+function updateAiPredictionStats(prediction, pnlPercent) {
+  const stats = state.performanceStats;
+  const isWin = pnlPercent > 0;
+
+  if (prediction.isConsensus) {
+    if (isWin) stats.consensusWins++;
+    else stats.consensusLosses++;
+  }
+  if (prediction.isGoldConsensus) {
+    if (isWin) stats.goldConsensusWins++;
+    else stats.goldConsensusLosses++;
+  }
+  if (prediction.isSilverConsensus) {
+    if (isWin) stats.silverConsensusWins++;
+    else stats.silverConsensusLosses++;
+  }
+
+  prediction.aiSources.forEach(source => {
+    if (source === 'claude') {
+      if (isWin) stats.claudeWins++;
+      else stats.claudeLosses++;
+    } else if (source === 'openai') {
+      if (isWin) stats.openaiWins++;
+      else stats.openaiLosses++;
+    } else if (source === 'grok') {
+      if (isWin) stats.grokWins++;
+      else stats.grokLosses++;
+    }
+  });
+
+  localStorage.setItem('performance_stats', JSON.stringify(stats));
+}
+
+function evaluateAiPredictions(symbol, currentPrice) {
+  const pending = state.aiPredictions.filter(pred => pred.status === 'pending' && pred.symbol === symbol);
+  if (pending.length === 0) return;
+
+  for (const pred of pending) {
+    if (!pred.sl || !pred.tp) continue;
+    const hitTP = pred.direction === 'LONG' ? currentPrice >= pred.tp : currentPrice <= pred.tp;
+    const hitSL = pred.direction === 'LONG' ? currentPrice <= pred.sl : currentPrice >= pred.sl;
+    if (!hitTP && !hitSL) continue;
+
+    const pnlPercent = pred.direction === 'LONG'
+      ? ((currentPrice - pred.entry) / pred.entry) * 100
+      : ((pred.entry - currentPrice) / pred.entry) * 100;
+
+    pred.status = hitTP ? 'win' : 'loss';
+    pred.exitPrice = currentPrice;
+    pred.closeTimestamp = Date.now();
+    pred.pnlPercent = parseFloat(pnlPercent.toFixed(2));
+
+    updateAiPredictionStats(pred, pred.pnlPercent);
+  }
+
+  renderAiPredictions();
+}
+
 // ============================================
 // TRAILING STOP LOSS
 // ============================================
@@ -3720,8 +3778,11 @@ async function runAiAnalysis() {
           confidence: boostedConf,
           entry: avgEntry,
           tp: bestTP,
+          sl: safestSL,
           aiSources: aiSources,
           isGoldConsensus: isGoldConsensus,
+          isSilverConsensus: isSilverConsensus,
+          isConsensus: true,
           marketRegime: regime,
           entryTrigger: primaryTrigger,
           timestamp: Date.now(),
@@ -4320,17 +4381,20 @@ function initWebSocket() {
       if (data.data) {
         const ticker = data.data;
         const symbol = ticker.s;
-        state.priceCache[symbol] = parseFloat(ticker.c);
+        const currentPrice = parseFloat(ticker.c);
+        state.priceCache[symbol] = currentPrice;
 
         const market = state.markets.find(m => m.symbol === symbol);
         if (market) {
-          market.price = parseFloat(ticker.c);
+          market.price = currentPrice;
           market.change = parseFloat(ticker.P);
         }
 
         if (symbol === state.selectedSymbol) {
-          updateChartPrice(parseFloat(ticker.c), parseFloat(ticker.P));
+          updateChartPrice(currentPrice, parseFloat(ticker.P));
         }
+
+        evaluateAiPredictions(symbol, currentPrice);
       }
     };
 
@@ -4351,7 +4415,10 @@ function startPricePolling() {
     try {
       const markets = await fetchMarkets();
       state.markets = markets;
-      for (const m of markets) state.priceCache[m.symbol] = m.price;
+      for (const m of markets) {
+        state.priceCache[m.symbol] = m.price;
+        evaluateAiPredictions(m.symbol, m.price);
+      }
       renderMarkets();
     } catch (error) {
       console.error('Price polling failed:', error);
