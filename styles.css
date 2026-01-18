@@ -4510,3 +4510,184 @@ select:focus-visible {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* ============================================
+   DISCORD CALL TRACKING STYLES
+   ============================================ */
+
+.discord-stats {
+  display: flex;
+  gap: 20px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.discord-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.discord-stat .stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.discord-stat .stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.discord-calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.discord-call {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  transition: all 0.2s ease;
+}
+
+.discord-call:hover {
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.discord-call.win {
+  border-left: 3px solid var(--green);
+}
+
+.discord-call.loss {
+  border-left: 3px solid var(--red);
+}
+
+.discord-call.open {
+  border-left: 3px solid var(--blue);
+}
+
+.call-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.call-symbol {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.call-status {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.call-status.win {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.call-status.loss {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.call-status.open {
+  background: var(--blue-dim);
+  color: var(--blue);
+}
+
+.call-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.call-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.call-meta .pnl-positive {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.call-meta .pnl-negative {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.call-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.call-action-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.call-action-btn.win-btn {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.call-action-btn.win-btn:hover {
+  background: var(--green);
+  color: #000;
+}
+
+.call-action-btn.loss-btn {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.call-action-btn.loss-btn:hover {
+  background: var(--red);
+  color: #fff;
+}
+
+.call-action-btn.cancel-btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+}
+
+.call-action-btn.cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--text);
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}

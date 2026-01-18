@@ -35,6 +35,9 @@ const CONFIG = {
   TELEGRAM_BOT_TOKEN: '', // Get from @BotFather
   TELEGRAM_CHAT_ID: '', // Get from @userinfobot
   TELEGRAM_ENABLED: false,
+  // Discord Integration (Call Tracking)
+  DISCORD_WEBHOOK_URL: '', // For sending alerts back to Discord
+  DISCORD_ENABLED: false,
   SCAN_INTERVAL: 90000,
   AI_SCAN_INTERVAL: 600000, // 10 minutes for AI analysis
   PRICE_UPDATE_INTERVAL: 1000,
@@ -69,6 +72,8 @@ function loadApiKeys() {
   const telegramToken = localStorage.getItem('telegram_bot_token');
   const telegramChatId = localStorage.getItem('telegram_chat_id');
   const telegramEnabled = localStorage.getItem('telegram_enabled');
+  const discordWebhookUrl = localStorage.getItem('discord_webhook_url');
+  const discordEnabled = localStorage.getItem('discord_enabled');
 
   if (claudeKey) CONFIG.CLAUDE_API_KEY = claudeKey;
   if (openaiKey) CONFIG.OPENAI_API_KEY = openaiKey;
@@ -78,6 +83,8 @@ function loadApiKeys() {
   if (telegramToken) CONFIG.TELEGRAM_BOT_TOKEN = telegramToken;
   if (telegramChatId) CONFIG.TELEGRAM_CHAT_ID = telegramChatId;
   CONFIG.TELEGRAM_ENABLED = telegramEnabled === 'true';
+  if (discordWebhookUrl) CONFIG.DISCORD_WEBHOOK_URL = discordWebhookUrl;
+  CONFIG.DISCORD_ENABLED = discordEnabled === 'true';
 
   return {
     claude: !!claudeKey,
@@ -85,7 +92,8 @@ function loadApiKeys() {
     grok: !!grokKey,
     lunarcrush: !!lunarcrushKey,
     coinglass: !!coinglassKey,
-    telegram: !!(telegramToken && telegramChatId)
+    telegram: !!(telegramToken && telegramChatId),
+    discord: !!discordEnabled
   };
 }
 
@@ -404,6 +412,318 @@ async function sendSignalToTelegramManual(signal) {
   }
 
   return success;
+}
+
+// ============================================
+// DISCORD CALL TRACKING
+// ============================================
+
+async function updateDiscordStats() {
+  const openCallsEl = document.getElementById('discordOpenCalls');
+  const winRateEl = document.getElementById('discordWinRate');
+
+  if (!openCallsEl || !winRateEl) return;
+
+  try {
+    const response = await fetch('/api/discord?limit=100');
+    const data = await response.json();
+
+    if (data.success && data.calls) {
+      const openCalls = data.calls.filter(c => c.status === 'OPEN').length;
+      const wins = data.calls.filter(c => c.status === 'WIN').length;
+      const losses = data.calls.filter(c => c.status === 'LOSS').length;
+      const closedTotal = wins + losses;
+      const winRate = closedTotal > 0 ? Math.round((wins / closedTotal) * 100) : 0;
+
+      openCallsEl.textContent = openCalls;
+      winRateEl.textContent = closedTotal > 0 ? `${winRate}% (${wins}W/${losses}L)` : 'No data';
+    }
+  } catch (e) {
+    console.log('Could not fetch Discord stats:', e.message);
+    openCallsEl.textContent = '-';
+    winRateEl.textContent = '-';
+  }
+}
+
+async function fetchDiscordCalls() {
+  try {
+    const response = await fetch('/api/discord?limit=50');
+    const data = await response.json();
+    return data.success ? data.calls : [];
+  } catch (e) {
+    console.error('Failed to fetch Discord calls:', e);
+    return [];
+  }
+}
+
+function showDiscordCallsModal() {
+  // Create modal if it doesn't exist
+  let modal = document.getElementById('discordCallsModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'discordCallsModal';
+    modal.className = 'settings-modal';
+    modal.innerHTML = `
+      <div class="settings-overlay" onclick="closeDiscordCallsModal()"></div>
+      <div class="settings-panel" style="max-width: 700px;">
+        <div class="settings-header">
+          <h2>Discord Trading Calls</h2>
+          <button class="settings-close" onclick="closeDiscordCallsModal()">&times;</button>
+        </div>
+        <div class="settings-body" id="discordCallsBody">
+          <div class="loading">Loading calls...</div>
+        </div>
+        <div class="settings-footer">
+          <button class="test-telegram-btn" onclick="refreshDiscordCalls()">Refresh</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  modal.classList.add('active');
+  refreshDiscordCalls();
+}
+
+function closeDiscordCallsModal() {
+  const modal = document.getElementById('discordCallsModal');
+  if (modal) modal.classList.remove('active');
+}
+
+async function refreshDiscordCalls() {
+  const body = document.getElementById('discordCallsBody');
+  if (!body) return;
+
+  body.innerHTML = '<div class="loading">Loading calls...</div>';
+
+  const calls = await fetchDiscordCalls();
+
+  if (calls.length === 0) {
+    body.innerHTML = '<div class="empty-state">No Discord calls found.<br><br>Add calls manually or connect a Discord bot.</div>';
+    return;
+  }
+
+  const openCalls = calls.filter(c => c.status === 'OPEN');
+  const closedCalls = calls.filter(c => c.status !== 'OPEN');
+
+  let html = '';
+
+  if (openCalls.length > 0) {
+    html += '<h3 style="margin-bottom: 12px;">Open Calls</h3>';
+    html += '<div class="discord-calls-list">';
+    for (const call of openCalls) {
+      html += renderDiscordCall(call);
+    }
+    html += '</div>';
+  }
+
+  if (closedCalls.length > 0) {
+    html += '<h3 style="margin: 20px 0 12px;">Closed Calls</h3>';
+    html += '<div class="discord-calls-list">';
+    for (const call of closedCalls.slice(0, 20)) {
+      html += renderDiscordCall(call);
+    }
+    html += '</div>';
+  }
+
+  body.innerHTML = html;
+
+  // Add event listeners for action buttons
+  body.querySelectorAll('.call-action-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const callId = e.target.dataset.callId;
+      const action = e.target.dataset.action;
+      await updateDiscordCallStatus(callId, action);
+    });
+  });
+}
+
+function renderDiscordCall(call) {
+  const dirEmoji = call.direction === 'LONG' ? '🚀' : '🔴';
+  const statusClass = call.status === 'WIN' ? 'win' : call.status === 'LOSS' ? 'loss' : 'open';
+  const age = Math.round((Date.now() - call.createdAt) / (1000 * 60 * 60));
+
+  let statusBadge = '';
+  if (call.status === 'WIN') statusBadge = '<span class="call-status win">WIN</span>';
+  else if (call.status === 'LOSS') statusBadge = '<span class="call-status loss">LOSS</span>';
+  else statusBadge = '<span class="call-status open">OPEN</span>';
+
+  let actions = '';
+  if (call.status === 'OPEN') {
+    actions = `
+      <div class="call-actions">
+        <button class="call-action-btn win-btn" data-call-id="${call.id}" data-action="WIN">Win</button>
+        <button class="call-action-btn loss-btn" data-call-id="${call.id}" data-action="LOSS">Loss</button>
+        <button class="call-action-btn cancel-btn" data-call-id="${call.id}" data-action="CANCELLED">Cancel</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="discord-call ${statusClass}">
+      <div class="call-header">
+        <span class="call-symbol">${dirEmoji} ${call.symbol} ${call.direction}</span>
+        ${statusBadge}
+      </div>
+      <div class="call-details">
+        ${call.entry ? `<span>Entry: $${call.entry.toLocaleString()}</span>` : ''}
+        ${call.takeProfit?.length ? `<span>TP: $${call.takeProfit[0].toLocaleString()}</span>` : ''}
+        ${call.stopLoss ? `<span>SL: $${call.stopLoss.toLocaleString()}</span>` : ''}
+      </div>
+      <div class="call-meta">
+        <span>${age}h ago</span>
+        ${call.discord?.username ? `<span>by ${call.discord.username}</span>` : ''}
+        ${call.outcome?.pnlPercent ? `<span class="${call.status === 'WIN' ? 'pnl-positive' : 'pnl-negative'}">${call.outcome.pnlPercent > 0 ? '+' : ''}${call.outcome.pnlPercent}%</span>` : ''}
+      </div>
+      ${actions}
+    </div>
+  `;
+}
+
+async function updateDiscordCallStatus(callId, status) {
+  try {
+    const response = await fetch('/api/discord', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callId, status })
+    });
+    const data = await response.json();
+    if (data.success) {
+      refreshDiscordCalls();
+      updateDiscordStats();
+    } else {
+      alert('Failed to update call: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Failed to update call: ' + e.message);
+  }
+}
+
+function showAddDiscordCallModal() {
+  let modal = document.getElementById('addDiscordCallModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'addDiscordCallModal';
+    modal.className = 'settings-modal';
+    modal.innerHTML = `
+      <div class="settings-overlay" onclick="closeAddDiscordCallModal()"></div>
+      <div class="settings-panel" style="max-width: 500px;">
+        <div class="settings-header">
+          <h2>Add Discord Call</h2>
+          <button class="settings-close" onclick="closeAddDiscordCallModal()">&times;</button>
+        </div>
+        <div class="settings-body">
+          <div class="api-input-group">
+            <label>Paste call message or enter details:</label>
+            <textarea id="discordCallMessage" rows="4" placeholder="e.g., BTC LONG Entry 65000 TP 68000 SL 63000" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3); color: #fff; resize: vertical;"></textarea>
+          </div>
+          <div class="api-input-group" style="margin-top: 12px;">
+            <label>Caller username (optional):</label>
+            <input type="text" id="discordCallUsername" placeholder="Discord username" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3); color: #fff;">
+          </div>
+          <div id="parsedCallPreview" style="margin-top: 16px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 8px; display: none;"></div>
+        </div>
+        <div class="settings-footer">
+          <button class="test-telegram-btn" id="parseCallBtn">Parse Call</button>
+          <button class="settings-save-btn" id="saveDiscordCallBtn" disabled>Save Call</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Add event listeners
+    document.getElementById('parseCallBtn').addEventListener('click', parseAndPreviewCall);
+    document.getElementById('saveDiscordCallBtn').addEventListener('click', saveDiscordCall);
+  }
+
+  modal.classList.add('active');
+  document.getElementById('discordCallMessage').value = '';
+  document.getElementById('discordCallUsername').value = '';
+  document.getElementById('parsedCallPreview').style.display = 'none';
+  document.getElementById('saveDiscordCallBtn').disabled = true;
+}
+
+function closeAddDiscordCallModal() {
+  const modal = document.getElementById('addDiscordCallModal');
+  if (modal) modal.classList.remove('active');
+}
+
+let parsedCallData = null;
+
+async function parseAndPreviewCall() {
+  const message = document.getElementById('discordCallMessage').value;
+  const preview = document.getElementById('parsedCallPreview');
+  const saveBtn = document.getElementById('saveDiscordCallBtn');
+
+  if (!message.trim()) {
+    preview.innerHTML = '<span style="color: #ff6b6b;">Please enter a call message</span>';
+    preview.style.display = 'block';
+    saveBtn.disabled = true;
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/discord', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'parse', message })
+    });
+    const data = await response.json();
+
+    if (data.parsed && data.call) {
+      parsedCallData = data.call;
+      const call = data.call;
+      preview.innerHTML = `
+        <div style="color: #4ade80;">Parsed successfully!</div>
+        <div style="margin-top: 8px;">
+          <strong>${call.direction === 'LONG' ? '🚀' : '🔴'} ${call.symbol} ${call.direction}</strong><br>
+          ${call.entry ? `Entry: $${call.entry.toLocaleString()}<br>` : ''}
+          ${call.takeProfit?.length ? `TP: $${call.takeProfit.join(', $')}<br>` : ''}
+          ${call.stopLoss ? `SL: $${call.stopLoss.toLocaleString()}<br>` : ''}
+          ${call.leverage ? `Leverage: ${call.leverage}x` : ''}
+        </div>
+      `;
+      saveBtn.disabled = false;
+    } else {
+      parsedCallData = null;
+      preview.innerHTML = '<span style="color: #ff6b6b;">Could not parse call. Make sure it includes a symbol (BTC, ETH, etc.) and direction (LONG/SHORT).</span>';
+      saveBtn.disabled = true;
+    }
+    preview.style.display = 'block';
+  } catch (e) {
+    preview.innerHTML = `<span style="color: #ff6b6b;">Error: ${e.message}</span>`;
+    preview.style.display = 'block';
+    saveBtn.disabled = true;
+  }
+}
+
+async function saveDiscordCall() {
+  if (!parsedCallData) return;
+
+  const username = document.getElementById('discordCallUsername').value.trim();
+
+  try {
+    const response = await fetch('/api/discord', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'store',
+        call: parsedCallData,
+        discord: { username: username || 'Manual Entry' }
+      })
+    });
+    const data = await response.json();
+
+    if (data.success) {
+      closeAddDiscordCallModal();
+      updateDiscordStats();
+      showNotification({ type: 'success', message: `Call added: ${parsedCallData.symbol} ${parsedCallData.direction}` });
+    } else {
+      alert('Failed to save call: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Failed to save call: ' + e.message);
+  }
 }
 
 // Prompt for API keys
@@ -6043,6 +6363,15 @@ function openSettingsModal() {
   if (telegramChatId) telegramChatId.value = CONFIG.TELEGRAM_CHAT_ID || '';
   if (telegramToggle) telegramToggle.checked = CONFIG.TELEGRAM_ENABLED;
 
+  // Load Discord settings
+  const discordWebhookUrl = document.getElementById('discordWebhookUrl');
+  const discordToggle = document.getElementById('discordToggle');
+  if (discordWebhookUrl) discordWebhookUrl.value = CONFIG.DISCORD_WEBHOOK_URL || '';
+  if (discordToggle) discordToggle.checked = CONFIG.DISCORD_ENABLED;
+
+  // Update Discord stats
+  updateDiscordStats();
+
   // Update API status display
   updateSettingsApiStatus();
 
@@ -6203,6 +6532,22 @@ function saveSettings() {
   CONFIG.TELEGRAM_ENABLED = telegramEnabled;
   localStorage.setItem('telegram_enabled', telegramEnabled.toString());
 
+  // Save Discord settings
+  const discordWebhookUrl = document.getElementById('discordWebhookUrl')?.value?.trim() || '';
+  const discordEnabled = document.getElementById('discordToggle')?.checked ?? false;
+
+  if (discordWebhookUrl && discordWebhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+    CONFIG.DISCORD_WEBHOOK_URL = discordWebhookUrl;
+    localStorage.setItem('discord_webhook_url', discordWebhookUrl);
+    console.log('Discord webhook URL saved');
+  } else if (!discordWebhookUrl) {
+    CONFIG.DISCORD_WEBHOOK_URL = '';
+    localStorage.removeItem('discord_webhook_url');
+  }
+
+  CONFIG.DISCORD_ENABLED = discordEnabled;
+  localStorage.setItem('discord_enabled', discordEnabled.toString());
+
   // Save toggle states
   state.aiAutoTradeEnabled = document.getElementById('aiAutoTradeToggle')?.checked ?? true;
   state.soundEnabled = document.getElementById('soundToggle')?.checked ?? true;
@@ -6315,10 +6660,23 @@ function initSettingsModal() {
     });
   }
 
+  // Discord buttons
+  const viewDiscordCallsBtn = document.getElementById('viewDiscordCallsBtn');
+  if (viewDiscordCallsBtn) {
+    viewDiscordCallsBtn.addEventListener('click', showDiscordCallsModal);
+  }
+
+  const addDiscordCallBtn = document.getElementById('addDiscordCallBtn');
+  if (addDiscordCallBtn) {
+    addDiscordCallBtn.addEventListener('click', showAddDiscordCallModal);
+  }
+
   // Escape key to close
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       closeSettingsModal();
+      closeDiscordCallsModal();
+      closeAddDiscordCallModal();
     }
   });
 }
