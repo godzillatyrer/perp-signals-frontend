@@ -4,7 +4,7 @@
    ============================================ */
 
 // Debug mode - set to true to see detailed API logs
-let DEBUG_MODE = true;
+let DEBUG_MODE = false;
 
 // Configuration
 const CONFIG = {
@@ -2021,6 +2021,7 @@ function calculateATR(candles, period = 14) {
 
 // ADX - Average Directional Index (Trend Strength)
 // ADX > 25 = Strong trend, ADX < 20 = Weak/No trend
+// Uses Wilder smoothing for accurate ADX calculation
 function calculateADX(candles, period = 14) {
   if (candles.length < period * 2) return { adx: 0, plusDI: 0, minusDI: 0, trend: 'WEAK' };
 
@@ -2046,22 +2047,42 @@ function calculateADX(candles, period = 14) {
     minusDMs.push(minusDM);
   }
 
-  // Smoothed averages
-  const smoothedTR = trs.slice(-period).reduce((a, b) => a + b, 0);
-  const smoothedPlusDM = plusDMs.slice(-period).reduce((a, b) => a + b, 0);
-  const smoothedMinusDM = minusDMs.slice(-period).reduce((a, b) => a + b, 0);
+  // Use Wilder smoothing (exponential moving average with alpha = 1/period)
+  let smoothedTR = trs.slice(0, period).reduce((a, b) => a + b, 0);
+  let smoothedPlusDM = plusDMs.slice(0, period).reduce((a, b) => a + b, 0);
+  let smoothedMinusDM = minusDMs.slice(0, period).reduce((a, b) => a + b, 0);
 
-  // Directional Indicators
-  const plusDI = smoothedTR > 0 ? (smoothedPlusDM / smoothedTR) * 100 : 0;
-  const minusDI = smoothedTR > 0 ? (smoothedMinusDM / smoothedTR) * 100 : 0;
+  const dxValues = [];
 
-  // DX and ADX
-  const diDiff = Math.abs(plusDI - minusDI);
-  const diSum = plusDI + minusDI;
-  const dx = diSum > 0 ? (diDiff / diSum) * 100 : 0;
+  for (let i = period; i < trs.length; i++) {
+    // Wilder smoothing: smoothed = prev - (prev/period) + current
+    smoothedTR = smoothedTR - (smoothedTR / period) + trs[i];
+    smoothedPlusDM = smoothedPlusDM - (smoothedPlusDM / period) + plusDMs[i];
+    smoothedMinusDM = smoothedMinusDM - (smoothedMinusDM / period) + minusDMs[i];
 
-  // Calculate ADX as smoothed DX (simplified - using recent average)
-  const adx = dx; // In full implementation, this would be smoothed over period
+    const plusDI = smoothedTR > 0 ? (smoothedPlusDM / smoothedTR) * 100 : 0;
+    const minusDI = smoothedTR > 0 ? (smoothedMinusDM / smoothedTR) * 100 : 0;
+
+    const diDiff = Math.abs(plusDI - minusDI);
+    const diSum = plusDI + minusDI;
+    const dx = diSum > 0 ? (diDiff / diSum) * 100 : 0;
+    dxValues.push({ dx, plusDI, minusDI });
+  }
+
+  if (dxValues.length < period) {
+    const last = dxValues[dxValues.length - 1] || { dx: 0, plusDI: 0, minusDI: 0 };
+    return { adx: Math.round(last.dx * 10) / 10, plusDI: Math.round(last.plusDI * 10) / 10, minusDI: Math.round(last.minusDI * 10) / 10, trend: 'WEAK' };
+  }
+
+  // Calculate ADX as smoothed average of DX values
+  let adx = dxValues.slice(0, period).reduce((a, b) => a + b.dx, 0) / period;
+  for (let i = period; i < dxValues.length; i++) {
+    adx = ((adx * (period - 1)) + dxValues[i].dx) / period;
+  }
+
+  const lastDI = dxValues[dxValues.length - 1];
+  const plusDI = lastDI.plusDI;
+  const minusDI = lastDI.minusDI;
 
   // Determine trend strength
   let trend = 'WEAK';
@@ -2073,8 +2094,9 @@ function calculateADX(candles, period = 14) {
 }
 
 // Stochastic RSI - Better overbought/oversold than regular RSI
-function calculateStochRSI(closes, rsiPeriod = 14, stochPeriod = 14, kPeriod = 3, dPeriod = 3) {
-  if (closes.length < rsiPeriod + stochPeriod) return { k: 50, d: 50, signal: 'NEUTRAL' };
+// %K is the raw stochastic RSI, %D is a 3-period SMA of %K for signal smoothing
+function calculateStochRSI(closes, rsiPeriod = 14, stochPeriod = 14, kSmooth = 3, dSmooth = 3) {
+  if (closes.length < rsiPeriod + stochPeriod + kSmooth) return { k: 50, d: 50, signal: 'NEUTRAL' };
 
   // Calculate RSI values for each point
   const rsiValues = [];
@@ -2092,28 +2114,47 @@ function calculateStochRSI(closes, rsiPeriod = 14, stochPeriod = 14, kPeriod = 3
     rsiValues.push(100 - (100 / (1 + rs)));
   }
 
-  if (rsiValues.length < stochPeriod) return { k: 50, d: 50, signal: 'NEUTRAL' };
+  if (rsiValues.length < stochPeriod + kSmooth) return { k: 50, d: 50, signal: 'NEUTRAL' };
 
-  // Calculate Stochastic of RSI
-  const recentRSI = rsiValues.slice(-stochPeriod);
-  const minRSI = Math.min(...recentRSI);
-  const maxRSI = Math.max(...recentRSI);
-  const currentRSI = recentRSI[recentRSI.length - 1];
+  // Calculate raw stochastic RSI values
+  const stochRSIValues = [];
+  for (let i = stochPeriod; i <= rsiValues.length; i++) {
+    const recentRSI = rsiValues.slice(i - stochPeriod, i);
+    const minRSI = Math.min(...recentRSI);
+    const maxRSI = Math.max(...recentRSI);
+    const currentRSI = recentRSI[recentRSI.length - 1];
+    const stochRSI = maxRSI - minRSI > 0 ? ((currentRSI - minRSI) / (maxRSI - minRSI)) * 100 : 50;
+    stochRSIValues.push(stochRSI);
+  }
 
-  const stochRSI = maxRSI - minRSI > 0 ? ((currentRSI - minRSI) / (maxRSI - minRSI)) * 100 : 50;
+  if (stochRSIValues.length < kSmooth) return { k: 50, d: 50, signal: 'NEUTRAL' };
 
-  // %K is smoothed stochRSI, %D is smoothed %K (simplified)
-  const k = Math.round(stochRSI * 10) / 10;
-  const d = k; // In full implementation, this would be SMA of K
+  // Calculate %K as SMA of raw stochastic RSI (smoothed K)
+  const kValues = [];
+  for (let i = kSmooth; i <= stochRSIValues.length; i++) {
+    const kSlice = stochRSIValues.slice(i - kSmooth, i);
+    const kVal = kSlice.reduce((a, b) => a + b, 0) / kSmooth;
+    kValues.push(kVal);
+  }
 
-  // Signal interpretation
+  if (kValues.length < dSmooth) return { k: 50, d: 50, signal: 'NEUTRAL' };
+
+  // Calculate %D as SMA of %K values
+  const recentK = kValues.slice(-dSmooth);
+  const d = recentK.reduce((a, b) => a + b, 0) / dSmooth;
+  const k = kValues[kValues.length - 1];
+
+  const kRounded = Math.round(k * 10) / 10;
+  const dRounded = Math.round(d * 10) / 10;
+
+  // Signal interpretation - now considers K/D crossover
   let signal = 'NEUTRAL';
-  if (k <= 20) signal = 'OVERSOLD';
-  else if (k >= 80) signal = 'OVERBOUGHT';
-  else if (k > 50) signal = 'BULLISH';
-  else if (k < 50) signal = 'BEARISH';
+  if (kRounded <= 20) signal = 'OVERSOLD';
+  else if (kRounded >= 80) signal = 'OVERBOUGHT';
+  else if (kRounded > 50 && kRounded > dRounded) signal = 'BULLISH';
+  else if (kRounded < 50 && kRounded < dRounded) signal = 'BEARISH';
 
-  return { k, d, signal };
+  return { k: kRounded, d: dRounded, signal };
 }
 
 // Supertrend - Clear trend direction indicator
