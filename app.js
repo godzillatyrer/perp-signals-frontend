@@ -2176,10 +2176,10 @@ async function runAiAnalysis() {
       }
     }
 
-    // Helper function to check if two entry prices are within wiggle room (2%)
+    // Helper function to check if two entry prices are within wiggle room (5%)
     const isEntryMatch = (entry1, entry2) => {
       const diff = Math.abs(entry1 - entry2) / Math.max(entry1, entry2) * 100;
-      return diff <= 2; // 2% wiggle room
+      return diff <= 5; // 5% wiggle room (relaxed from 2% for more signals)
     };
 
     // Collect all picks with their source
@@ -2201,6 +2201,15 @@ async function runAiAnalysis() {
 
     // Find consensus signals (2+ AIs agree on symbol AND direction with entry wiggle room)
     const allSignals = [];
+
+    // Debug: Log all picks grouped by symbol/direction
+    for (const [key, picks] of Object.entries(picksBySymbolDirection)) {
+      if (picks.length >= 2) {
+        const sources = picks.map(p => p.source).join(', ');
+        const entries = picks.map(p => `${p.source}: $${p.entry.toLocaleString()}`).join(', ');
+        console.log(`🔍 Potential consensus ${key}: ${sources} | Entries: ${entries}`);
+      }
+    }
 
     for (const [key, picks] of Object.entries(picksBySymbolDirection)) {
       // Check for matches considering entry price wiggle room
@@ -2231,37 +2240,38 @@ async function runAiAnalysis() {
         // Get market data for this symbol (for regime and MTF checks)
         const marketInfo = enrichedData.find(m => m.symbol === symbol);
 
-        // MARKET REGIME FILTER - Only allow signals in trending markets
+        // MARKET REGIME FILTER - DISABLED for more signals
         const regime = marketInfo?.marketRegime || 'UNKNOWN';
-        const isValidRegime = regime === 'TRENDING_UP' || regime === 'TRENDING_DOWN';
-        if (!isValidRegime && regime !== 'UNKNOWN') {
-          console.log(`⏭️ Filtered ${symbol} ${direction} - Market regime is ${regime} (need TRENDING)`);
-          continue; // Skip this signal
-        }
+        // const isValidRegime = regime === 'TRENDING_UP' || regime === 'TRENDING_DOWN';
+        // if (!isValidRegime && regime !== 'UNKNOWN') {
+        //   console.log(`⏭️ Filtered ${symbol} ${direction} - Market regime is ${regime} (need TRENDING)`);
+        //   continue; // Skip this signal
+        // }
 
-        // REGIME DIRECTION CHECK - Long only in uptrend, Short only in downtrend
-        if (regime === 'TRENDING_UP' && direction === 'SHORT') {
-          console.log(`⏭️ Filtered ${symbol} SHORT - Regime is TRENDING_UP (counter-trend)`);
-          continue;
-        }
-        if (regime === 'TRENDING_DOWN' && direction === 'LONG') {
-          console.log(`⏭️ Filtered ${symbol} LONG - Regime is TRENDING_DOWN (counter-trend)`);
-          continue;
-        }
+        // REGIME DIRECTION CHECK - DISABLED for more signals
+        // if (regime === 'TRENDING_UP' && direction === 'SHORT') {
+        //   console.log(`⏭️ Filtered ${symbol} SHORT - Regime is TRENDING_UP (counter-trend)`);
+        //   continue;
+        // }
+        // if (regime === 'TRENDING_DOWN' && direction === 'LONG') {
+        //   console.log(`⏭️ Filtered ${symbol} LONG - Regime is TRENDING_DOWN (counter-trend)`);
+        //   continue;
+        // }
+        console.log(`✅ Consensus found: ${symbol} ${direction} - Regime: ${regime}`);
 
-        // MTF ALIGNMENT FILTER - Require at least partial alignment
+        // MTF ALIGNMENT FILTER - DISABLED for more signals
         const mtfConfluence = marketInfo?.mtfAnalysis?.confluence || 'N/A';
         const mtfScore = marketInfo?.mtfAnalysis?.confluenceScore || 0;
         const isMtfAligned = mtfConfluence === 'BULLISH' && direction === 'LONG' ||
                             mtfConfluence === 'BEARISH' && direction === 'SHORT' ||
                             mtfScore >= 60; // At least 60% alignment
 
-        // For gold consensus, still allow even without MTF (strong signal)
-        // For silver consensus, require MTF alignment
-        if (isSilverConsensus && !isMtfAligned && mtfConfluence !== 'N/A') {
-          console.log(`⏭️ Filtered ${symbol} ${direction} - MTF not aligned (${mtfConfluence}, ${mtfScore}%)`);
-          continue;
-        }
+        // MTF filter disabled - allow all consensus signals through
+        // if (isSilverConsensus && !isMtfAligned && mtfConfluence !== 'N/A') {
+        //   console.log(`⏭️ Filtered ${symbol} ${direction} - MTF not aligned (${mtfConfluence}, ${mtfScore}%)`);
+        //   continue;
+        // }
+        console.log(`📊 Signal passing: ${symbol} ${direction} - MTF: ${mtfConfluence} (${mtfScore}%)`);
 
         // Average the values from matching picks
         const avgEntry = matchingPicks.reduce((sum, p) => sum + p.entry, 0) / matchingPicks.length;
