@@ -4405,10 +4405,7 @@ function loadSignalHistory() {
   try {
     const saved = localStorage.getItem('sentient_signal_history');
     if (saved) {
-      const history = JSON.parse(saved);
-      // Filter out signals older than 24 hours
-      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-      state.signalHistory = history.filter(s => s.timestamp > oneDayAgo);
+      state.signalHistory = JSON.parse(saved);
       console.log(`📜 Loaded ${state.signalHistory.length} signals from history`);
     }
   } catch (e) {
