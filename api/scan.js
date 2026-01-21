@@ -29,9 +29,28 @@ const CONFIG = {
   },
   // Max signals per correlation group per scan
   MAX_SIGNALS_PER_GROUP: 1,
+  MIN_RISK_REWARD: 2,
+  MIN_ATR_PERCENT: 0.4,
+  MAX_ENTRY_WIGGLE_PERCENT: 2,
+  MAX_SL_WIGGLE_PERCENT: 3,
+  MAX_TP_WIGGLE_PERCENT: 5,
   // GOLD CONSENSUS ONLY - require all 3 AIs to agree
   REQUIRE_GOLD_CONSENSUS: true
 };
+
+const ENTRY_TRIGGERS = ['BREAKOUT', 'PULLBACK', 'REVERSAL', 'MOMENTUM'];
+
+function isWithinPercent(a, b, percent) {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  const diff = Math.abs(a - b) / Math.max(a, b) * 100;
+  return diff <= percent;
+}
+
+function normalizeEntryTrigger(trigger) {
+  if (!trigger || typeof trigger !== 'string') return null;
+  const normalized = trigger.trim().toUpperCase();
+  return ENTRY_TRIGGERS.includes(normalized) ? normalized : null;
+}
 
 // ============================================
 // ECONOMIC CALENDAR - Major Events to Avoid
@@ -655,9 +674,27 @@ async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
   }
 }
 
+function getVolumeTrend(candles) {
+  if (!candles || candles.length < 20) return 'UNKNOWN';
+  const avgVolume = candles.slice(-20).reduce((sum, c) => sum + c.volume, 0) / 20;
+  const recentVolume = candles.slice(-5).reduce((sum, c) => sum + c.volume, 0) / 5;
+  if (recentVolume > avgVolume * 1.2) return 'INCREASING';
+  if (recentVolume < avgVolume * 0.8) return 'DECREASING';
+  return 'STABLE';
+}
+
+function classifyMarketRegime(indicators) {
+  if (!indicators || !indicators.adx) return 'UNKNOWN';
+  if (indicators.atrPercent && indicators.atrPercent > 5) return 'VOLATILE';
+  if (indicators.adx.adx < 20) return 'RANGING';
+  if (indicators.trend.includes('UPTREND')) return 'TRENDING_UP';
+  if (indicators.trend.includes('DOWNTREND')) return 'TRENDING_DOWN';
+  return 'CHOPPY';
+}
+
 // Calculate all indicators for a symbol
 async function calculateIndicators(symbol) {
-  const candles = await fetchCandlesticks(symbol, '1h', 100);
+  const candles = await fetchCandlesticks(symbol, '1h', 200);
   if (candles.length < 50) {
     console.log(`Insufficient candles for ${symbol}: ${candles.length}`);
     return null;
@@ -673,12 +710,14 @@ async function calculateIndicators(symbol) {
   const macd = calculateMACD(closes);
   const bollinger = calculateBollingerBands(closes);
   const atr = calculateATR(candles);
+  const atrPercent = atr ? (atr / currentPrice) * 100 : 0;
   const adx = calculateADX(candles);
   const stochRsi = calculateStochRSI(closes);
   const supertrend = calculateSupertrend(candles);
   const fibonacci = calculateFibonacciLevels(candles);
   const vwap = calculateVWAP(candles);
   const ichimoku = calculateIchimoku(candles);
+  const volumeTrend = getVolumeTrend(candles);
 
   // Determine trend from EMAs
   let trend = 'NEUTRAL';
@@ -697,13 +736,16 @@ async function calculateIndicators(symbol) {
     macd,
     bollinger,
     atr: Math.round(atr * 100) / 100,
+    atrPercent,
     adx,
     stochRsi,
     supertrend,
     fibonacci,
     vwap,
     ichimoku,
-    trend
+    trend,
+    volumeTrend,
+    marketRegime: classifyMarketRegime({ trend, adx, atrPercent })
   };
 }
 
@@ -978,6 +1020,8 @@ CRITICAL REQUIREMENTS:
 - Supertrend must confirm direction (UP = longs only, DOWN = shorts only)
 - Stochastic RSI should support entry timing (OVERSOLD for longs, OVERBOUGHT for shorts)
 - Price position relative to VWAP and EMAs must align with trade direction
+- Volume trend must be STABLE or INCREASING
+- Risk/Reward must be >= 2.0
 
 `;
 
@@ -1028,6 +1072,9 @@ CRITICAL REQUIREMENTS:
       prompt += `\n  MACD: ${indicators.macd?.histogram > 0 ? '📈 Bullish' : '📉 Bearish'} (Hist: ${indicators.macd?.histogram?.toFixed(2)})`;
       prompt += `\n  Bollinger: Upper=${indicators.bollinger?.upper?.toFixed(2)} | Mid=${indicators.bollinger?.middle?.toFixed(2)} | Lower=${indicators.bollinger?.lower?.toFixed(2)}`;
       prompt += `\n  ATR(14): ${indicators.atr}`;
+      prompt += `\n  ATR%: ${indicators.atrPercent?.toFixed(2)}%`;
+      prompt += `\n  Volume Trend: ${indicators.volumeTrend}`;
+      prompt += `\n  Market Regime: ${indicators.marketRegime}`;
       if (indicators.vwap) {
         prompt += `\n  VWAP: ${indicators.vwap.pricePosition} (${indicators.vwap.deviation?.toFixed(2)}% dev)${indicators.vwap.isExtended ? ' ⚠️ EXTENDED' : ''}`;
       }
@@ -1050,6 +1097,8 @@ ANALYSIS RULES:
    - For SHORT: RSI > 50 (not oversold), MACD bearish, price below VWAP, Supertrend DOWN
 4. **ENTRY TIMING** - Use StochRSI: OVERSOLD for long entries, OVERBOUGHT for short entries
 5. **TREND ALIGNMENT** - EMAs should confirm direction (price > EMA20 > EMA50 for longs)
+6. **REGIME & VOLUME** - Skip RANGING/CHOPPY regimes and avoid DECREASING volume
+7. **RISK/REWARD** - Must be >= 2.0 based on Entry/Stop/Target
 
 TASK: Identify 1-3 highest conviction trade setups. For each, provide:
 1. Symbol, Direction (LONG/SHORT), Confidence (0-100%)
@@ -1066,6 +1115,8 @@ Respond in this exact JSON format:
       "entry": 65000,
       "stopLoss": 63500,
       "takeProfit": 68000,
+      "entryTrigger": "BREAKOUT/PULLBACK/REVERSAL/MOMENTUM",
+      "entryCondition": "Specific condition to enter",
       "reasons": ["ADX 32 confirms strong trend", "Supertrend UP", "StochRSI oversold at 18"]
     }
   ]
@@ -1168,13 +1219,60 @@ async function analyzeWithGrok(prompt) {
   return null;
 }
 
-function findConsensusSignals(analyses) {
+function normalizeSignal(signal) {
+  if (!signal || typeof signal !== 'object') return null;
+  const entry = Number(signal.entry);
+  const stopLoss = Number(signal.stopLoss);
+  const takeProfit = Number(signal.takeProfit);
+  const confidence = Number(signal.confidence);
+  const direction = typeof signal.direction === 'string' ? signal.direction.toUpperCase() : '';
+  if (!Number.isFinite(entry) || !Number.isFinite(stopLoss) || !Number.isFinite(takeProfit) || !Number.isFinite(confidence)) {
+    return null;
+  }
+  if (confidence < 0 || confidence > 100) return null;
+  if (!['LONG', 'SHORT'].includes(direction)) return null;
+
+  return {
+    ...signal,
+    entry,
+    stopLoss,
+    takeProfit,
+    confidence,
+    direction,
+    entryTrigger: normalizeEntryTrigger(signal.entryTrigger)
+  };
+}
+
+function validateSignalLevels(signal) {
+  const isLong = signal.direction === 'LONG';
+  if (isLong && !(signal.stopLoss < signal.entry && signal.takeProfit > signal.entry)) return false;
+  if (!isLong && !(signal.stopLoss > signal.entry && signal.takeProfit < signal.entry)) return false;
+  const risk = Math.abs(signal.entry - signal.stopLoss);
+  const reward = Math.abs(signal.takeProfit - signal.entry);
+  const rr = reward / Math.max(risk, 1e-9);
+  return rr >= CONFIG.MIN_RISK_REWARD;
+}
+
+function validateSignalWithIndicators(signal, indicators) {
+  if (!validateSignalLevels(signal)) return false;
+  if (!indicators) return true;
+  if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) return false;
+  if (indicators.volumeTrend === 'DECREASING') return false;
+  if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(indicators.marketRegime)) return false;
+  return true;
+}
+
+function findConsensusSignals(analyses, indicatorData) {
   const validAnalyses = analyses.filter(a => a && a.signals && a.signals.length > 0);
   if (validAnalyses.length < 2) return [];
 
   const consensusSignals = [];
   const allSignals = validAnalyses.flatMap(a =>
-    a.signals.map(s => ({ ...s, aiSource: a.source }))
+    a.signals.map(s => {
+      const normalized = normalizeSignal(s);
+      if (!normalized) return null;
+      return { ...normalized, aiSource: a.source };
+    }).filter(Boolean)
   );
 
   // Group signals by symbol and direction
@@ -1188,20 +1286,39 @@ function findConsensusSignals(analyses) {
   // Find consensus (2+ AIs agree)
   for (const [key, signals] of Object.entries(grouped)) {
     if (signals.length >= 2) {
-      const aiSources = [...new Set(signals.map(s => s.aiSource))];
+      const matchingSignals = [];
+      for (const signal of signals) {
+        const matches = signals.filter(s =>
+          s.aiSource !== signal.aiSource &&
+          isWithinPercent(s.entry, signal.entry, CONFIG.MAX_ENTRY_WIGGLE_PERCENT) &&
+          isWithinPercent(s.stopLoss, signal.stopLoss, CONFIG.MAX_SL_WIGGLE_PERCENT) &&
+          isWithinPercent(s.takeProfit, signal.takeProfit, CONFIG.MAX_TP_WIGGLE_PERCENT) &&
+          (!s.entryTrigger || !signal.entryTrigger || s.entryTrigger === signal.entryTrigger)
+        );
+        if (matches.length > 0 && !matchingSignals.some(m => m.aiSource === signal.aiSource)) {
+          matchingSignals.push(signal);
+          matches.forEach(match => {
+            if (!matchingSignals.some(m => m.aiSource === match.aiSource)) {
+              matchingSignals.push(match);
+            }
+          });
+        }
+      }
+
+      const aiSources = [...new Set(matchingSignals.map(s => s.aiSource))];
       if (aiSources.length >= 2) {
-        // Average the values
-        const avgEntry = signals.reduce((sum, s) => sum + s.entry, 0) / signals.length;
-        const avgSL = signals.reduce((sum, s) => sum + s.stopLoss, 0) / signals.length;
-        const avgTP = signals.reduce((sum, s) => sum + s.takeProfit, 0) / signals.length;
-        const avgConfidence = signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length;
+        const avgEntry = matchingSignals.reduce((sum, s) => sum + s.entry, 0) / matchingSignals.length;
+        const avgSL = matchingSignals.reduce((sum, s) => sum + s.stopLoss, 0) / matchingSignals.length;
+        const avgTP = matchingSignals.reduce((sum, s) => sum + s.takeProfit, 0) / matchingSignals.length;
+        const avgConfidence = matchingSignals.reduce((sum, s) => sum + s.confidence, 0) / matchingSignals.length;
 
-        // Collect all reasons
-        const allReasons = [...new Set(signals.flatMap(s => s.reasons || []))];
+        const allReasons = [...new Set(matchingSignals.flatMap(s => s.reasons || []))];
+        const entryTriggers = matchingSignals.map(s => s.entryTrigger).filter(Boolean);
+        const entryConditions = matchingSignals.map(s => s.entryCondition).filter(Boolean);
 
-        consensusSignals.push({
-          symbol: signals[0].symbol,
-          direction: signals[0].direction,
+        const candidate = {
+          symbol: matchingSignals[0].symbol,
+          direction: matchingSignals[0].direction,
           entry: avgEntry,
           stopLoss: avgSL,
           takeProfit: avgTP,
@@ -1209,8 +1326,17 @@ function findConsensusSignals(analyses) {
           aiSources: aiSources,
           isGoldConsensus: aiSources.length >= 3,
           isSilverConsensus: aiSources.length === 2,
-          reasons: allReasons.slice(0, 5)
-        });
+          reasons: allReasons.slice(0, 5),
+          entryTrigger: entryTriggers[0] || null,
+          entryCondition: entryConditions[0] || null
+        };
+
+        const indicators = indicatorData?.[candidate.symbol];
+        if (validateSignalWithIndicators(candidate, indicators)) {
+          consensusSignals.push(candidate);
+        } else {
+          console.log(`⛔ ${candidate.symbol}: Consensus rejected by validation filters`);
+        }
       }
     }
   }
@@ -1300,6 +1426,16 @@ function formatSignalForTelegram(signal, majorEvent = null, indicators = null) {
   message += `   Stop Loss: $${signal.stopLoss.toLocaleString()} (${riskPercent.toFixed(1)}%)\n`;
   message += `   Take Profit: $${signal.takeProfit.toLocaleString()} (${rewardPercent.toFixed(1)}%)\n`;
   message += `   R:R Ratio: 1:${riskReward}\n\n`;
+
+  if (signal.entryTrigger) {
+    message += `🎯 <b>Entry Trigger:</b> ${signal.entryTrigger}\n`;
+  }
+  if (signal.entryCondition) {
+    message += `🧩 <b>Entry Condition:</b> ${signal.entryCondition}\n`;
+  }
+  if (signal.entryTrigger || signal.entryCondition) {
+    message += `\n`;
+  }
 
   // Add technical indicators summary
   if (indicators) {
@@ -1406,7 +1542,7 @@ export default async function handler(request, response) {
     console.log(`✅ Got ${analyses.length} AI responses`);
 
     // Find consensus signals
-    const consensusSignals = findConsensusSignals(analyses);
+    const consensusSignals = findConsensusSignals(analyses, indicatorData);
     console.log(`🎯 Found ${consensusSignals.length} consensus signals`);
 
     // Filter by confidence and TP%
@@ -1474,6 +1610,26 @@ export default async function handler(request, response) {
     });
     console.log(`🔄 After Supertrend filter: ${alertSignals.length} signals`);
 
+    // Filter by market regime, volume trend, and ATR threshold
+    alertSignals = alertSignals.filter(signal => {
+      const indicators = indicatorData[signal.symbol];
+      if (!indicators) return true;
+      if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+        console.log(`⛔ ${signal.symbol}: ATR ${indicators.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - BLOCKED`);
+        return false;
+      }
+      if (indicators.volumeTrend === 'DECREASING') {
+        console.log(`⛔ ${signal.symbol}: Volume trend decreasing - BLOCKED`);
+        return false;
+      }
+      if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(indicators.marketRegime)) {
+        console.log(`⛔ ${signal.symbol}: Market regime ${indicators.marketRegime} - BLOCKED`);
+        return false;
+      }
+      return true;
+    });
+    console.log(`📉 After regime/volume/ATR filter: ${alertSignals.length} signals`);
+
     // Apply Redis-based cooldown filter (persistent across invocations)
     const cooldownChecks = await Promise.all(
       alertSignals.map(async signal => {
@@ -1491,6 +1647,19 @@ export default async function handler(request, response) {
 
     // Adjust TP/SL based on volatility
     alertSignals = alertSignals.map(signal => adjustTPSLForVolatility(signal, marketData));
+
+    // Re-validate risk/reward after volatility adjustment
+    alertSignals = alertSignals.filter(signal => {
+      const risk = Math.abs(signal.entry - signal.stopLoss);
+      const reward = Math.abs(signal.takeProfit - signal.entry);
+      const rr = reward / Math.max(risk, 1e-9);
+      if (rr < CONFIG.MIN_RISK_REWARD) {
+        console.log(`⛔ ${signal.symbol}: R/R ${rr.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD} after volatility adjust - BLOCKED`);
+        return false;
+      }
+      return true;
+    });
+    console.log(`✅ After R/R validation: ${alertSignals.length} signals`);
 
     // Send Telegram alerts with inline keyboards
     let alertsSent = 0;
