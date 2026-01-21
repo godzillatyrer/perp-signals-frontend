@@ -56,11 +56,18 @@
 
   <div class="app-container">
     <!-- LEFT SIDEBAR - Market List -->
-    <aside class="sidebar-left">
+    <aside class="sidebar-left" id="sidebarLeft">
+      <!-- Toggle Button -->
+      <button class="sidebar-toggle" id="toggleLeftSidebar" title="Toggle sidebar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+
       <div class="sidebar-header">
         <div class="brand">
           <div class="logo">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2L2 7l10 5 10-5-10-5z"/>
               <path d="M2 17l10 5 10-5"/>
               <path d="M2 12l10 5 10-5"/>
@@ -84,9 +91,26 @@
         </div>
 
         <div class="market-list" id="marketList">
-          <div class="loading-state">
-            <div class="spinner"></div>
-            <span>Loading markets...</span>
+          <!-- Skeleton loaders -->
+          <div class="skeleton-card" style="padding: 10px;">
+            <div class="skeleton skeleton-text short"></div>
+            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
+          </div>
+          <div class="skeleton-card" style="padding: 10px;">
+            <div class="skeleton skeleton-text short"></div>
+            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
+          </div>
+          <div class="skeleton-card" style="padding: 10px;">
+            <div class="skeleton skeleton-text short"></div>
+            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
+          </div>
+          <div class="skeleton-card" style="padding: 10px;">
+            <div class="skeleton skeleton-text short"></div>
+            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
+          </div>
+          <div class="skeleton-card" style="padding: 10px;">
+            <div class="skeleton skeleton-text short"></div>
+            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
           </div>
         </div>
       </div>
@@ -364,7 +388,22 @@
     </main>
 
     <!-- RIGHT SIDEBAR - Signals Panel -->
-    <aside class="sidebar-right">
+    <aside class="sidebar-right" id="sidebarRight">
+      <!-- Toggle Button -->
+      <button class="sidebar-toggle" id="toggleRightSidebar" title="Toggle signals panel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+      </button>
+
+      <!-- Collapsed state icons -->
+      <div class="collapsed-icons">
+        <button class="collapsed-icon-btn active" data-expand-tab="new" title="New Signals">📊</button>
+        <button class="collapsed-icon-btn" data-expand-tab="data" title="Market Data">💧</button>
+        <button class="collapsed-icon-btn" data-expand-tab="news" title="News">📰</button>
+        <button class="collapsed-icon-btn" data-expand-tab="stats" title="AI Stats">🤖</button>
+      </div>
+
       <div class="market-bias-section">
         <div class="bias-header">
           <span class="bias-label">MARKET BIAS</span>

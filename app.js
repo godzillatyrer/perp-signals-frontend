@@ -7679,6 +7679,85 @@ function resetBalance() {
 // ============================================
 
 function initEventListeners() {
+  // Sidebar toggle functionality
+  const leftSidebar = document.getElementById('sidebarLeft');
+  const rightSidebar = document.getElementById('sidebarRight');
+  const toggleLeftBtn = document.getElementById('toggleLeftSidebar');
+  const toggleRightBtn = document.getElementById('toggleRightSidebar');
+
+  if (toggleLeftBtn && leftSidebar) {
+    toggleLeftBtn.addEventListener('click', () => {
+      leftSidebar.classList.toggle('collapsed');
+      // Save state to localStorage
+      localStorage.setItem('leftSidebarCollapsed', leftSidebar.classList.contains('collapsed'));
+      // Resize chart after transition
+      setTimeout(() => {
+        if (state.chart) {
+          const chartContainer = document.getElementById('tradingChart');
+          if (chartContainer) {
+            state.chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+          }
+        }
+      }, 350);
+    });
+    // Restore saved state
+    if (localStorage.getItem('leftSidebarCollapsed') === 'true') {
+      leftSidebar.classList.add('collapsed');
+    }
+  }
+
+  if (toggleRightBtn && rightSidebar) {
+    toggleRightBtn.addEventListener('click', () => {
+      rightSidebar.classList.toggle('collapsed');
+      // Save state to localStorage
+      localStorage.setItem('rightSidebarCollapsed', rightSidebar.classList.contains('collapsed'));
+      // Resize chart after transition
+      setTimeout(() => {
+        if (state.chart) {
+          const chartContainer = document.getElementById('tradingChart');
+          if (chartContainer) {
+            state.chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+          }
+        }
+      }, 350);
+    });
+    // Restore saved state
+    if (localStorage.getItem('rightSidebarCollapsed') === 'true') {
+      rightSidebar.classList.add('collapsed');
+    }
+  }
+
+  // Collapsed sidebar icon buttons (expand to specific tab)
+  document.querySelectorAll('.collapsed-icon-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.expandTab;
+      if (rightSidebar && rightSidebar.classList.contains('collapsed')) {
+        rightSidebar.classList.remove('collapsed');
+        localStorage.setItem('rightSidebarCollapsed', 'false');
+        // Switch to the appropriate tab
+        if (tab) {
+          document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
+          const targetTab = document.querySelector(`.signal-tab[data-signal-tab="${tab}"]`);
+          if (targetTab) targetTab.classList.add('active');
+          // Show appropriate view
+          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
+          if (tab === 'new' || tab === 'all') {
+            document.getElementById('signalsView')?.classList.add('active');
+          } else if (tab === 'data') {
+            document.getElementById('dataView')?.classList.add('active');
+          } else if (tab === 'news') {
+            document.getElementById('newsView')?.classList.add('active');
+          } else if (tab === 'stats') {
+            document.getElementById('statsView')?.classList.add('active');
+          }
+        }
+      }
+      // Update active state
+      document.querySelectorAll('.collapsed-icon-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
   // Navigation
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
