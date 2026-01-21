@@ -185,64 +185,177 @@
         </div>
       </div>
 
-      <!-- GROWTH VIEW - Portfolio Simulator -->
+      <!-- GROWTH VIEW - Dual Portfolio Simulator -->
       <div class="view" id="view-growth">
         <div class="growth-content">
-          <!-- Portfolio Simulator Panel -->
-          <div class="portfolio-panel-growth">
+          <!-- Portfolio Strategy Tabs -->
+          <div class="portfolio-strategy-tabs">
+            <button class="strategy-tab active" data-strategy="silver">
+              <span class="strategy-icon silver">2/3</span>
+              <span class="strategy-label">Silver Consensus</span>
+            </button>
+            <button class="strategy-tab" data-strategy="gold">
+              <span class="strategy-icon gold">3/3</span>
+              <span class="strategy-label">Gold Consensus</span>
+            </button>
+            <button class="sync-btn" id="syncPortfolioBtn" title="Sync with server">
+              <span class="sync-icon">&#x21BB;</span>
+            </button>
+          </div>
+
+          <!-- Silver Portfolio (2/3 Consensus) -->
+          <div class="portfolio-panel-growth portfolio-silver active" id="portfolio-silver">
             <div class="portfolio-header">
               <div class="portfolio-title">
-                <span class="portfolio-icon">$</span>
+                <span class="portfolio-icon silver">$</span>
                 <div>
-                  <h3>Portfolio Simulator</h3>
-                  <span class="strategy-name">AI Trading Strategy (Risk 2%)</span>
+                  <h3>Silver Portfolio</h3>
+                  <span class="strategy-name">2/3 AI Consensus (10x Leverage, 5% Risk)</span>
                 </div>
               </div>
               <div class="portfolio-balance">
                 <span class="label">START BAL:</span>
-                <span class="value" id="startBalance">$2000</span>
-                <button class="reset-balance-btn" id="resetBalanceBtn" title="Reset to $2000">Reset</button>
+                <span class="value" id="startBalanceSilver">$5,000</span>
+                <button class="reset-balance-btn" id="resetBalanceSilverBtn" title="Reset to $5000">Reset</button>
               </div>
             </div>
 
             <div class="portfolio-stats">
               <div class="stat-item">
                 <span class="stat-label">EQUITY</span>
-                <span class="stat-value accent" id="equityValue">$2000</span>
+                <span class="stat-value accent" id="equityValueSilver">$5,000</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">UNREALIZED PNL</span>
-                <span class="stat-value" id="unrealizedPnl">+0</span>
+                <span class="stat-value" id="unrealizedPnlSilver">+0.00</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">MAX DRAWDOWN</span>
-                <span class="stat-value" id="maxDrawdown">0.0%</span>
+                <span class="stat-value" id="maxDrawdownSilver">0.0%</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">WIN RATE</span>
-                <span class="stat-value" id="winRateValue">0%</span>
+                <span class="stat-value" id="winRateValueSilver">0%</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">TOTAL P&L</span>
+                <span class="stat-value" id="totalPnlSilver">$0.00</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">RETURN %</span>
+                <span class="stat-value" id="returnPctSilver">0%</span>
               </div>
             </div>
 
             <div class="portfolio-tabs">
-              <button class="portfolio-tab active" data-tab="curve">Performance Curve</button>
-              <button class="portfolio-tab" data-tab="positions">Open Positions <span class="count" id="positionCount">0</span></button>
-              <button class="portfolio-tab" data-tab="history">Trade History <span class="count" id="historyCount">0</span></button>
+              <button class="portfolio-tab active" data-tab="curve-silver">Performance Curve</button>
+              <button class="portfolio-tab" data-tab="positions-silver">Open Positions <span class="count" id="positionCountSilver">0</span></button>
+              <button class="portfolio-tab" data-tab="history-silver">Trade History <span class="count" id="historyCountSilver">0</span></button>
             </div>
 
             <div class="portfolio-content">
-              <div class="tab-content active" id="tab-curve">
-                <div class="equity-chart" id="equityChart"></div>
+              <div class="tab-content active" id="tab-curve-silver">
+                <div class="equity-chart" id="equityChartSilver"></div>
               </div>
-              <div class="tab-content" id="tab-positions">
-                <div class="positions-list" id="positionsList">
+              <div class="tab-content" id="tab-positions-silver">
+                <div class="positions-list" id="positionsListSilver">
                   <div class="empty-state">No open positions</div>
                 </div>
               </div>
-              <div class="tab-content" id="tab-history">
-                <div class="history-list" id="historyList">
+              <div class="tab-content" id="tab-history-silver">
+                <div class="history-list" id="historyListSilver">
                   <div class="empty-state">No trade history</div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gold Portfolio (3/3 Consensus) -->
+          <div class="portfolio-panel-growth portfolio-gold" id="portfolio-gold">
+            <div class="portfolio-header">
+              <div class="portfolio-title">
+                <span class="portfolio-icon gold">$</span>
+                <div>
+                  <h3>Gold Portfolio</h3>
+                  <span class="strategy-name">3/3 AI Consensus (15x Leverage, 8% Risk)</span>
+                </div>
+              </div>
+              <div class="portfolio-balance">
+                <span class="label">START BAL:</span>
+                <span class="value" id="startBalanceGold">$5,000</span>
+                <button class="reset-balance-btn" id="resetBalanceGoldBtn" title="Reset to $5000">Reset</button>
+              </div>
+            </div>
+
+            <div class="portfolio-stats">
+              <div class="stat-item">
+                <span class="stat-label">EQUITY</span>
+                <span class="stat-value accent" id="equityValueGold">$5,000</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">UNREALIZED PNL</span>
+                <span class="stat-value" id="unrealizedPnlGold">+0.00</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">MAX DRAWDOWN</span>
+                <span class="stat-value" id="maxDrawdownGold">0.0%</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">WIN RATE</span>
+                <span class="stat-value" id="winRateValueGold">0%</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">TOTAL P&L</span>
+                <span class="stat-value" id="totalPnlGold">$0.00</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">RETURN %</span>
+                <span class="stat-value" id="returnPctGold">0%</span>
+              </div>
+            </div>
+
+            <div class="portfolio-tabs">
+              <button class="portfolio-tab active" data-tab="curve-gold">Performance Curve</button>
+              <button class="portfolio-tab" data-tab="positions-gold">Open Positions <span class="count" id="positionCountGold">0</span></button>
+              <button class="portfolio-tab" data-tab="history-gold">Trade History <span class="count" id="historyCountGold">0</span></button>
+            </div>
+
+            <div class="portfolio-content">
+              <div class="tab-content active" id="tab-curve-gold">
+                <div class="equity-chart" id="equityChartGold"></div>
+              </div>
+              <div class="tab-content" id="tab-positions-gold">
+                <div class="positions-list" id="positionsListGold">
+                  <div class="empty-state">No open positions</div>
+                </div>
+              </div>
+              <div class="tab-content" id="tab-history-gold">
+                <div class="history-list" id="historyListGold">
+                  <div class="empty-state">No trade history</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Performance Comparison -->
+          <div class="portfolio-comparison">
+            <h4>Strategy Comparison</h4>
+            <div class="comparison-grid">
+              <div class="comparison-item">
+                <span class="comparison-label">Silver (2/3) Return</span>
+                <span class="comparison-value" id="silverReturnCompare">0%</span>
+              </div>
+              <div class="comparison-item">
+                <span class="comparison-label">Gold (3/3) Return</span>
+                <span class="comparison-value" id="goldReturnCompare">0%</span>
+              </div>
+              <div class="comparison-item">
+                <span class="comparison-label">Best Strategy</span>
+                <span class="comparison-value" id="bestStrategy">-</span>
+              </div>
+              <div class="comparison-item">
+                <span class="comparison-label">Last Sync</span>
+                <span class="comparison-value" id="lastSyncTime">Never</span>
               </div>
             </div>
           </div>

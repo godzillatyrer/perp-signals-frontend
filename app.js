@@ -1184,6 +1184,47 @@ const validateAiPick = (pick, marketInfo) => {
   return { valid: true, pick: normalized };
 };
 
+// ============================================
+// DUAL PORTFOLIO STATE - For comparing 2/3 vs 3/3 consensus
+// ============================================
+
+const dualPortfolioState = {
+  // Silver Portfolio (2/3 Consensus)
+  silver: {
+    balance: 5000,
+    startBalance: 5000,
+    trades: [],
+    equityHistory: [{ time: Date.now(), value: 5000 }],
+    stats: {
+      totalTrades: 0, winningTrades: 0, losingTrades: 0, totalPnL: 0,
+      maxDrawdown: 0, peakEquity: 5000, winRate: 0
+    }
+  },
+  // Gold Portfolio (3/3 Consensus)
+  gold: {
+    balance: 5000,
+    startBalance: 5000,
+    trades: [],
+    equityHistory: [{ time: Date.now(), value: 5000 }],
+    stats: {
+      totalTrades: 0, winningTrades: 0, losingTrades: 0, totalPnL: 0,
+      maxDrawdown: 0, peakEquity: 5000, winRate: 0
+    }
+  },
+  // Aggressive config for 200% monthly growth target
+  config: {
+    silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8, tpMultiplier: 2.5, slPercent: 2 },
+    gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5, tpMultiplier: 3, slPercent: 1.5 }
+  },
+  activePortfolio: 'silver',
+  equityChartSilver: null,
+  equitySeriesSilver: null,
+  equityChartGold: null,
+  equitySeriesGold: null,
+  lastSync: null,
+  isSyncing: false
+};
+
 // Utility Functions
 const formatPrice = (price, decimals = 2) => {
   if (price >= 1000) return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1742,8 +1783,9 @@ function updatePerformanceStats(trade, pnl) {
     stats.maxDrawdown = currentDrawdown;
   }
 
-  // Save stats
+  // Save stats to localStorage and sync to Redis
   localStorage.setItem('performance_stats', JSON.stringify(stats));
+  syncAIStatsToRedis();
 
   // Play sound
   playAlertSound(pnl > 0 ? 'win' : 'loss');
@@ -1751,12 +1793,124 @@ function updatePerformanceStats(trade, pnl) {
   return stats;
 }
 
+// Load AI performance stats from Redis (cross-device persistence)
+async function loadPerformanceStatsFromRedis() {
+  try {
+    const response = await fetch('/api/ai-stats');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.stats) {
+        // Merge Redis stats with local state
+        state.performanceStats = {
+          ...state.performanceStats,
+          claudeWins: data.stats.claudeWins || 0,
+          claudeLosses: data.stats.claudeLosses || 0,
+          claudeSignals: data.stats.claudeSignals || 0,
+          claudeTotalConf: data.stats.claudeTotalConf || 0,
+          openaiWins: data.stats.openaiWins || 0,
+          openaiLosses: data.stats.openaiLosses || 0,
+          openaiSignals: data.stats.openaiSignals || 0,
+          openaiTotalConf: data.stats.openaiTotalConf || 0,
+          grokWins: data.stats.grokWins || 0,
+          grokLosses: data.stats.grokLosses || 0,
+          grokSignals: data.stats.grokSignals || 0,
+          grokTotalConf: data.stats.grokTotalConf || 0,
+          goldConsensusWins: data.stats.goldConsensusWins || 0,
+          goldConsensusLosses: data.stats.goldConsensusLosses || 0,
+          goldConsensusSignals: data.stats.goldConsensusSignals || 0
+        };
+        // Also save to localStorage as cache
+        localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+        console.log('📊 Loaded AI stats from Redis:', data.stats);
+        renderStatsView();
+        return true;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load AI stats from Redis:', e);
+  }
+  return false;
+}
+
+// Sync AI stats to Redis (for cross-device persistence)
+async function syncAIStatsToRedis() {
+  try {
+    const stats = state.performanceStats;
+    const response = await fetch('/api/ai-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stats: {
+          claudeWins: stats.claudeWins,
+          claudeLosses: stats.claudeLosses,
+          claudeSignals: stats.claudeSignals,
+          claudeTotalConf: stats.claudeTotalConf,
+          openaiWins: stats.openaiWins,
+          openaiLosses: stats.openaiLosses,
+          openaiSignals: stats.openaiSignals,
+          openaiTotalConf: stats.openaiTotalConf,
+          grokWins: stats.grokWins,
+          grokLosses: stats.grokLosses,
+          grokSignals: stats.grokSignals,
+          grokTotalConf: stats.grokTotalConf,
+          goldConsensusWins: stats.goldConsensusWins,
+          goldConsensusLosses: stats.goldConsensusLosses,
+          goldConsensusSignals: stats.goldConsensusSignals
+        }
+      })
+    });
+    if (response.ok) {
+      console.log('📊 AI stats synced to Redis');
+    }
+  } catch (e) {
+    console.error('Failed to sync AI stats to Redis:', e);
+  }
+}
+
+// Record a trade result (win/loss) for AI stats tracking
+async function recordTradeResult(trade, isWin) {
+  try {
+    const response = await fetch('/api/ai-stats', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'record_trade_result',
+        data: {
+          aiSources: trade.aiSources || [],
+          isGoldConsensus: trade.isGoldConsensus || false,
+          isWin: isWin,
+          symbol: trade.symbol,
+          direction: trade.direction,
+          entry: trade.entry,
+          exit: trade.exitPrice,
+          pnl: trade.pnl,
+          timestamp: Date.now()
+        }
+      })
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.stats) {
+        // Update local state with Redis response
+        state.performanceStats = { ...state.performanceStats, ...data.stats };
+        localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+        renderStatsView();
+      }
+    }
+  } catch (e) {
+    console.error('Failed to record trade result:', e);
+  }
+}
+
 function loadPerformanceStats() {
   try {
+    // First load from localStorage (immediate)
     const saved = localStorage.getItem('performance_stats');
     if (saved) {
       state.performanceStats = { ...state.performanceStats, ...JSON.parse(saved) };
     }
+    // Then async load from Redis (authoritative source)
+    loadPerformanceStatsFromRedis();
   } catch (e) {
     console.error('Failed to load performance stats:', e);
   }
@@ -3197,7 +3351,7 @@ ${m.symbol}:
 - Price: $${m.price} | 24h: ${m.change.toFixed(2)}% | Vol: $${formatVolume(m.volume)}
 - Trend: ${m.trend || 'N/A'} | Regime: ${m.marketRegime || 'N/A'}
 - RSI: ${m.rsi?.toFixed(1) || 'N/A'} | StochRSI: ${m.stochRsi?.signal || 'N/A'} ${m.stochRsi?.signal === 'OVERSOLD' ? '🟢' : m.stochRsi?.signal === 'OVERBOUGHT' ? '🔴' : ''}
-- ADX: ${m.adx?.adx || 'N/A'} (${m.adx?.trend || 'N/A'}) ${m.adx?.adx >= 25 ? '✅ STRONG' : '⚠️ WEAK'}
+- ADX: ${m.adx?.adx || 'N/A'} (${m.adx?.trend || 'N/A'}) ${m.adx?.adx >= 22 ? '✅ OK' : '⚠️ WEAK'}
 - Supertrend: ${m.supertrend?.direction || 'N/A'} | Signal: ${m.supertrend?.signal || 'N/A'}
 - EMAs: 20=$${m.ema20?.toFixed(2) || 'N/A'} | 50=$${m.ema50?.toFixed(2) || 'N/A'} | 200=$${m.ema200?.toFixed(2) || 'N/A'}
 - Support: ${m.supports?.map(s => '$' + formatPrice(s)).join(', ') || 'N/A'}
@@ -3272,7 +3426,7 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 6. **RISK/REWARD**: Only pick trades with at least 2:1 R/R ratio. Calculate: (TP - Entry) / (Entry - SL) >= 2
 
 CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
 - **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade in direction of higher timeframe trend (check MTF Confluence)
 - Market Regime must be TRENDING (UP or DOWN), NOT VOLATILE or RANGING
@@ -3281,7 +3435,7 @@ CRITICAL REQUIREMENTS (ALL must be met):
 - Entry must be at a favorable level (near support for longs, near resistance for shorts)
 - **Stochastic RSI timing**: For longs prefer OVERSOLD or rising from <30. For shorts prefer OVERBOUGHT or falling from >70
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory.
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3319,7 +3473,7 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 6. **PIVOT POINTS**: Use daily pivots as targets. S1/S2 for support, R1/R2 for resistance.
 
 CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
 - **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade when technical indicators ALIGN (RSI + MACD + EMA + Supertrend all same direction)
 - Price must be respecting key levels (not in no-man's-land)
@@ -3328,7 +3482,7 @@ CRITICAL REQUIREMENTS (ALL must be met):
 - Ichimoku signal should support the direction (not IN_CLOUD)
 - **Stochastic RSI**: Use for entry timing - OVERSOLD for longs, OVERBOUGHT for shorts
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory.
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3368,7 +3522,7 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 6. **ICHIMOKU MOMENTUM**: STRONG_BULLISH or STRONG_BEARISH signals with TK cross = high momentum
 
 CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
 - **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade with the trend (no counter-trend trades)
 - Market Structure must show UPTREND for longs, DOWNTREND for shorts
@@ -3377,7 +3531,7 @@ CRITICAL REQUIREMENTS (ALL must be met):
 - Entry should be on pullback to VWAP or EMA20, not at extended levels
 - **Stochastic RSI**: K value should be in momentum zone (40-60) or just exiting oversold/overbought
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory. No exceptions.
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory. No exceptions.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3713,17 +3867,17 @@ async function runAiAnalysis() {
         }
       }
 
-      // Only create signal if ALL 3 AIs agree (Gold consensus only for quality)
-      if (matchingPicks.length >= 3) {
-        const isGoldConsensus = true; // Now we only accept Gold consensus
-        const isSilverConsensus = false; // No longer accepting silver consensus
+      // Create signal for 2/3 (Silver) or 3/3 (Gold) consensus
+      if (matchingPicks.length >= 2) {
+        const isGoldConsensus = matchingPicks.length >= 3;
+        const isSilverConsensus = matchingPicks.length === 2;
         const symbol = matchingPicks[0].symbol;
         const direction = matchingPicks[0].direction;
 
         // Get market data for this symbol (for regime and MTF checks)
         const marketInfo = enrichedData.find(m => m.symbol === symbol);
 
-        // HARD FILTER: ADX must be >= 25 (strong trend required)
+        // HARD FILTER: ADX must be >= 22 (moderate+ trend required)
         const adxValue = marketInfo?.adx?.adx || 0;
         if (adxValue < 25) {
           console.log(`⛔ ${symbol}: ADX ${adxValue} < 25 - Skipping (weak trend)`);
@@ -3973,6 +4127,9 @@ async function runAiAnalysis() {
           status: 'pending'
         });
         state.aiPredictions = state.aiPredictions.slice(0, 50); // Keep last 50
+
+        // Sync consensus stats to Redis
+        syncAIStatsToRedis();
       }
     }
 
@@ -4218,6 +4375,9 @@ async function executeAiTrades() {
 
     state.trades.push(trade);
     console.log(`🤖 AI Auto-Trade opened: ${signal.direction} ${signal.symbol} @ $${formatPrice(signal.entry)}`);
+
+    // Also open in dual portfolio (routes to silver or gold based on consensus type)
+    openDualPortfolioTrade(signal);
 
     showNotification({
       ...signal,
@@ -4536,7 +4696,10 @@ function openTrade(signal) {
     leverage: CONFIG.LEVERAGE,
     timestamp: Date.now(),
     status: 'open',
-    pnl: 0
+    pnl: 0,
+    // Store AI sources for win rate tracking
+    aiSources: signal.aiSources || [],
+    isGoldConsensus: signal.isGoldConsensus || false
   };
 
   state.trades.push(trade);
@@ -4544,6 +4707,11 @@ function openTrade(signal) {
   renderPositions();
   renderHistory();
   updatePortfolioStats();
+
+  // Also open in dual portfolio if it's a consensus signal
+  if (signal.isConsensus || signal.isGoldConsensus || signal.isSilverConsensus) {
+    openDualPortfolioTrade(signal);
+  }
 }
 
 function updateOpenPositions() {
@@ -4582,10 +4750,48 @@ function closeTrade(trade, exitPrice) {
   state.balance += trade.pnl;
   state.equityHistory.push({ time: Date.now(), value: state.balance });
 
+  // Record trade result for AI win rate tracking
+  const isWin = trade.pnl > 0;
+  recordTradeResult(trade, isWin);
+
+  // Update prediction status from 'pending' to 'win'/'loss'
+  const matchingPrediction = state.aiPredictions.find(p =>
+    p.symbol === trade.symbol &&
+    p.direction === trade.direction &&
+    p.status === 'pending' &&
+    Math.abs(p.entry - trade.entry) / trade.entry < 0.05 // Within 5% of entry
+  );
+  if (matchingPrediction) {
+    matchingPrediction.status = isWin ? 'win' : 'loss';
+    matchingPrediction.pnl = trade.pnl;
+    matchingPrediction.exitPrice = exitPrice;
+  }
+
+  // Update local stats based on AI sources
+  if (trade.aiSources && trade.aiSources.length > 0) {
+    for (const source of trade.aiSources) {
+      if (isWin) {
+        if (source === 'claude') state.performanceStats.claudeWins++;
+        else if (source === 'openai') state.performanceStats.openaiWins++;
+        else if (source === 'grok') state.performanceStats.grokWins++;
+      } else {
+        if (source === 'claude') state.performanceStats.claudeLosses++;
+        else if (source === 'openai') state.performanceStats.openaiLosses++;
+        else if (source === 'grok') state.performanceStats.grokLosses++;
+      }
+    }
+    if (trade.isGoldConsensus) {
+      if (isWin) state.performanceStats.goldConsensusWins++;
+      else state.performanceStats.goldConsensusLosses++;
+    }
+    localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+  }
+
   saveTrades();
   renderHistory();
   updatePortfolioStats();
   updateEquityChart();
+  renderStatsView();
 }
 
 function updatePortfolioStats() {
@@ -4618,6 +4824,527 @@ function calculateMaxDrawdown() {
     if (dd > maxDd) maxDd = dd;
   }
   return maxDd;
+}
+
+// ============================================
+// DUAL PORTFOLIO MANAGEMENT
+// ============================================
+
+// Open trade in dual portfolio (called when consensus signal detected)
+function openDualPortfolioTrade(signal) {
+  const portfolioType = signal.isGoldConsensus ? 'gold' : 'silver';
+  const portfolio = dualPortfolioState[portfolioType];
+  const config = dualPortfolioState.config[portfolioType];
+
+  // Check max open trades
+  const openTrades = portfolio.trades.filter(t => t.status === 'open');
+  if (openTrades.length >= config.maxOpenTrades) {
+    console.log(`${portfolioType.toUpperCase()}: Max ${config.maxOpenTrades} trades reached, skipping ${signal.symbol}`);
+    return;
+  }
+
+  // Check if already in this trade
+  if (openTrades.some(t => t.symbol === signal.symbol)) {
+    console.log(`${portfolioType.toUpperCase()}: Already in ${signal.symbol}, skipping`);
+    return;
+  }
+
+  // Calculate position size based on aggressive config
+  const riskAmount = portfolio.balance * (config.riskPercent / 100);
+  const positionSize = riskAmount * config.leverage;
+
+  const trade = {
+    id: Date.now(),
+    symbol: signal.symbol,
+    direction: signal.direction,
+    entry: signal.entry,
+    tp: signal.tp,
+    sl: signal.sl,
+    size: positionSize,
+    leverage: config.leverage,
+    timestamp: Date.now(),
+    status: 'open',
+    pnl: 0,
+    aiSources: signal.aiSources || [],
+    isGoldConsensus: signal.isGoldConsensus || false,
+    isSilverConsensus: signal.isSilverConsensus || false,
+    confidence: signal.confidence
+  };
+
+  portfolio.trades.push(trade);
+  saveDualPortfolio();
+  renderDualPortfolioPositions(portfolioType);
+  updateDualPortfolioStats(portfolioType);
+
+  console.log(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)}`);
+
+  // Sync to backend
+  syncDualPortfolioToBackend();
+}
+
+// Update open positions for dual portfolio
+function updateDualPortfolioPositions() {
+  for (const portfolioType of ['silver', 'gold']) {
+    const portfolio = dualPortfolioState[portfolioType];
+    const openTrades = portfolio.trades.filter(t => t.status === 'open');
+    let totalUnrealizedPnl = 0;
+
+    for (const trade of openTrades) {
+      const currentPrice = state.priceCache[trade.symbol] || trade.entry;
+      const priceDiff = trade.direction === 'LONG' ? currentPrice - trade.entry : trade.entry - currentPrice;
+      trade.pnl = (priceDiff / trade.entry) * trade.size;
+      totalUnrealizedPnl += trade.pnl;
+
+      // Check TP/SL
+      if (trade.direction === 'LONG') {
+        if (currentPrice >= trade.tp || currentPrice <= trade.sl) {
+          closeDualPortfolioTrade(portfolioType, trade, currentPrice);
+        }
+      } else {
+        if (currentPrice <= trade.tp || currentPrice >= trade.sl) {
+          closeDualPortfolioTrade(portfolioType, trade, currentPrice);
+        }
+      }
+    }
+
+    // Update unrealized PnL display
+    const suffix = portfolioType === 'silver' ? 'Silver' : 'Gold';
+    const unrealizedEl = document.getElementById(`unrealizedPnl${suffix}`);
+    if (unrealizedEl) {
+      unrealizedEl.textContent = (totalUnrealizedPnl >= 0 ? '+' : '') + totalUnrealizedPnl.toFixed(2);
+      unrealizedEl.className = 'stat-value ' + (totalUnrealizedPnl >= 0 ? 'green' : 'red');
+    }
+  }
+
+  renderDualPortfolioPositions('silver');
+  renderDualPortfolioPositions('gold');
+}
+
+// Close trade in dual portfolio
+function closeDualPortfolioTrade(portfolioType, trade, exitPrice) {
+  const portfolio = dualPortfolioState[portfolioType];
+
+  trade.status = 'closed';
+  trade.exitPrice = exitPrice;
+  trade.closeTimestamp = Date.now();
+
+  const priceDiff = trade.direction === 'LONG' ? exitPrice - trade.entry : trade.entry - exitPrice;
+  trade.pnl = (priceDiff / trade.entry) * trade.size;
+
+  portfolio.balance += trade.pnl;
+  portfolio.equityHistory.push({ time: Date.now(), value: portfolio.balance });
+
+  // Update stats
+  const isWin = trade.pnl > 0;
+  if (isWin) {
+    portfolio.stats.winningTrades++;
+  } else {
+    portfolio.stats.losingTrades++;
+  }
+  portfolio.stats.totalTrades++;
+  portfolio.stats.totalPnL += trade.pnl;
+
+  const result = isWin ? '✅ WIN' : '❌ LOSS';
+  console.log(`${trade.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: ${result} ${trade.symbol} | PnL: $${trade.pnl.toFixed(2)}`);
+
+  saveDualPortfolio();
+  renderDualPortfolioHistory(portfolioType);
+  updateDualPortfolioStats(portfolioType);
+  updateDualPortfolioEquityChart(portfolioType);
+  updatePortfolioComparison();
+
+  // Sync to backend
+  syncDualPortfolioToBackend();
+}
+
+// Calculate max drawdown for dual portfolio
+function calculateDualPortfolioMaxDrawdown(portfolioType) {
+  const portfolio = dualPortfolioState[portfolioType];
+  if (portfolio.equityHistory.length < 2) return 0;
+
+  let peak = portfolio.equityHistory[0].value;
+  let maxDd = 0;
+
+  for (const point of portfolio.equityHistory) {
+    if (point.value > peak) peak = point.value;
+    const dd = (peak - point.value) / peak * 100;
+    if (dd > maxDd) maxDd = dd;
+  }
+  return maxDd;
+}
+
+// Update stats display for dual portfolio
+function updateDualPortfolioStats(portfolioType) {
+  const portfolio = dualPortfolioState[portfolioType];
+  const suffix = portfolioType === 'silver' ? 'Silver' : 'Gold';
+
+  const closedTrades = portfolio.trades.filter(t => t.status === 'closed');
+  const wins = closedTrades.filter(t => t.pnl > 0).length;
+  const winRate = closedTrades.length > 0 ? (wins / closedTrades.length * 100) : 0;
+  const maxDrawdown = calculateDualPortfolioMaxDrawdown(portfolioType);
+  const totalPnL = portfolio.balance - portfolio.startBalance;
+  const returnPct = (totalPnL / portfolio.startBalance * 100);
+
+  // Update DOM elements
+  const equityEl = document.getElementById(`equityValue${suffix}`);
+  const winRateEl = document.getElementById(`winRateValue${suffix}`);
+  const maxDdEl = document.getElementById(`maxDrawdown${suffix}`);
+  const posCountEl = document.getElementById(`positionCount${suffix}`);
+  const histCountEl = document.getElementById(`historyCount${suffix}`);
+  const totalPnlEl = document.getElementById(`totalPnl${suffix}`);
+  const returnPctEl = document.getElementById(`returnPct${suffix}`);
+
+  if (equityEl) equityEl.textContent = '$' + portfolio.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (winRateEl) winRateEl.textContent = winRate.toFixed(0) + '%';
+  if (maxDdEl) maxDdEl.textContent = maxDrawdown.toFixed(1) + '%';
+  if (posCountEl) posCountEl.textContent = portfolio.trades.filter(t => t.status === 'open').length;
+  if (histCountEl) histCountEl.textContent = closedTrades.length;
+  if (totalPnlEl) {
+    totalPnlEl.textContent = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
+    totalPnlEl.className = 'stat-value ' + (totalPnL >= 0 ? 'positive' : 'negative');
+  }
+  if (returnPctEl) {
+    returnPctEl.textContent = (returnPct >= 0 ? '+' : '') + returnPct.toFixed(1) + '%';
+    returnPctEl.className = 'stat-value ' + (returnPct >= 0 ? 'positive' : 'negative');
+  }
+
+  // Update stats object
+  portfolio.stats.winRate = winRate;
+  portfolio.stats.maxDrawdown = maxDrawdown;
+  portfolio.stats.peakEquity = Math.max(portfolio.stats.peakEquity, portfolio.balance);
+}
+
+// Render positions for dual portfolio
+function renderDualPortfolioPositions(portfolioType) {
+  const portfolio = dualPortfolioState[portfolioType];
+  const suffix = portfolioType === 'silver' ? 'Silver' : 'Gold';
+  const container = document.getElementById(`positionsList${suffix}`);
+  if (!container) return;
+
+  const openTrades = portfolio.trades.filter(t => t.status === 'open');
+
+  if (openTrades.length === 0) {
+    container.innerHTML = '<div class="empty-state">No open positions</div>';
+    return;
+  }
+
+  container.innerHTML = openTrades.map(t => {
+    const currentPrice = state.priceCache[t.symbol] || t.entry;
+    const pnlPct = (t.pnl / t.size * 100).toFixed(2);
+
+    return `
+      <div class="position-item">
+        <span class="symbol">${t.symbol.replace('USDT', '')} <span class="ai-trade-badge">${t.isGoldConsensus ? '🥇' : '🥈'}</span></span>
+        <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
+        <span class="entry">$${formatPrice(t.entry)}</span>
+        <span class="current">$${formatPrice(currentPrice)}</span>
+        <span class="pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
+        <span class="pnl-pct ${t.pnl >= 0 ? 'positive' : 'negative'}">${pnlPct}%</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// Render history for dual portfolio
+function renderDualPortfolioHistory(portfolioType) {
+  const portfolio = dualPortfolioState[portfolioType];
+  const suffix = portfolioType === 'silver' ? 'Silver' : 'Gold';
+  const container = document.getElementById(`historyList${suffix}`);
+  if (!container) return;
+
+  const closedTrades = portfolio.trades.filter(t => t.status === 'closed').slice(-20).reverse();
+
+  if (closedTrades.length === 0) {
+    container.innerHTML = '<div class="empty-state">No trade history</div>';
+    return;
+  }
+
+  container.innerHTML = closedTrades.map(t => `
+    <div class="history-item">
+      <span class="symbol">${t.symbol.replace('USDT', '')} <span class="ai-trade-badge">${t.isGoldConsensus ? '🥇' : '🥈'}</span></span>
+      <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
+      <span class="entry">$${formatPrice(t.entry)}</span>
+      <span class="exit">$${formatPrice(t.exitPrice)}</span>
+      <span class="pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
+      <span class="time">${timeAgo(t.closeTimestamp)}</span>
+    </div>
+  `).join('');
+}
+
+// Initialize equity charts for dual portfolio
+function initDualPortfolioEquityCharts() {
+  for (const portfolioType of ['silver', 'gold']) {
+    const suffix = portfolioType === 'silver' ? 'Silver' : 'Gold';
+    const container = document.getElementById(`equityChart${suffix}`);
+    if (!container || typeof LightweightCharts === 'undefined') continue;
+
+    const chartColor = portfolioType === 'gold' ? '#ffd700' : '#8b9dc3';
+
+    dualPortfolioState[`equityChart${suffix}`] = LightweightCharts.createChart(container, {
+      width: container.clientWidth,
+      height: 200,
+      layout: { background: { type: 'solid', color: '#111820' }, textColor: '#8b949e' },
+      grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+      rightPriceScale: { visible: true, borderVisible: false },
+      timeScale: { visible: true, borderVisible: false, timeVisible: true },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+    });
+
+    dualPortfolioState[`equitySeries${suffix}`] = dualPortfolioState[`equityChart${suffix}`].addAreaSeries({
+      lineColor: chartColor,
+      topColor: `${chartColor}40`,
+      bottomColor: `${chartColor}10`,
+      lineWidth: 2
+    });
+
+    updateDualPortfolioEquityChart(portfolioType);
+  }
+}
+
+// Update equity chart for dual portfolio
+function updateDualPortfolioEquityChart(portfolioType) {
+  const suffix = portfolioType === 'silver' ? 'Silver' : 'Gold';
+  const series = dualPortfolioState[`equitySeries${suffix}`];
+  const chart = dualPortfolioState[`equityChart${suffix}`];
+  if (!series) return;
+
+  const portfolio = dualPortfolioState[portfolioType];
+  const data = portfolio.equityHistory.map(p => ({
+    time: Math.floor(p.time / 1000),
+    value: p.value
+  }));
+
+  if (data.length > 0) {
+    series.setData(data);
+    chart?.timeScale().fitContent();
+  }
+}
+
+// Update portfolio comparison section
+function updatePortfolioComparison() {
+  const silverReturn = ((dualPortfolioState.silver.balance - dualPortfolioState.silver.startBalance) / dualPortfolioState.silver.startBalance * 100);
+  const goldReturn = ((dualPortfolioState.gold.balance - dualPortfolioState.gold.startBalance) / dualPortfolioState.gold.startBalance * 100);
+
+  const silverEl = document.getElementById('silverReturnCompare');
+  const goldEl = document.getElementById('goldReturnCompare');
+  const bestEl = document.getElementById('bestStrategy');
+  const lastSyncEl = document.getElementById('lastSyncTime');
+
+  if (silverEl) {
+    silverEl.textContent = (silverReturn >= 0 ? '+' : '') + silverReturn.toFixed(1) + '%';
+    silverEl.className = 'comparison-value ' + (silverReturn >= 0 ? 'positive' : 'negative');
+  }
+  if (goldEl) {
+    goldEl.textContent = (goldReturn >= 0 ? '+' : '') + goldReturn.toFixed(1) + '%';
+    goldEl.className = 'comparison-value ' + (goldReturn >= 0 ? 'positive' : 'negative');
+  }
+  if (bestEl) {
+    if (silverReturn === goldReturn) {
+      bestEl.textContent = 'Tied';
+    } else if (silverReturn > goldReturn) {
+      bestEl.textContent = 'Silver (2/3)';
+      bestEl.style.color = '#8b9dc3';
+    } else {
+      bestEl.textContent = 'Gold (3/3)';
+      bestEl.style.color = '#ffd700';
+    }
+  }
+  if (lastSyncEl && dualPortfolioState.lastSync) {
+    lastSyncEl.textContent = timeAgo(dualPortfolioState.lastSync);
+  }
+}
+
+// Save dual portfolio to localStorage
+function saveDualPortfolio() {
+  try {
+    localStorage.setItem('dual_portfolio_silver', JSON.stringify(dualPortfolioState.silver));
+    localStorage.setItem('dual_portfolio_gold', JSON.stringify(dualPortfolioState.gold));
+    localStorage.setItem('dual_portfolio_config', JSON.stringify(dualPortfolioState.config));
+  } catch (e) {
+    console.error('Failed to save dual portfolio:', e);
+  }
+}
+
+// Load dual portfolio from localStorage
+function loadDualPortfolio() {
+  try {
+    const silver = localStorage.getItem('dual_portfolio_silver');
+    const gold = localStorage.getItem('dual_portfolio_gold');
+    const config = localStorage.getItem('dual_portfolio_config');
+
+    if (silver) dualPortfolioState.silver = JSON.parse(silver);
+    if (gold) dualPortfolioState.gold = JSON.parse(gold);
+    if (config) dualPortfolioState.config = JSON.parse(config);
+
+    console.log(`💼 Loaded dual portfolios - Silver: $${dualPortfolioState.silver.balance.toFixed(2)}, Gold: $${dualPortfolioState.gold.balance.toFixed(2)}`);
+  } catch (e) {
+    console.error('Failed to load dual portfolio:', e);
+  }
+}
+
+// Reset dual portfolio
+function resetDualPortfolio(portfolioType) {
+  const confirmMsg = `Are you sure you want to reset the ${portfolioType.toUpperCase()} portfolio to $5,000? This will close all positions and clear trade history.`;
+  if (!confirm(confirmMsg)) return;
+
+  dualPortfolioState[portfolioType] = {
+    balance: 5000,
+    startBalance: 5000,
+    trades: [],
+    equityHistory: [{ time: Date.now(), value: 5000 }],
+    stats: {
+      totalTrades: 0, winningTrades: 0, losingTrades: 0, totalPnL: 0,
+      maxDrawdown: 0, peakEquity: 5000, winRate: 0
+    }
+  };
+
+  saveDualPortfolio();
+  renderDualPortfolioPositions(portfolioType);
+  renderDualPortfolioHistory(portfolioType);
+  updateDualPortfolioStats(portfolioType);
+  updateDualPortfolioEquityChart(portfolioType);
+  updatePortfolioComparison();
+  syncDualPortfolioToBackend();
+
+  console.log(`💰 ${portfolioType.toUpperCase()} portfolio reset to $5,000`);
+}
+
+// Sync dual portfolio to backend (Redis)
+async function syncDualPortfolioToBackend() {
+  if (dualPortfolioState.isSyncing) return;
+
+  try {
+    dualPortfolioState.isSyncing = true;
+    const syncBtn = document.getElementById('syncPortfolioBtn');
+    if (syncBtn) syncBtn.classList.add('syncing');
+
+    const response = await fetch('/api/portfolio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          silver: dualPortfolioState.silver,
+          gold: dualPortfolioState.gold,
+          config: dualPortfolioState.config
+        }
+      })
+    });
+
+    if (response.ok) {
+      dualPortfolioState.lastSync = Date.now();
+      updatePortfolioComparison();
+      console.log('✅ Dual portfolio synced to backend');
+    }
+  } catch (e) {
+    console.error('Failed to sync dual portfolio:', e);
+  } finally {
+    dualPortfolioState.isSyncing = false;
+    const syncBtn = document.getElementById('syncPortfolioBtn');
+    if (syncBtn) syncBtn.classList.remove('syncing');
+  }
+}
+
+// Load dual portfolio from backend (Redis)
+async function loadDualPortfolioFromBackend() {
+  try {
+    dualPortfolioState.isSyncing = true;
+    const syncBtn = document.getElementById('syncPortfolioBtn');
+    if (syncBtn) syncBtn.classList.add('syncing');
+
+    const response = await fetch('/api/portfolio');
+    if (!response.ok) throw new Error('Failed to fetch portfolio');
+
+    const result = await response.json();
+    if (result.success && result.data) {
+      // Merge backend data with local state
+      if (result.data.silver) {
+        dualPortfolioState.silver = { ...dualPortfolioState.silver, ...result.data.silver };
+      }
+      if (result.data.gold) {
+        dualPortfolioState.gold = { ...dualPortfolioState.gold, ...result.data.gold };
+      }
+      if (result.data.config) {
+        dualPortfolioState.config = { ...dualPortfolioState.config, ...result.data.config };
+      }
+
+      dualPortfolioState.lastSync = Date.now();
+      saveDualPortfolio();
+
+      // Update all UI
+      for (const pt of ['silver', 'gold']) {
+        renderDualPortfolioPositions(pt);
+        renderDualPortfolioHistory(pt);
+        updateDualPortfolioStats(pt);
+        updateDualPortfolioEquityChart(pt);
+      }
+      updatePortfolioComparison();
+
+      console.log('✅ Dual portfolio loaded from backend');
+    }
+  } catch (e) {
+    console.error('Failed to load dual portfolio from backend:', e);
+    // Fall back to localStorage
+    loadDualPortfolio();
+  } finally {
+    dualPortfolioState.isSyncing = false;
+    const syncBtn = document.getElementById('syncPortfolioBtn');
+    if (syncBtn) syncBtn.classList.remove('syncing');
+  }
+}
+
+// Initialize dual portfolio event listeners
+function initDualPortfolioEventListeners() {
+  // Strategy tab switching
+  document.querySelectorAll('.strategy-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.strategy-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      const strategy = tab.dataset.strategy;
+      dualPortfolioState.activePortfolio = strategy;
+
+      // Show/hide portfolio panels
+      document.querySelectorAll('.portfolio-panel-growth').forEach(p => p.classList.remove('active'));
+      const panel = document.getElementById(`portfolio-${strategy}`);
+      if (panel) panel.classList.add('active');
+
+      // Resize charts
+      setTimeout(() => {
+        const suffix = strategy === 'silver' ? 'Silver' : 'Gold';
+        const chart = dualPortfolioState[`equityChart${suffix}`];
+        const container = document.getElementById(`equityChart${suffix}`);
+        if (chart && container) {
+          chart.resize(container.clientWidth, 200);
+        }
+      }, 100);
+    });
+  });
+
+  // Portfolio content tabs (for both silver and gold)
+  document.querySelectorAll('#portfolio-silver .portfolio-tab, #portfolio-gold .portfolio-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const parent = tab.closest('.portfolio-panel-growth');
+      parent.querySelectorAll('.portfolio-tab').forEach(t => t.classList.remove('active'));
+      parent.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      const tabContent = document.getElementById(`tab-${tab.dataset.tab}`);
+      if (tabContent) tabContent.classList.add('active');
+    });
+  });
+
+  // Reset buttons
+  const resetSilverBtn = document.getElementById('resetBalanceSilverBtn');
+  const resetGoldBtn = document.getElementById('resetBalanceGoldBtn');
+  if (resetSilverBtn) resetSilverBtn.addEventListener('click', () => resetDualPortfolio('silver'));
+  if (resetGoldBtn) resetGoldBtn.addEventListener('click', () => resetDualPortfolio('gold'));
+
+  // Sync button
+  const syncBtn = document.getElementById('syncPortfolioBtn');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', async () => {
+      await loadDualPortfolioFromBackend();
+    });
+  }
 }
 
 // ============================================
@@ -7327,6 +8054,18 @@ async function init() {
   initChart();
   initEquityChart();
 
+  // Initialize dual portfolio system
+  await loadDualPortfolioFromBackend();
+  initDualPortfolioEquityCharts();
+  initDualPortfolioEventListeners();
+  for (const pt of ['silver', 'gold']) {
+    renderDualPortfolioPositions(pt);
+    renderDualPortfolioHistory(pt);
+    updateDualPortfolioStats(pt);
+  }
+  updatePortfolioComparison();
+  console.log('💼 Dual Portfolio System initialized');
+
   if (state.markets.length > 0) selectMarket(state.markets[0].symbol);
 
   initWebSocket();
@@ -7341,6 +8080,7 @@ async function init() {
   // Start regular scan interval
   setInterval(runScan, CONFIG.SCAN_INTERVAL);
   setInterval(updateOpenPositions, CONFIG.PNL_UPDATE_INTERVAL);
+  setInterval(updateDualPortfolioPositions, CONFIG.PNL_UPDATE_INTERVAL); // Update dual portfolios
   setInterval(renderMarkets, 2000);
 
   // Initialize AI scanning with 10-minute interval
