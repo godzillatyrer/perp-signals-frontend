@@ -12,6 +12,117 @@
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
+  <!-- SVG Icon Definitions -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+    <defs>
+      <!-- AI Model Icons -->
+      <symbol id="icon-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 4.5c-1.5 0-2.7.6-3.6 1.5-.5.5-.9 1.1-1.2 1.8-.3-.1-.6-.2-.9-.2-1.7 0-3.3 1.4-3.3 3.2 0 .8.3 1.5.7 2.1-.4.5-.7 1.2-.7 2 0 1.8 1.5 3.2 3.3 3.2.5 0 .9-.1 1.3-.3.5 1.3 1.7 2.2 3.1 2.2h2.6c1.4 0 2.6-.9 3.1-2.2.4.2.8.3 1.3.3 1.8 0 3.3-1.4 3.3-3.2 0-.8-.3-1.5-.7-2 .4-.6.7-1.3.7-2.1 0-1.8-1.6-3.2-3.3-3.2-.3 0-.6.1-.9.2-.3-.7-.7-1.3-1.2-1.8-.9-.9-2.1-1.5-3.6-1.5z"/>
+        <path d="M9 11.5c0-.8.7-1.5 1.5-1.5s1.5.7 1.5 1.5-.7 1.5-1.5 1.5-1.5-.7-1.5-1.5zm4.5 0c0-.8.7-1.5 1.5-1.5s1.5.7 1.5 1.5-.7 1.5-1.5 1.5-1.5-.7-1.5-1.5z"/>
+        <path d="M9 15.5s1.5 1 3 1 3-1 3-1"/>
+      </symbol>
+      <symbol id="icon-sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.36-6.36l-1.41 1.41M7.05 16.95l-1.41 1.41m12.72 0l-1.41-1.41M7.05 7.05L5.64 5.64"/>
+        <circle cx="12" cy="12" r="4"/>
+      </symbol>
+      <symbol id="icon-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      </symbol>
+      <symbol id="icon-robot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="4" y="8" width="16" height="12" rx="2"/>
+        <path d="M9 8V6a3 3 0 016 0v2"/>
+        <circle cx="9" cy="13" r="1.5" fill="currentColor"/>
+        <circle cx="15" cy="13" r="1.5" fill="currentColor"/>
+        <path d="M10 17h4"/>
+        <path d="M2 12h2m18 0h-2"/>
+      </symbol>
+      <!-- Navigation & UI Icons -->
+      <symbol id="icon-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 3v18h18"/>
+        <path d="M7 14l4-4 4 4 5-5"/>
+      </symbol>
+      <symbol id="icon-trending" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+        <polyline points="17 6 23 6 23 12"/>
+      </symbol>
+      <symbol id="icon-signal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/>
+      </symbol>
+      <symbol id="icon-droplet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 2.69l5.66 5.66a8 8 0 11-11.31 0z"/>
+      </symbol>
+      <symbol id="icon-newspaper" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/>
+        <path d="M6 8h4v4H6zm0 6h12M12 8h6"/>
+      </symbol>
+      <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="4" width="18" height="18" rx="2"/>
+        <path d="M16 2v4M8 2v4M3 10h18"/>
+        <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>
+      </symbol>
+      <symbol id="icon-stats" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M18 20V10M12 20V4M6 20v-6"/>
+      </symbol>
+      <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+      </symbol>
+      <symbol id="icon-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <circle cx="12" cy="12" r="6"/>
+        <circle cx="12" cy="12" r="2"/>
+      </symbol>
+      <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </symbol>
+      <symbol id="icon-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </symbol>
+      <symbol id="icon-star" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+      </symbol>
+      <symbol id="icon-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 19V5M5 12l7-7 7 7"/>
+      </symbol>
+      <symbol id="icon-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12l7 7 7-7"/>
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12"/>
+      </symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </symbol>
+      <symbol id="icon-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </symbol>
+      <symbol id="icon-fire" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 22c4-2 8-6 8-11a8 8 0 00-16 0c0 5 4 9 8 11z"/>
+        <path d="M12 22c-2-1-4-3-4-6 0-3 2-4 4-4s4 1 4 4c0 3-2 5-4 6z"/>
+      </symbol>
+      <symbol id="icon-crown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M2 17l2-11 5 5 3-7 3 7 5-5 2 11H2z"/>
+        <path d="M4 21h16"/>
+      </symbol>
+      <symbol id="icon-gem" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <polygon points="12 2 22 8.5 12 22 2 8.5"/>
+        <polyline points="2 8.5 12 12.5 22 8.5"/>
+        <line x1="12" y1="12.5" x2="12" y2="22"/>
+      </symbol>
+      <symbol id="icon-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+        <polyline points="2 17 12 22 22 17"/>
+        <polyline points="2 12 12 17 22 12"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <!-- Audio for alerts -->
   <audio id="alertSound" preload="auto">
     <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
@@ -25,31 +136,35 @@
     <div class="alert-bar-icon">
       <div class="ai-badges" id="aiActiveBadges">
         <div class="ai-badge claude" id="claudeBadge" style="display: none;">
-          <span>🧠</span>
-          <span>Claude</span>
+          <svg class="ai-icon"><use href="#icon-brain"/></svg>
+          <span class="ai-name">Claude</span>
           <span class="ai-status-dot"></span>
         </div>
         <div class="ai-badge openai" id="openaiBadge" style="display: none;">
-          <span>🤖</span>
-          <span>GPT-4o</span>
+          <svg class="ai-icon"><use href="#icon-sparkles"/></svg>
+          <span class="ai-name">GPT-4o</span>
           <span class="ai-status-dot"></span>
         </div>
         <div class="ai-badge grok" id="grokBadge" style="display: none;">
-          <span>⚡</span>
-          <span>Grok</span>
+          <svg class="ai-icon"><use href="#icon-bolt"/></svg>
+          <span class="ai-name">Grok</span>
           <span class="ai-status-dot"></span>
         </div>
       </div>
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span class="star-icon">★</span>
-        TOP PLAYS (85%+)
+      <div class="top-plays-label">
+        <svg class="star-icon"><use href="#icon-star"/></svg>
+        <span>TOP PLAYS</span>
+        <span class="confidence-badge">85%+</span>
       </div>
     </div>
     <div class="alert-bar-signals" id="alertBarSignals">
       <span class="muted">AI analyzing markets...</span>
     </div>
     <div class="ai-status">
-      <span class="status-text">Next AI Scan</span>
+      <div class="scan-label">
+        <svg width="14" height="14"><use href="#icon-clock"/></svg>
+        <span>Next Scan</span>
+      </div>
       <span class="next-scan" id="nextAiScan">--:--</span>
     </div>
   </div>
@@ -155,7 +270,9 @@
             </svg>
           </button>
           <button class="icon-btn debug-btn" id="debugBtn" title="AI Debug Panel">
-            🔧
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            </svg>
           </button>
           <button class="icon-btn" id="refreshBtn" title="Force Scan">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -398,10 +515,18 @@
 
       <!-- Collapsed state icons -->
       <div class="collapsed-icons">
-        <button class="collapsed-icon-btn active" data-expand-tab="new" title="New Signals">📊</button>
-        <button class="collapsed-icon-btn" data-expand-tab="data" title="Market Data">💧</button>
-        <button class="collapsed-icon-btn" data-expand-tab="news" title="News">📰</button>
-        <button class="collapsed-icon-btn" data-expand-tab="stats" title="AI Stats">🤖</button>
+        <button class="collapsed-icon-btn active" data-expand-tab="new" title="New Signals">
+          <svg width="18" height="18"><use href="#icon-signal"/></svg>
+        </button>
+        <button class="collapsed-icon-btn" data-expand-tab="data" title="Market Data">
+          <svg width="18" height="18"><use href="#icon-droplet"/></svg>
+        </button>
+        <button class="collapsed-icon-btn" data-expand-tab="news" title="News">
+          <svg width="18" height="18"><use href="#icon-newspaper"/></svg>
+        </button>
+        <button class="collapsed-icon-btn" data-expand-tab="stats" title="AI Stats">
+          <svg width="18" height="18"><use href="#icon-stats"/></svg>
+        </button>
       </div>
 
       <div class="market-bias-section">
@@ -416,12 +541,30 @@
       </div>
 
       <div class="signal-tabs">
-        <button class="signal-tab active" data-signal-tab="new">NEW</button>
-        <button class="signal-tab" data-signal-tab="all">ALL</button>
-        <button class="signal-tab" data-signal-tab="data">💧 DATA</button>
-        <button class="signal-tab" data-signal-tab="news">📰 NEWS</button>
-        <button class="signal-tab" data-signal-tab="calendar">📅 EVENTS</button>
-        <button class="signal-tab" data-signal-tab="stats">📊 AI STATS</button>
+        <button class="signal-tab active" data-signal-tab="new">
+          <svg width="14" height="14"><use href="#icon-zap"/></svg>
+          <span>NEW</span>
+        </button>
+        <button class="signal-tab" data-signal-tab="all">
+          <svg width="14" height="14"><use href="#icon-layers"/></svg>
+          <span>ALL</span>
+        </button>
+        <button class="signal-tab" data-signal-tab="data">
+          <svg width="14" height="14"><use href="#icon-droplet"/></svg>
+          <span>DATA</span>
+        </button>
+        <button class="signal-tab" data-signal-tab="news">
+          <svg width="14" height="14"><use href="#icon-newspaper"/></svg>
+          <span>NEWS</span>
+        </button>
+        <button class="signal-tab" data-signal-tab="calendar">
+          <svg width="14" height="14"><use href="#icon-calendar"/></svg>
+          <span>EVENTS</span>
+        </button>
+        <button class="signal-tab" data-signal-tab="stats">
+          <svg width="14" height="14"><use href="#icon-stats"/></svg>
+          <span>STATS</span>
+        </button>
       </div>
 
       <!-- Signals View -->
@@ -458,7 +601,7 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title">💧 24H Liquidations</span>
+              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-droplet"/></svg>24H Liquidations</span>
               <span class="data-subtitle">All Exchanges • L=Longs S=Shorts</span>
             </div>
             <span class="data-update" id="liqDataUpdate">--</span>
@@ -478,7 +621,7 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title">👥 Long/Short Ratio</span>
+              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-users"/></svg>Long/Short Ratio</span>
               <span class="data-subtitle">Based on 24H liquidation volume</span>
             </div>
           </div>
@@ -490,7 +633,7 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title">🌙 Social Sentiment</span>
+              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-activity"/></svg>Social Sentiment</span>
               <span class="data-subtitle">LunarCrush Galaxy Score</span>
             </div>
           </div>
@@ -507,16 +650,16 @@
       <div class="sidebar-view" id="statsView">
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title">📊 AI Performance Overview</span>
+            <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-stats"/></svg>AI Performance Overview</span>
             <div class="export-buttons">
-              <button class="export-btn" id="exportCsvBtn" title="Export to CSV">📄 CSV</button>
-              <button class="export-btn" id="exportJsonBtn" title="Export to JSON">📋 JSON</button>
+              <button class="export-btn" id="exportCsvBtn" title="Export to CSV"><svg width="12" height="12"><use href="#icon-layers"/></svg>CSV</button>
+              <button class="export-btn" id="exportJsonBtn" title="Export to JSON"><svg width="12" height="12"><use href="#icon-layers"/></svg>JSON</button>
             </div>
           </div>
           <div class="ai-performance-summary" id="aiPerformanceSummary">
             <div class="perf-card claude-perf">
               <div class="perf-header">
-                <span class="perf-icon">🧠</span>
+                <svg class="perf-icon" width="20" height="20"><use href="#icon-brain"/></svg>
                 <span class="perf-name">Claude</span>
               </div>
               <div class="perf-stats">
@@ -540,7 +683,7 @@
 
             <div class="perf-card openai-perf">
               <div class="perf-header">
-                <span class="perf-icon">🤖</span>
+                <svg class="perf-icon" width="20" height="20"><use href="#icon-sparkles"/></svg>
                 <span class="perf-name">GPT-4o</span>
               </div>
               <div class="perf-stats">
@@ -564,7 +707,7 @@
 
             <div class="perf-card grok-perf">
               <div class="perf-header">
-                <span class="perf-icon">⚡</span>
+                <svg class="perf-icon" width="20" height="20"><use href="#icon-bolt"/></svg>
                 <span class="perf-name">Grok</span>
               </div>
               <div class="perf-stats">
@@ -590,16 +733,16 @@
 
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title">🎯 Consensus Performance</span>
+            <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-target"/></svg>Consensus Performance</span>
           </div>
           <div class="consensus-stats" id="consensusStats">
             <div class="consensus-row">
-              <span class="consensus-type gold">🥇 3-AI Gold</span>
+              <span class="consensus-type gold"><svg class="consensus-icon" width="14" height="14"><use href="#icon-crown"/></svg>3-AI Gold</span>
               <span class="consensus-rate" id="goldConsensusRate">--%</span>
               <span class="consensus-count" id="goldConsensusCount">0 signals</span>
             </div>
             <div class="consensus-row">
-              <span class="consensus-type silver">🥈 2-AI Match</span>
+              <span class="consensus-type silver"><svg class="consensus-icon" width="14" height="14"><use href="#icon-gem"/></svg>2-AI Match</span>
               <span class="consensus-rate" id="silverConsensusRate">--%</span>
               <span class="consensus-count" id="silverConsensusCount">0 signals</span>
             </div>
@@ -608,7 +751,7 @@
 
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title">📈 Recent AI Predictions</span>
+            <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-trending"/></svg>Recent AI Predictions</span>
           </div>
           <div class="ai-predictions-list" id="aiPredictionsList">
             <div class="empty-state">No predictions recorded yet</div>
@@ -621,16 +764,21 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title">📰 Crypto News</span>
+              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-newspaper"/></svg>Crypto News</span>
               <span class="data-subtitle">Latest market-moving news</span>
             </div>
-            <button class="refresh-btn" id="refreshNewsBtn" title="Refresh news">🔄</button>
+            <button class="refresh-btn" id="refreshNewsBtn" title="Refresh news">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+            </button>
           </div>
 
           <!-- High Priority News Section -->
           <div class="news-priority-section">
             <div class="priority-header">
-              <span class="priority-badge high">🔥 HIGH IMPACT</span>
+              <span class="priority-badge high"><svg width="12" height="12"><use href="#icon-fire"/></svg>HIGH IMPACT</span>
               <span class="priority-desc">AI-analyzed market movers</span>
             </div>
             <div class="news-priority-list" id="highPriorityNews">
@@ -642,8 +790,8 @@
           <div class="news-all-section">
             <div class="news-filter-bar">
               <button class="news-filter active" data-news-filter="all">All</button>
-              <button class="news-filter" data-news-filter="bullish">🟢 Bullish</button>
-              <button class="news-filter" data-news-filter="bearish">🔴 Bearish</button>
+              <button class="news-filter bullish-filter" data-news-filter="bullish"><svg width="10" height="10"><use href="#icon-arrow-up"/></svg>Bullish</button>
+              <button class="news-filter bearish-filter" data-news-filter="bearish"><svg width="10" height="10"><use href="#icon-arrow-down"/></svg>Bearish</button>
             </div>
             <div class="news-list" id="newsList">
               <div class="empty-state">Loading crypto news...</div>
@@ -657,7 +805,7 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title">📅 Economic Calendar</span>
+              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-calendar"/></svg>Economic Calendar</span>
               <span class="data-subtitle">Major events that move markets</span>
             </div>
           </div>
@@ -665,7 +813,7 @@
           <!-- Upcoming Events -->
           <div class="calendar-section">
             <div class="calendar-section-header">
-              <span class="calendar-badge upcoming">⏰ UPCOMING</span>
+              <span class="calendar-badge upcoming"><svg width="12" height="12"><use href="#icon-clock"/></svg>UPCOMING</span>
             </div>
             <div class="calendar-list" id="upcomingEvents">
               <div class="empty-state">Loading economic events...</div>
@@ -691,7 +839,7 @@
           <!-- Past Events (Last 7 Days) -->
           <div class="calendar-section">
             <div class="calendar-section-header">
-              <span class="calendar-badge past">📜 RECENT</span>
+              <span class="calendar-badge past"><svg width="12" height="12"><use href="#icon-check"/></svg>RECENT</span>
             </div>
             <div class="calendar-list" id="pastEvents">
               <div class="empty-state">No recent events</div>
