@@ -3340,10 +3340,10 @@ async function runAiAnalysis() {
       }
     }
 
-    // Helper function to check if two entry prices are within wiggle room (2% - strict)
+    // Helper function to check if two entry prices are within wiggle room (3.5% - relaxed for more signals)
     const isEntryMatch = (entry1, entry2) => {
       const diff = Math.abs(entry1 - entry2) / Math.max(entry1, entry2) * 100;
-      return diff <= 2; // 2% wiggle room - tight agreement required for quality
+      return diff <= 3.5; // 3.5% wiggle room - allows more gold consensus matches
     };
 
     // Collect all picks with their source
