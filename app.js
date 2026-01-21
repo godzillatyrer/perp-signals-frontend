@@ -1554,8 +1554,9 @@ function updatePerformanceStats(trade, pnl) {
     stats.maxDrawdown = currentDrawdown;
   }
 
-  // Save stats
+  // Save stats to localStorage and sync to Redis
   localStorage.setItem('performance_stats', JSON.stringify(stats));
+  syncAIStatsToRedis();
 
   // Play sound
   playAlertSound(pnl > 0 ? 'win' : 'loss');
@@ -1563,12 +1564,124 @@ function updatePerformanceStats(trade, pnl) {
   return stats;
 }
 
+// Load AI performance stats from Redis (cross-device persistence)
+async function loadPerformanceStatsFromRedis() {
+  try {
+    const response = await fetch('/api/ai-stats');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.stats) {
+        // Merge Redis stats with local state
+        state.performanceStats = {
+          ...state.performanceStats,
+          claudeWins: data.stats.claudeWins || 0,
+          claudeLosses: data.stats.claudeLosses || 0,
+          claudeSignals: data.stats.claudeSignals || 0,
+          claudeTotalConf: data.stats.claudeTotalConf || 0,
+          openaiWins: data.stats.openaiWins || 0,
+          openaiLosses: data.stats.openaiLosses || 0,
+          openaiSignals: data.stats.openaiSignals || 0,
+          openaiTotalConf: data.stats.openaiTotalConf || 0,
+          grokWins: data.stats.grokWins || 0,
+          grokLosses: data.stats.grokLosses || 0,
+          grokSignals: data.stats.grokSignals || 0,
+          grokTotalConf: data.stats.grokTotalConf || 0,
+          goldConsensusWins: data.stats.goldConsensusWins || 0,
+          goldConsensusLosses: data.stats.goldConsensusLosses || 0,
+          goldConsensusSignals: data.stats.goldConsensusSignals || 0
+        };
+        // Also save to localStorage as cache
+        localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+        console.log('📊 Loaded AI stats from Redis:', data.stats);
+        renderStatsView();
+        return true;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load AI stats from Redis:', e);
+  }
+  return false;
+}
+
+// Sync AI stats to Redis (for cross-device persistence)
+async function syncAIStatsToRedis() {
+  try {
+    const stats = state.performanceStats;
+    const response = await fetch('/api/ai-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stats: {
+          claudeWins: stats.claudeWins,
+          claudeLosses: stats.claudeLosses,
+          claudeSignals: stats.claudeSignals,
+          claudeTotalConf: stats.claudeTotalConf,
+          openaiWins: stats.openaiWins,
+          openaiLosses: stats.openaiLosses,
+          openaiSignals: stats.openaiSignals,
+          openaiTotalConf: stats.openaiTotalConf,
+          grokWins: stats.grokWins,
+          grokLosses: stats.grokLosses,
+          grokSignals: stats.grokSignals,
+          grokTotalConf: stats.grokTotalConf,
+          goldConsensusWins: stats.goldConsensusWins,
+          goldConsensusLosses: stats.goldConsensusLosses,
+          goldConsensusSignals: stats.goldConsensusSignals
+        }
+      })
+    });
+    if (response.ok) {
+      console.log('📊 AI stats synced to Redis');
+    }
+  } catch (e) {
+    console.error('Failed to sync AI stats to Redis:', e);
+  }
+}
+
+// Record a trade result (win/loss) for AI stats tracking
+async function recordTradeResult(trade, isWin) {
+  try {
+    const response = await fetch('/api/ai-stats', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'record_trade_result',
+        data: {
+          aiSources: trade.aiSources || [],
+          isGoldConsensus: trade.isGoldConsensus || false,
+          isWin: isWin,
+          symbol: trade.symbol,
+          direction: trade.direction,
+          entry: trade.entry,
+          exit: trade.exitPrice,
+          pnl: trade.pnl,
+          timestamp: Date.now()
+        }
+      })
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.stats) {
+        // Update local state with Redis response
+        state.performanceStats = { ...state.performanceStats, ...data.stats };
+        localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+        renderStatsView();
+      }
+    }
+  } catch (e) {
+    console.error('Failed to record trade result:', e);
+  }
+}
+
 function loadPerformanceStats() {
   try {
+    // First load from localStorage (immediate)
     const saved = localStorage.getItem('performance_stats');
     if (saved) {
       state.performanceStats = { ...state.performanceStats, ...JSON.parse(saved) };
     }
+    // Then async load from Redis (authoritative source)
+    loadPerformanceStatsFromRedis();
   } catch (e) {
     console.error('Failed to load performance stats:', e);
   }
@@ -3340,6 +3453,9 @@ async function runAiAnalysis() {
       }
     }
 
+    // Sync AI signal stats to Redis for cross-device persistence
+    syncAIStatsToRedis();
+
     // Helper function to check if two entry prices are within wiggle room (3.5% - relaxed for more signals)
     const isEntryMatch = (entry1, entry2) => {
       const diff = Math.abs(entry1 - entry2) / Math.max(entry1, entry2) * 100;
@@ -3620,6 +3736,9 @@ async function runAiAnalysis() {
           status: 'pending'
         });
         state.aiPredictions = state.aiPredictions.slice(0, 50); // Keep last 50
+
+        // Sync consensus stats to Redis
+        syncAIStatsToRedis();
       }
     }
 
@@ -4178,7 +4297,10 @@ function openTrade(signal) {
     leverage: CONFIG.LEVERAGE,
     timestamp: Date.now(),
     status: 'open',
-    pnl: 0
+    pnl: 0,
+    // Store AI sources for win rate tracking
+    aiSources: signal.aiSources || [],
+    isGoldConsensus: signal.isGoldConsensus || false
   };
 
   state.trades.push(trade);
@@ -4224,10 +4346,48 @@ function closeTrade(trade, exitPrice) {
   state.balance += trade.pnl;
   state.equityHistory.push({ time: Date.now(), value: state.balance });
 
+  // Record trade result for AI win rate tracking
+  const isWin = trade.pnl > 0;
+  recordTradeResult(trade, isWin);
+
+  // Update prediction status from 'pending' to 'win'/'loss'
+  const matchingPrediction = state.aiPredictions.find(p =>
+    p.symbol === trade.symbol &&
+    p.direction === trade.direction &&
+    p.status === 'pending' &&
+    Math.abs(p.entry - trade.entry) / trade.entry < 0.05 // Within 5% of entry
+  );
+  if (matchingPrediction) {
+    matchingPrediction.status = isWin ? 'win' : 'loss';
+    matchingPrediction.pnl = trade.pnl;
+    matchingPrediction.exitPrice = exitPrice;
+  }
+
+  // Update local stats based on AI sources
+  if (trade.aiSources && trade.aiSources.length > 0) {
+    for (const source of trade.aiSources) {
+      if (isWin) {
+        if (source === 'claude') state.performanceStats.claudeWins++;
+        else if (source === 'openai') state.performanceStats.openaiWins++;
+        else if (source === 'grok') state.performanceStats.grokWins++;
+      } else {
+        if (source === 'claude') state.performanceStats.claudeLosses++;
+        else if (source === 'openai') state.performanceStats.openaiLosses++;
+        else if (source === 'grok') state.performanceStats.grokLosses++;
+      }
+    }
+    if (trade.isGoldConsensus) {
+      if (isWin) state.performanceStats.goldConsensusWins++;
+      else state.performanceStats.goldConsensusLosses++;
+    }
+    localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+  }
+
   saveTrades();
   renderHistory();
   updatePortfolioStats();
   updateEquityChart();
+  renderStatsView();
 }
 
 function updatePortfolioStats() {
