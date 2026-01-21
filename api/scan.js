@@ -1279,6 +1279,8 @@ async function analyzeWithGrok(prompt) {
     return null;
   }
 
+  console.log('⚡ [GROK] Starting API call...');
+
   try {
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
@@ -1289,20 +1291,34 @@ async function analyzeWithGrok(prompt) {
       body: JSON.stringify({
         model: 'grok-2-latest',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1024
+        max_tokens: 2048
       })
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`⚡ [GROK] API error ${response.status}: ${errorText}`);
+      return null;
+    }
+
     const data = await response.json();
+    console.log('⚡ [GROK] Response received, parsing...');
+
     if (data.choices && data.choices[0]) {
       const text = data.choices[0].message.content;
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        return { source: 'grok', ...JSON.parse(jsonMatch[0]) };
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log(`⚡ [GROK] Success - found ${parsed.topPicks?.length || 0} picks`);
+        return { source: 'grok', ...parsed };
+      } else {
+        console.warn('⚡ [GROK] No JSON found in response');
       }
+    } else {
+      console.warn('⚡ [GROK] Unexpected response structure:', JSON.stringify(data).slice(0, 200));
     }
   } catch (error) {
-    console.error('Grok analysis error:', error);
+    console.error('⚡ [GROK] Analysis error:', error.message || error);
   }
   return null;
 }
@@ -1579,11 +1595,15 @@ export default async function handler(request, response) {
     }
 
     // Check if we have at least 2 AI APIs configured
-    const aiCount = [
-      process.env.CLAUDE_API_KEY,
-      process.env.OPENAI_API_KEY,
-      process.env.GROK_API_KEY
-    ].filter(Boolean).length;
+    const hasClaudeKey = !!process.env.CLAUDE_API_KEY;
+    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    const hasGrokKey = !!process.env.GROK_API_KEY;
+    const aiCount = [hasClaudeKey, hasOpenAIKey, hasGrokKey].filter(Boolean).length;
+
+    console.log('🔑 API Keys configured:');
+    console.log(`   Claude: ${hasClaudeKey ? '✅' : '❌'}`);
+    console.log(`   OpenAI: ${hasOpenAIKey ? '✅' : '❌'}`);
+    console.log(`   Grok: ${hasGrokKey ? '✅' : '❌'} ${hasGrokKey ? `(starts with: ${process.env.GROK_API_KEY.slice(0, 8)}...)` : ''}`);
 
     if (aiCount < 2) {
       return response.status(200).json({
