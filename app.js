@@ -1902,17 +1902,25 @@ async function recordTradeResult(trade, isWin) {
   }
 }
 
-function loadPerformanceStats() {
+async function loadPerformanceStats() {
   try {
     // First load from localStorage (immediate)
     const saved = localStorage.getItem('performance_stats');
     if (saved) {
       state.performanceStats = { ...state.performanceStats, ...JSON.parse(saved) };
+      // Render immediately with cached data so user sees something
+      renderStatsView();
     }
-    // Then async load from Redis (authoritative source)
-    loadPerformanceStatsFromRedis();
+    // Then load from Redis (authoritative source) and update
+    const redisLoaded = await loadPerformanceStatsFromRedis();
+    // If Redis didn't load/render, ensure we still render (even with defaults or cached values)
+    if (!redisLoaded) {
+      renderStatsView();
+    }
   } catch (e) {
     console.error('Failed to load performance stats:', e);
+    // Ensure stats are rendered even on error
+    renderStatsView();
   }
 }
 
@@ -8000,7 +8008,7 @@ function initSettingsModal() {
 
 async function init() {
   loadTrades();
-  loadPerformanceStats();
+  await loadPerformanceStats();
   loadSignalHistory();
 
   // Render loaded signal history immediately
