@@ -3,6 +3,10 @@
     {
       "path": "/api/scan",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/monitor-positions",
+      "schedule": "*/2 * * * *"
     }
   ]
 }
