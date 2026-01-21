@@ -974,7 +974,7 @@ async function buildAnalysisPrompt(marketData, indicatorData) {
   let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data with TECHNICAL INDICATORS and identify the BEST trading opportunities.
 
 CRITICAL REQUIREMENTS:
-- ADX must be >= 25 (strong trend required) - DO NOT signal weak trend coins
+- ADX must be >= 22 (moderate+ trend required) - DO NOT signal weak trend coins
 - Supertrend must confirm direction (UP = longs only, DOWN = shorts only)
 - Stochastic RSI should support entry timing (OVERSOLD for longs, OVERBOUGHT for shorts)
 - Price position relative to VWAP and EMAs must align with trade direction
@@ -1021,7 +1021,7 @@ CRITICAL REQUIREMENTS:
       prompt += `\n  Trend: ${indicators.trend}`;
       prompt += `\n  RSI(14): ${indicators.rsi} ${indicators.rsi < 30 ? '🟢 OVERSOLD' : indicators.rsi > 70 ? '🔴 OVERBOUGHT' : ''}`;
       prompt += `\n  StochRSI: ${indicators.stochRsi?.k} (${indicators.stochRsi?.signal})`;
-      prompt += `\n  ADX: ${indicators.adx?.adx} (${indicators.adx?.trend}) ${indicators.adx?.adx >= 25 ? '✅ STRONG TREND' : '⚠️ WEAK TREND - SKIP'}`;
+      prompt += `\n  ADX: ${indicators.adx?.adx} (${indicators.adx?.trend}) ${indicators.adx?.adx >= 22 ? '✅ OK TREND' : '⚠️ WEAK TREND - SKIP'}`;
       prompt += `\n  +DI/-DI: ${indicators.adx?.plusDI}/${indicators.adx?.minusDI}`;
       prompt += `\n  Supertrend: ${indicators.supertrend?.direction} (${indicators.supertrend?.signal})`;
       prompt += `\n  EMAs: 20=${indicators.ema20} | 50=${indicators.ema50} | 200=${indicators.ema200}`;
@@ -1043,7 +1043,7 @@ CRITICAL REQUIREMENTS:
   prompt += `
 
 ANALYSIS RULES:
-1. **ADX MUST BE >= 25** - Skip ANY coin with ADX < 25 (no exceptions)
+1. **ADX MUST BE >= 22** - Skip ANY coin with ADX < 22 (no exceptions)
 2. **SUPERTREND MUST CONFIRM** - Supertrend UP = LONG only, Supertrend DOWN = SHORT only
 3. **CONFLUENCE REQUIRED** - Multiple indicators must align:
    - For LONG: RSI < 50 (not overbought), MACD bullish, price above VWAP, Supertrend UP
@@ -1437,18 +1437,18 @@ export default async function handler(request, response) {
       console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
     }
 
-    // Filter by ADX >= 25 (strong trend required)
+    // Filter by ADX >= 22 (moderate+ trend required)
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators || !indicators.adx) {
         console.log(`⚠️ ${signal.symbol}: No indicator data - allowing signal`);
         return true;
       }
-      if (indicators.adx.adx < 25) {
-        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < 25 (weak trend) - BLOCKED`);
+      if (indicators.adx.adx < 22) {
+        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < 22 (weak trend) - BLOCKED`);
         return false;
       }
-      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= 25 (${indicators.adx.trend}) - OK`);
+      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= 22 (${indicators.adx.trend}) - OK`);
       return true;
     });
     console.log(`📊 After ADX filter: ${alertSignals.length} signals`);

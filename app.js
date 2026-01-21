@@ -2945,7 +2945,7 @@ ${m.symbol}:
 - Price: $${m.price} | 24h: ${m.change.toFixed(2)}% | Vol: $${formatVolume(m.volume)}
 - Trend: ${m.trend || 'N/A'} | Regime: ${m.marketRegime || 'N/A'}
 - RSI: ${m.rsi?.toFixed(1) || 'N/A'} | StochRSI: ${m.stochRsi?.signal || 'N/A'} ${m.stochRsi?.signal === 'OVERSOLD' ? '🟢' : m.stochRsi?.signal === 'OVERBOUGHT' ? '🔴' : ''}
-- ADX: ${m.adx?.adx || 'N/A'} (${m.adx?.trend || 'N/A'}) ${m.adx?.adx >= 25 ? '✅ STRONG' : '⚠️ WEAK'}
+- ADX: ${m.adx?.adx || 'N/A'} (${m.adx?.trend || 'N/A'}) ${m.adx?.adx >= 22 ? '✅ OK' : '⚠️ WEAK'}
 - Supertrend: ${m.supertrend?.direction || 'N/A'} | Signal: ${m.supertrend?.signal || 'N/A'}
 - EMAs: 20=$${m.ema20?.toFixed(2) || 'N/A'} | 50=$${m.ema50?.toFixed(2) || 'N/A'} | 200=$${m.ema200?.toFixed(2) || 'N/A'}
 - Support: ${m.supports?.map(s => '$' + formatPrice(s)).join(', ') || 'N/A'}
@@ -3013,7 +3013,7 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 6. **RISK/REWARD**: Only pick trades with at least 2:1 R/R ratio. Calculate: (TP - Entry) / (Entry - SL) >= 2
 
 CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
 - **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade in direction of higher timeframe trend (check MTF Confluence)
 - Market Regime must be TRENDING (UP or DOWN), NOT VOLATILE or RANGING
@@ -3022,7 +3022,7 @@ CRITICAL REQUIREMENTS (ALL must be met):
 - Entry must be at a favorable level (near support for longs, near resistance for shorts)
 - **Stochastic RSI timing**: For longs prefer OVERSOLD or rising from <30. For shorts prefer OVERBOUGHT or falling from >70
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory.
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3055,7 +3055,7 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 6. **PIVOT POINTS**: Use daily pivots as targets. S1/S2 for support, R1/R2 for resistance.
 
 CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
 - **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade when technical indicators ALIGN (RSI + MACD + EMA + Supertrend all same direction)
 - Price must be respecting key levels (not in no-man's-land)
@@ -3064,7 +3064,7 @@ CRITICAL REQUIREMENTS (ALL must be met):
 - Ichimoku signal should support the direction (not IN_CLOUD)
 - **Stochastic RSI**: Use for entry timing - OVERSOLD for longs, OVERBOUGHT for shorts
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory.
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3099,7 +3099,7 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 6. **ICHIMOKU MOMENTUM**: STRONG_BULLISH or STRONG_BEARISH signals with TK cross = high momentum
 
 CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 25** (Strong trend required) - Skip coins with ADX < 25 (weak/no trend)
+- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
 - **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
 - ONLY trade with the trend (no counter-trend trades)
 - Market Structure must show UPTREND for longs, DOWNTREND for shorts
@@ -3108,7 +3108,7 @@ CRITICAL REQUIREMENTS (ALL must be met):
 - Entry should be on pullback to VWAP or EMA20, not at extended levels
 - **Stochastic RSI**: K value should be in momentum zone (40-60) or just exiting oversold/overbought
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 25 - This is mandatory. No exceptions.
+⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory. No exceptions.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3404,10 +3404,10 @@ async function runAiAnalysis() {
         // Get market data for this symbol (for regime and MTF checks)
         const marketInfo = enrichedData.find(m => m.symbol === symbol);
 
-        // HARD FILTER: ADX must be >= 25 (strong trend required)
+        // HARD FILTER: ADX must be >= 22 (moderate+ trend required)
         const adxValue = marketInfo?.adx?.adx || 0;
-        if (adxValue < 25) {
-          console.log(`⛔ ${symbol}: ADX ${adxValue} < 25 - Skipping (weak trend)`);
+        if (adxValue < 22) {
+          console.log(`⛔ ${symbol}: ADX ${adxValue} < 22 - Skipping (weak trend)`);
           continue;
         }
 
