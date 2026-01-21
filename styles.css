@@ -708,6 +708,37 @@ select:focus-visible {
   color: var(--text-muted);
 }
 
+/* Hyperliquid Badge & Styling */
+.hl-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  padding: 1px 4px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #a855f7;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+}
+
+.market-item.hyperliquid-only {
+  border-left: 2px solid rgba(168, 85, 247, 0.5);
+}
+
+.market-item.hyperliquid-only:hover {
+  background: rgba(168, 85, 247, 0.08);
+}
+
+.market-item.hyperliquid-only.active {
+  background: rgba(168, 85, 247, 0.12);
+  border-left: 2px solid #a855f7;
+}
+
 /* ============================================
    MAIN CONTENT
    ============================================ */
@@ -4052,6 +4083,22 @@ select:focus-visible {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* Hyperliquid Signal Styling */
+.signal-card.hyperliquid-signal {
+  border-left: 3px solid #a855f7;
+}
+
+.signal-card.hyperliquid-signal::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, #a855f7, rgba(168, 85, 247, 0.3));
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 /* ============================================

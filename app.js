@@ -10,6 +10,10 @@ let DEBUG_MODE = false;
 const CONFIG = {
   BINANCE_API: 'https://fapi.binance.com',
   BYBIT_API: 'https://api.bybit.com',
+  HYPERLIQUID_API: 'https://api.hyperliquid.xyz/info',
+  HYPERLIQUID_WS: 'wss://api.hyperliquid.xyz/ws',
+  HYPERLIQUID_MIN_VOLUME: 1000000, // $1M minimum 24h volume
+  HYPERLIQUID_ENABLED: true, // Enable Hyperliquid integration
   COINGECKO_API: 'https://api.coingecko.com/api/v3',
   // Claude API
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
@@ -1291,6 +1295,256 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
 const BLOCKED_TICKERS = ['BNXUSDT', 'BNXUSDTPERP'];
 
 // ============================================
+// HYPERLIQUID API INTEGRATION
+// ============================================
+
+// Cache for Hyperliquid data
+let hyperliquidMeta = null;
+let hyperliquidMetaTimestamp = 0;
+const HYPERLIQUID_META_TTL = 300000; // 5 minutes
+
+// Fetch Hyperliquid perpetuals metadata (pairs list)
+async function fetchHyperliquidMeta() {
+  // Use cache if still valid
+  if (hyperliquidMeta && Date.now() - hyperliquidMetaTimestamp < HYPERLIQUID_META_TTL) {
+    return hyperliquidMeta;
+  }
+
+  try {
+    const response = await fetch(CONFIG.HYPERLIQUID_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'metaAndAssetCtxs' })
+    });
+
+    if (!response.ok) throw new Error(`Hyperliquid API error: ${response.status}`);
+
+    const data = await response.json();
+    hyperliquidMeta = data;
+    hyperliquidMetaTimestamp = Date.now();
+
+    if (DEBUG_MODE) console.log('🟢 Hyperliquid meta loaded:', data[0]?.universe?.length, 'pairs');
+    return data;
+  } catch (error) {
+    console.warn('Hyperliquid meta fetch failed:', error.message);
+    return null;
+  }
+}
+
+// Fetch Hyperliquid markets with volume filter
+async function fetchHyperliquidMarkets() {
+  try {
+    const meta = await fetchHyperliquidMeta();
+    if (!meta || !meta[0]?.universe || !meta[1]) {
+      return [];
+    }
+
+    const universe = meta[0].universe; // Pair metadata
+    const assetCtxs = meta[1]; // Price/volume data
+
+    const markets = [];
+
+    for (let i = 0; i < universe.length; i++) {
+      const pair = universe[i];
+      const ctx = assetCtxs[i];
+
+      if (!ctx || !pair.name) continue;
+
+      const volume24h = parseFloat(ctx.dayNtlVlm) || 0;
+      const price = parseFloat(ctx.markPx) || 0;
+      const prevDayPx = parseFloat(ctx.prevDayPx) || price;
+      const change = prevDayPx > 0 ? ((price - prevDayPx) / prevDayPx) * 100 : 0;
+
+      // Skip if below minimum volume
+      if (volume24h < CONFIG.HYPERLIQUID_MIN_VOLUME) continue;
+
+      // Skip blocked tickers
+      const binanceSymbol = `${pair.name}USDT`;
+      if (BLOCKED_TICKERS.includes(binanceSymbol)) continue;
+
+      markets.push({
+        symbol: binanceSymbol, // Normalized to USDT format for compatibility
+        hyperliquidSymbol: pair.name, // Original HL symbol
+        price: price,
+        change: change,
+        volume: volume24h,
+        high: price * 1.01, // HL doesn't provide 24h high/low directly
+        low: price * 0.99,
+        maxLeverage: pair.maxLeverage || 50,
+        source: 'hyperliquid',
+        isHyperliquidOnly: false // Will be set true if not on Binance
+      });
+    }
+
+    // Sort by volume
+    markets.sort((a, b) => b.volume - a.volume);
+
+    console.log(`🟢 Hyperliquid: ${markets.length} pairs with >$1M volume`);
+    return markets;
+  } catch (error) {
+    console.warn('Hyperliquid markets fetch failed:', error.message);
+    return [];
+  }
+}
+
+// Fetch Hyperliquid klines (candlestick data)
+async function fetchHyperliquidKlines(symbol, interval = '240', limit = 200) {
+  try {
+    // Convert symbol from BTCUSDT to BTC
+    const hlSymbol = symbol.replace('USDT', '');
+
+    // Map intervals to Hyperliquid format
+    const intervalMap = {
+      '5': '5m',
+      '15': '15m',
+      '60': '1h',
+      '240': '4h',
+      'D': '1d'
+    };
+
+    const hlInterval = intervalMap[interval] || '4h';
+    const endTime = Date.now();
+    const intervalMs = {
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '4h': 4 * 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000
+    };
+    const startTime = endTime - (limit * (intervalMs[hlInterval] || 4 * 60 * 60 * 1000));
+
+    const response = await fetch(CONFIG.HYPERLIQUID_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'candleSnapshot',
+        req: {
+          coin: hlSymbol,
+          interval: hlInterval,
+          startTime: startTime,
+          endTime: endTime
+        }
+      })
+    });
+
+    if (!response.ok) throw new Error(`Hyperliquid klines error: ${response.status}`);
+
+    const data = await response.json();
+
+    if (!Array.isArray(data)) {
+      console.warn('Hyperliquid klines: unexpected response format');
+      return [];
+    }
+
+    return data.map(k => ({
+      time: Math.floor(k.t / 1000), // Convert ms to seconds
+      open: parseFloat(k.o),
+      high: parseFloat(k.h),
+      low: parseFloat(k.l),
+      close: parseFloat(k.c),
+      volume: parseFloat(k.v)
+    }));
+  } catch (error) {
+    console.warn(`Hyperliquid klines failed for ${symbol}:`, error.message);
+    return [];
+  }
+}
+
+// Get Binance symbols set for deduplication
+async function getBinanceSymbols() {
+  try {
+    const data = await fetchWithRetry(`${CONFIG.BINANCE_API}/fapi/v1/ticker/24hr`);
+    const symbols = new Set();
+    for (const t of data) {
+      if (t.symbol.endsWith('USDT') && !t.symbol.includes('_')) {
+        symbols.add(t.symbol);
+      }
+    }
+    return symbols;
+  } catch (error) {
+    console.warn('Failed to get Binance symbols:', error.message);
+    return new Set();
+  }
+}
+
+// Hyperliquid WebSocket connection
+let hlWsConnection = null;
+
+function initHyperliquidWebSocket(symbols) {
+  if (!CONFIG.HYPERLIQUID_ENABLED || !symbols.length) return;
+
+  if (hlWsConnection) {
+    hlWsConnection.close();
+  }
+
+  try {
+    hlWsConnection = new WebSocket(CONFIG.HYPERLIQUID_WS);
+
+    hlWsConnection.onopen = () => {
+      console.log('🟢 Hyperliquid WebSocket connected');
+
+      // Subscribe to all HL-only symbols
+      const hlSymbols = symbols
+        .filter(s => s.isHyperliquidOnly)
+        .map(s => s.hyperliquidSymbol);
+
+      if (hlSymbols.length > 0) {
+        // Subscribe to allMids for price updates
+        hlWsConnection.send(JSON.stringify({
+          method: 'subscribe',
+          subscription: { type: 'allMids' }
+        }));
+      }
+    };
+
+    hlWsConnection.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.channel === 'allMids' && data.data?.mids) {
+          // Update prices for HL-only symbols
+          for (const [hlSymbol, price] of Object.entries(data.data.mids)) {
+            const binanceSymbol = `${hlSymbol}USDT`;
+            const market = state.markets.find(m => m.symbol === binanceSymbol && m.isHyperliquidOnly);
+
+            if (market) {
+              const newPrice = parseFloat(price);
+              state.priceCache[binanceSymbol] = newPrice;
+              market.price = newPrice;
+
+              // Update chart if this is the selected symbol
+              if (state.selectedSymbol === binanceSymbol && state.candleSeries) {
+                updateChartPrice(newPrice);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    };
+
+    hlWsConnection.onerror = () => {
+      console.warn('Hyperliquid WebSocket error');
+    };
+
+    hlWsConnection.onclose = () => {
+      // Reconnect after 10 seconds if enabled
+      if (CONFIG.HYPERLIQUID_ENABLED) {
+        setTimeout(() => {
+          const hlOnlyMarkets = state.markets.filter(m => m.isHyperliquidOnly);
+          if (hlOnlyMarkets.length > 0) {
+            initHyperliquidWebSocket(hlOnlyMarkets);
+          }
+        }, 10000);
+      }
+    };
+  } catch (error) {
+    console.warn('Hyperliquid WebSocket init failed:', error.message);
+  }
+}
+
+// ============================================
 // FUNDING RATES & OPEN INTEREST
 // ============================================
 
@@ -2071,35 +2325,73 @@ async function fetchBybitMarkets() {
     }));
 }
 
-// Fetch markets with fallback
+// Fetch markets with fallback and Hyperliquid merge
 async function fetchMarkets() {
   state.marketLoadStatus = 'loading';
   state.marketLoadError = null;
+
+  let primaryMarkets = [];
+  let binanceSymbols = new Set();
+
   try {
-    const markets = await fetchBinanceMarkets();
+    primaryMarkets = await fetchBinanceMarkets();
     state.dataSource = 'binance';
     updateDataSource('Binance', true);
-    state.marketLoadStatus = 'ready';
-    return markets;
+
+    // Track Binance symbols for deduplication
+    binanceSymbols = new Set(primaryMarkets.map(m => m.symbol));
   } catch (error) {
     console.warn('Binance failed, trying Bybit...', error);
     try {
-      const markets = await fetchBybitMarkets();
+      primaryMarkets = await fetchBybitMarkets();
       state.dataSource = 'bybit';
       updateDataSource('Bybit', true);
-      state.marketLoadStatus = 'ready';
-      return markets;
+
+      // Track Bybit symbols for deduplication
+      binanceSymbols = new Set(primaryMarkets.map(m => m.symbol));
     } catch (error2) {
-      console.error('All exchanges failed:', error2);
+      console.error('All primary exchanges failed:', error2);
       updateDataSource('Offline', false);
       state.marketLoadStatus = 'error';
       state.marketLoadError = 'Unable to load markets. Check your connection or exchange access.';
       return [];
     }
   }
+
+  // Merge Hyperliquid-only pairs if enabled
+  if (CONFIG.HYPERLIQUID_ENABLED) {
+    try {
+      const hlMarkets = await fetchHyperliquidMarkets();
+
+      // Filter to only HL-exclusive pairs (not on Binance/Bybit)
+      const hlOnlyMarkets = hlMarkets
+        .filter(m => !binanceSymbols.has(m.symbol))
+        .map(m => ({
+          ...m,
+          isHyperliquidOnly: true,
+          source: 'hyperliquid'
+        }));
+
+      if (hlOnlyMarkets.length > 0) {
+        console.log(`🟣 Adding ${hlOnlyMarkets.length} Hyperliquid-only pairs`);
+
+        // Add HL-only markets to the list
+        primaryMarkets = [...primaryMarkets, ...hlOnlyMarkets];
+
+        // Initialize HL WebSocket for real-time updates on HL-only pairs
+        initHyperliquidWebSocket(hlOnlyMarkets);
+      }
+    } catch (hlError) {
+      console.warn('Hyperliquid merge failed (non-critical):', hlError.message);
+      // Non-critical - continue with primary markets only
+    }
+  }
+
+  state.marketLoadStatus = 'ready';
+  return primaryMarkets;
 }
 
-// Fetch Klines
+// Fetch Klines (supports Binance, Bybit, and Hyperliquid)
 async function fetchKlines(symbol, interval = '240', limit = 200) {
   const cacheKey = `${symbol}_${interval}`;
   const cached = state.klineCache[cacheKey];
@@ -2107,9 +2399,21 @@ async function fetchKlines(symbol, interval = '240', limit = 200) {
     return cached.data;
   }
 
+  // Check if this is a Hyperliquid-only pair
+  const market = state.markets.find(m => m.symbol === symbol);
+  const isHyperliquidOnly = market?.isHyperliquidOnly || false;
+
   try {
     let data;
-    if (state.dataSource === 'binance') {
+
+    // Use Hyperliquid for HL-only pairs
+    if (isHyperliquidOnly) {
+      data = await fetchHyperliquidKlines(symbol, interval, limit);
+      if (data.length === 0) {
+        console.warn(`No Hyperliquid klines for ${symbol}, using cached or empty`);
+        return cached?.data || [];
+      }
+    } else if (state.dataSource === 'binance') {
       const intervalMap = { '5': '5m', '15': '15m', '60': '1h', '240': '4h', 'D': '1d' };
       data = await fetchWithRetry(
         `${CONFIG.BINANCE_API}/fapi/v1/klines?symbol=${symbol}&interval=${intervalMap[interval]}&limit=${limit}`
@@ -5412,6 +5716,10 @@ function startPricePolling() {
         evaluateAiPredictions(m.symbol, m.price);
       }
       renderMarkets();
+
+      // Update data source display with HL count
+      const primarySource = state.dataSource === 'binance' ? 'Binance' : 'Bybit';
+      updateDataSource(primarySource, true);
     } catch (error) {
       console.error('Price polling failed:', error);
     }
@@ -5826,11 +6134,17 @@ function renderMarkets() {
     let classes = 'market-item';
     if (isActive) classes += ' active';
     if (signal) classes += ` has-signal ${signal.direction.toLowerCase()}`;
+    if (market.isHyperliquidOnly) classes += ' hyperliquid-only';
+
+    // Add HL badge for Hyperliquid-only pairs
+    const hlBadge = market.isHyperliquidOnly
+      ? '<span class="hl-badge" title="Hyperliquid Only">HL</span>'
+      : '';
 
     return `
       <div class="${classes}" data-symbol="${market.symbol}">
         <div class="market-row">
-          <span class="market-symbol">${market.symbol.replace('USDT', '')}</span>
+          <span class="market-symbol">${market.symbol.replace('USDT', '')}${hlBadge}</span>
           <span class="market-change ${market.change >= 0 ? 'up' : 'down'}">${formatPercent(market.change)}</span>
         </div>
         <div class="market-meta">
@@ -6055,11 +6369,15 @@ function renderSignals() {
     const consensusBadge = signal.isGoldConsensus ? '<span class="gold-badge">🥇 GOLD</span>' :
                            (signal.isSilverConsensus ? '<span class="silver-badge">🥈 CONSENSUS</span>' : '');
 
+    // Check if this is a Hyperliquid-only pair
+    const market = state.markets.find(m => m.symbol === signal.symbol);
+    const hlBadge = market?.isHyperliquidOnly ? '<span class="hl-badge" title="Hyperliquid Only">HL</span>' : '';
+
     return `
-    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''} ${consensusClass}" data-symbol="${signal.symbol}">
+    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''} ${consensusClass} ${market?.isHyperliquidOnly ? 'hyperliquid-signal' : ''}" data-symbol="${signal.symbol}">
       <div class="signal-header">
         <div class="signal-symbol-info">
-          <span class="signal-symbol">${signal.symbol.replace('USDT', '')}</span>
+          <span class="signal-symbol">${signal.symbol.replace('USDT', '')}${hlBadge}</span>
           <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
           ${consensusBadge}
           ${isNew && !signal.isConsensus && !signal.isGoldConsensus && !signal.isSilverConsensus ? '<span class="new-badge">NEW</span>' : ''}
@@ -7202,7 +7520,12 @@ function updateScanStatus(current, found) {
 function updateDataSource(name, isLive) {
   const nameEl = document.getElementById('dataSourceName');
   const statusEl = document.getElementById('dataSourceStatus');
-  if (nameEl) nameEl.textContent = name;
+
+  // Check for Hyperliquid-only pairs
+  const hlCount = state.markets.filter(m => m.isHyperliquidOnly).length;
+  const displayName = hlCount > 0 ? `${name} + HL (${hlCount})` : name;
+
+  if (nameEl) nameEl.textContent = displayName;
   if (statusEl) {
     statusEl.textContent = isLive ? '● Live' : '● Offline';
     statusEl.style.color = isLive ? 'var(--green)' : 'var(--red)';
@@ -8058,6 +8381,10 @@ async function init() {
 
   state.markets = await fetchMarkets();
   renderMarkets();
+
+  // Update data source display after markets loaded (includes HL count)
+  const primarySource = state.dataSource === 'binance' ? 'Binance' : 'Bybit';
+  updateDataSource(primarySource, true);
 
   initChart();
   initEquityChart();
