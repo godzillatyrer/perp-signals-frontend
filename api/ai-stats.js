@@ -38,10 +38,13 @@ function getDefaultStats() {
     grokSignals: 0,
     grokTotalConf: 0,
 
-    // Consensus metrics
+    // Consensus metrics (Gold = 3/3 AI agreement, Silver = 2/3 AI agreement)
     goldConsensusWins: 0,
     goldConsensusLosses: 0,
     goldConsensusSignals: 0,
+    silverConsensusWins: 0,
+    silverConsensusLosses: 0,
+    silverConsensusSignals: 0,
 
     // Trade history for win rate tracking (last 100 trades)
     recentTrades: [],
@@ -163,14 +166,19 @@ export default async function handler(request, response) {
         }
 
         case 'increment_consensus': {
-          // Increment gold consensus signal count
-          currentStats.goldConsensusSignals++;
+          // Increment consensus signal count (gold or silver)
+          const { type } = data || {};
+          if (type === 'silver') {
+            currentStats.silverConsensusSignals++;
+          } else {
+            currentStats.goldConsensusSignals++;
+          }
           break;
         }
 
         case 'record_trade_result': {
           // Record a win or loss for specific AI sources
-          const { aiSources, isGoldConsensus, isWin, symbol, direction, entry, exit, pnl, timestamp } = data;
+          const { aiSources, isGoldConsensus, isSilverConsensus, isWin, symbol, direction, entry, exit, pnl, timestamp } = data;
 
           // Track per-AI wins/losses
           if (aiSources && Array.isArray(aiSources)) {
@@ -194,6 +202,12 @@ export default async function handler(request, response) {
             } else {
               currentStats.goldConsensusLosses++;
             }
+          } else if (isSilverConsensus) {
+            if (isWin) {
+              currentStats.silverConsensusWins++;
+            } else {
+              currentStats.silverConsensusLosses++;
+            }
           }
 
           // Add to recent trades history
@@ -205,6 +219,7 @@ export default async function handler(request, response) {
             pnl,
             aiSources,
             isGoldConsensus,
+            isSilverConsensus,
             isWin,
             timestamp: timestamp || Date.now()
           });
@@ -213,7 +228,7 @@ export default async function handler(request, response) {
 
         case 'bulk_increment_signals': {
           // Bulk update signal counts (for batch processing)
-          const { claude, openai, grok, goldConsensus } = data;
+          const { claude, openai, grok, goldConsensus, silverConsensus } = data;
           if (claude) {
             currentStats.claudeSignals += claude.count || 0;
             currentStats.claudeTotalConf += claude.totalConf || 0;
@@ -228,6 +243,9 @@ export default async function handler(request, response) {
           }
           if (goldConsensus) {
             currentStats.goldConsensusSignals += goldConsensus || 0;
+          }
+          if (silverConsensus) {
+            currentStats.silverConsensusSignals += silverConsensus || 0;
           }
           break;
         }

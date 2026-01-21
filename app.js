@@ -2054,24 +2054,29 @@ async function loadPerformanceStatsFromRedis() {
     if (response.ok) {
       const data = await response.json();
       if (data.success && data.stats) {
-        // Merge Redis stats with local state
+        // Merge Redis stats with local state - prefer Redis values (source of truth)
+        // Use Math.max to not lose local data if Redis returns zeros
+        const local = state.performanceStats;
         state.performanceStats = {
           ...state.performanceStats,
-          claudeWins: data.stats.claudeWins || 0,
-          claudeLosses: data.stats.claudeLosses || 0,
-          claudeSignals: data.stats.claudeSignals || 0,
-          claudeTotalConf: data.stats.claudeTotalConf || 0,
-          openaiWins: data.stats.openaiWins || 0,
-          openaiLosses: data.stats.openaiLosses || 0,
-          openaiSignals: data.stats.openaiSignals || 0,
-          openaiTotalConf: data.stats.openaiTotalConf || 0,
-          grokWins: data.stats.grokWins || 0,
-          grokLosses: data.stats.grokLosses || 0,
-          grokSignals: data.stats.grokSignals || 0,
-          grokTotalConf: data.stats.grokTotalConf || 0,
-          goldConsensusWins: data.stats.goldConsensusWins || 0,
-          goldConsensusLosses: data.stats.goldConsensusLosses || 0,
-          goldConsensusSignals: data.stats.goldConsensusSignals || 0
+          claudeWins: Math.max(data.stats.claudeWins || 0, local.claudeWins || 0),
+          claudeLosses: Math.max(data.stats.claudeLosses || 0, local.claudeLosses || 0),
+          claudeSignals: Math.max(data.stats.claudeSignals || 0, local.claudeSignals || 0),
+          claudeTotalConf: Math.max(data.stats.claudeTotalConf || 0, local.claudeTotalConf || 0),
+          openaiWins: Math.max(data.stats.openaiWins || 0, local.openaiWins || 0),
+          openaiLosses: Math.max(data.stats.openaiLosses || 0, local.openaiLosses || 0),
+          openaiSignals: Math.max(data.stats.openaiSignals || 0, local.openaiSignals || 0),
+          openaiTotalConf: Math.max(data.stats.openaiTotalConf || 0, local.openaiTotalConf || 0),
+          grokWins: Math.max(data.stats.grokWins || 0, local.grokWins || 0),
+          grokLosses: Math.max(data.stats.grokLosses || 0, local.grokLosses || 0),
+          grokSignals: Math.max(data.stats.grokSignals || 0, local.grokSignals || 0),
+          grokTotalConf: Math.max(data.stats.grokTotalConf || 0, local.grokTotalConf || 0),
+          goldConsensusWins: Math.max(data.stats.goldConsensusWins || 0, local.goldConsensusWins || 0),
+          goldConsensusLosses: Math.max(data.stats.goldConsensusLosses || 0, local.goldConsensusLosses || 0),
+          goldConsensusSignals: Math.max(data.stats.goldConsensusSignals || 0, local.goldConsensusSignals || 0),
+          silverConsensusWins: Math.max(data.stats.silverConsensusWins || 0, local.silverConsensusWins || 0),
+          silverConsensusLosses: Math.max(data.stats.silverConsensusLosses || 0, local.silverConsensusLosses || 0),
+          silverConsensusSignals: Math.max(data.stats.silverConsensusSignals || 0, local.silverConsensusSignals || 0)
         };
         // Also save to localStorage as cache
         localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
@@ -2109,7 +2114,10 @@ async function syncAIStatsToRedis() {
           grokTotalConf: stats.grokTotalConf,
           goldConsensusWins: stats.goldConsensusWins,
           goldConsensusLosses: stats.goldConsensusLosses,
-          goldConsensusSignals: stats.goldConsensusSignals
+          goldConsensusSignals: stats.goldConsensusSignals,
+          silverConsensusWins: stats.silverConsensusWins,
+          silverConsensusLosses: stats.silverConsensusLosses,
+          silverConsensusSignals: stats.silverConsensusSignals
         }
       })
     });
@@ -4439,9 +4447,6 @@ async function runAiAnalysis() {
           status: 'pending'
         });
         state.aiPredictions = state.aiPredictions.slice(0, 50); // Keep last 50
-
-        // Sync consensus stats to Redis
-        syncAIStatsToRedis();
       }
     }
 
@@ -4450,6 +4455,11 @@ async function runAiAnalysis() {
       console.log(`⚠️ No consensus: ${allPicks.length} individual picks but no 2+ AI agreement`);
       recordFilterReason('No consensus');
     }
+
+    // Always sync AI stats to Redis after every scan (even without consensus)
+    // This ensures individual AI signal counts are persisted
+    syncAIStatsToRedis();
+    localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
 
     // Sort by gold consensus first, then silver, then confidence
     allSignals.sort((a, b) => {
