@@ -6,6 +6,7 @@
 
 import { Redis } from '@upstash/redis';
 import { getRecentCalls, formatCallsForAIContext } from './discord.js';
+import { addPendingSignal, evaluatePendingSignals, getPendingSignalsSummary } from './pending-signals.js';
 
 const CONFIG = {
   // Minimum confidence for alerts - STRICT (raised to 85%)
@@ -317,6 +318,118 @@ async function updateAISignalCounts(analyses, consensusSignals) {
   } catch (e) {
     console.error('Failed to update AI stats:', e.message);
   }
+}
+
+// ============================================
+// PENDING SIGNAL EVALUATION & WIN/LOSS TRACKING
+// ============================================
+// Evaluates pending signals against current prices and updates AI win/loss stats
+
+async function evaluateAndUpdateAIWinLoss(marketPrices) {
+  const r = getRedis();
+  if (!r) {
+    console.log('📊 Redis not configured - skipping pending signal evaluation');
+    return { wins: 0, losses: 0, expired: 0 };
+  }
+
+  try {
+    // Convert market prices to simple symbol -> price map
+    const priceMap = {};
+    for (const [symbol, data] of Object.entries(marketPrices)) {
+      priceMap[symbol] = typeof data === 'object' ? data.price : data;
+    }
+
+    console.log('📈 Evaluating pending signals against current prices...');
+    const results = await evaluatePendingSignals(priceMap);
+
+    // Update AI stats for wins and losses
+    if (results.wins.length > 0 || results.losses.length > 0) {
+      const stats = await getAIStats() || {
+        claudeWins: 0, claudeLosses: 0, claudeSignals: 0, claudeTotalConf: 0,
+        openaiWins: 0, openaiLosses: 0, openaiSignals: 0, openaiTotalConf: 0,
+        grokWins: 0, grokLosses: 0, grokSignals: 0, grokTotalConf: 0,
+        goldConsensusWins: 0, goldConsensusLosses: 0, goldConsensusSignals: 0,
+        silverConsensusWins: 0, silverConsensusLosses: 0, silverConsensusSignals: 0
+      };
+
+      // Record wins
+      for (const signal of results.wins) {
+        if (signal.aiSource === 'claude') {
+          stats.claudeWins++;
+          console.log(`✅ Claude WIN: ${signal.symbol} ${signal.direction}`);
+        } else if (signal.aiSource === 'openai') {
+          stats.openaiWins++;
+          console.log(`✅ OpenAI WIN: ${signal.symbol} ${signal.direction}`);
+        } else if (signal.aiSource === 'grok') {
+          stats.grokWins++;
+          console.log(`✅ Grok WIN: ${signal.symbol} ${signal.direction}`);
+        }
+      }
+
+      // Record losses
+      for (const signal of results.losses) {
+        if (signal.aiSource === 'claude') {
+          stats.claudeLosses++;
+          console.log(`❌ Claude LOSS: ${signal.symbol} ${signal.direction}`);
+        } else if (signal.aiSource === 'openai') {
+          stats.openaiLosses++;
+          console.log(`❌ OpenAI LOSS: ${signal.symbol} ${signal.direction}`);
+        } else if (signal.aiSource === 'grok') {
+          stats.grokLosses++;
+          console.log(`❌ Grok LOSS: ${signal.symbol} ${signal.direction}`);
+        }
+      }
+
+      stats.lastUpdated = Date.now();
+      await r.set(AI_STATS_KEY, JSON.stringify(stats));
+      console.log(`📊 Updated AI stats: +${results.wins.length} wins, +${results.losses.length} losses`);
+    }
+
+    // Log summary
+    if (results.entryTriggered.length > 0) {
+      console.log(`🎯 Entry triggered for ${results.entryTriggered.length} signals`);
+    }
+    if (results.expired.length > 0) {
+      console.log(`⏰ ${results.expired.length} signals expired (entry never hit)`);
+    }
+    console.log(`📋 ${results.stillPending.length} signals still pending/active`);
+
+    return {
+      wins: results.wins.length,
+      losses: results.losses.length,
+      expired: results.expired.length,
+      entryTriggered: results.entryTriggered.length,
+      stillPending: results.stillPending.length
+    };
+  } catch (e) {
+    console.error('Error evaluating pending signals:', e.message);
+    return { wins: 0, losses: 0, expired: 0, error: e.message };
+  }
+}
+
+// Store new consensus signal as pending for each AI source
+async function storePendingSignals(consensusSignal) {
+  const results = [];
+
+  // Create a pending signal entry for each AI that contributed to this consensus
+  for (const aiSource of consensusSignal.aiSources) {
+    const pendingSignal = {
+      symbol: consensusSignal.symbol,
+      direction: consensusSignal.direction,
+      entry: consensusSignal.entry,
+      stopLoss: consensusSignal.stopLoss,
+      takeProfit: consensusSignal.takeProfit,
+      aiSource: aiSource,
+      confidence: consensusSignal.confidence,
+      isGoldConsensus: consensusSignal.isGoldConsensus,
+      isSilverConsensus: consensusSignal.isSilverConsensus
+    };
+
+    const result = await addPendingSignal(pendingSignal);
+    results.push({ aiSource, ...result });
+  }
+
+  return results;
 }
 
 // ============================================
@@ -1624,6 +1737,12 @@ export default async function handler(request, response) {
       });
     }
 
+    // FIRST: Evaluate pending signals against current prices
+    // This checks if entry was hit, TP/SL was hit, or 48h expired
+    console.log('🔍 Evaluating pending signals...');
+    const evalResults = await evaluateAndUpdateAIWinLoss(marketData.prices);
+    console.log(`   Evaluation: ${evalResults.wins || 0} wins, ${evalResults.losses || 0} losses, ${evalResults.expired || 0} expired`);
+
     // Fetch technical indicators for all coins
     console.log('📈 Calculating technical indicators...');
     const indicatorData = {};
@@ -1774,6 +1893,7 @@ export default async function handler(request, response) {
 
     // Send Telegram alerts with inline keyboards
     let alertsSent = 0;
+    let pendingSignalsAdded = 0;
     for (const signal of alertSignals) {
       const indicators = indicatorData[signal.symbol];
       const message = formatSignalForTelegram(signal, majorEvent, indicators);
@@ -1783,11 +1903,20 @@ export default async function handler(request, response) {
         alertsSent++;
         // Save to Redis for cooldown tracking
         await saveSignal(signal.symbol, signal.direction, signal.entry);
-        console.log(`✅ Sent alert for ${signal.symbol} ${signal.direction}`);
+
+        // Store as pending signal for each AI source (for win ratio calculation)
+        // This tracks entry hit, TP/SL hit, and auto-closes after 48h
+        const pendingResults = await storePendingSignals(signal);
+        const addedCount = pendingResults.filter(r => r.added).length;
+        pendingSignalsAdded += addedCount;
+        console.log(`✅ Sent alert for ${signal.symbol} ${signal.direction} (${addedCount} pending signals added)`);
       }
     }
 
-    console.log(`📤 Sent ${alertsSent} Telegram alerts`);
+    console.log(`📤 Sent ${alertsSent} Telegram alerts, ${pendingSignalsAdded} pending signals added`);
+
+    // Get pending signals summary for response
+    const pendingSummary = await getPendingSignalsSummary();
 
     return response.status(200).json({
       success: true,
@@ -1795,6 +1924,8 @@ export default async function handler(request, response) {
       aiResponses: analyses.length,
       consensusSignals: consensusSignals.length,
       alertsSent: alertsSent,
+      pendingSignals: pendingSummary,
+      evaluation: evalResults,
       signals: alertSignals.map(s => ({
         symbol: s.symbol,
         direction: s.direction,
