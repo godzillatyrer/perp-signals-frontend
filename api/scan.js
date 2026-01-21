@@ -235,6 +235,91 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
 }
 
 // ============================================
+// AI PERFORMANCE STATS TRACKING
+// ============================================
+// Persists AI signal counts to Redis so they update even when frontend is closed
+
+const AI_STATS_KEY = 'ai_performance_stats';
+
+async function getAIStats() {
+  const r = getRedis();
+  if (!r) return null;
+
+  try {
+    const data = await r.get(AI_STATS_KEY);
+    if (data) {
+      return typeof data === 'string' ? JSON.parse(data) : data;
+    }
+    return {
+      claudeWins: 0, claudeLosses: 0, claudeSignals: 0, claudeTotalConf: 0,
+      openaiWins: 0, openaiLosses: 0, openaiSignals: 0, openaiTotalConf: 0,
+      grokWins: 0, grokLosses: 0, grokSignals: 0, grokTotalConf: 0,
+      goldConsensusWins: 0, goldConsensusLosses: 0, goldConsensusSignals: 0,
+      silverConsensusWins: 0, silverConsensusLosses: 0, silverConsensusSignals: 0,
+      lastUpdated: Date.now()
+    };
+  } catch (e) {
+    console.error('Redis get error for AI stats:', e.message);
+    return null;
+  }
+}
+
+async function updateAISignalCounts(analyses, consensusSignals) {
+  const r = getRedis();
+  if (!r) {
+    console.log('📊 Redis not configured - AI stats not persisted');
+    return;
+  }
+
+  try {
+    const stats = await getAIStats() || {
+      claudeWins: 0, claudeLosses: 0, claudeSignals: 0, claudeTotalConf: 0,
+      openaiWins: 0, openaiLosses: 0, openaiSignals: 0, openaiTotalConf: 0,
+      grokWins: 0, grokLosses: 0, grokSignals: 0, grokTotalConf: 0,
+      goldConsensusWins: 0, goldConsensusLosses: 0, goldConsensusSignals: 0,
+      silverConsensusWins: 0, silverConsensusLosses: 0, silverConsensusSignals: 0
+    };
+
+    // Count signals from each AI that responded
+    for (const analysis of analyses) {
+      if (!analysis || !analysis.source) continue;
+
+      const signalCount = analysis.topPicks?.length || 0;
+      const totalConf = analysis.topPicks?.reduce((sum, p) => sum + (p.confidence || 0), 0) || 0;
+
+      if (analysis.source === 'claude') {
+        stats.claudeSignals += signalCount;
+        stats.claudeTotalConf += totalConf;
+        console.log(`📊 Claude: +${signalCount} signals (total: ${stats.claudeSignals})`);
+      } else if (analysis.source === 'openai') {
+        stats.openaiSignals += signalCount;
+        stats.openaiTotalConf += totalConf;
+        console.log(`📊 OpenAI: +${signalCount} signals (total: ${stats.openaiSignals})`);
+      } else if (analysis.source === 'grok') {
+        stats.grokSignals += signalCount;
+        stats.grokTotalConf += totalConf;
+        console.log(`📊 Grok: +${signalCount} signals (total: ${stats.grokSignals})`);
+      }
+    }
+
+    // Count consensus signals
+    for (const signal of consensusSignals) {
+      if (signal.isGoldConsensus) {
+        stats.goldConsensusSignals++;
+      } else if (signal.aiSources?.length >= 2) {
+        stats.silverConsensusSignals++;
+      }
+    }
+
+    stats.lastUpdated = Date.now();
+    await r.set(AI_STATS_KEY, JSON.stringify(stats));
+    console.log('📊 AI stats saved to Redis');
+  } catch (e) {
+    console.error('Failed to update AI stats:', e.message);
+  }
+}
+
+// ============================================
 // CORRELATION CHECK
 // ============================================
 
@@ -1189,7 +1274,12 @@ async function analyzeWithOpenAI(prompt) {
 }
 
 async function analyzeWithGrok(prompt) {
-  if (!process.env.GROK_API_KEY) return null;
+  if (!process.env.GROK_API_KEY) {
+    console.warn('⚠️ GROK_API_KEY not configured - Grok analysis skipped (Gold consensus requires all 3 AIs!)');
+    return null;
+  }
+
+  console.log('⚡ [GROK] Starting API call...');
 
   try {
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -1201,20 +1291,34 @@ async function analyzeWithGrok(prompt) {
       body: JSON.stringify({
         model: 'grok-2-latest',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1024
+        max_tokens: 2048
       })
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`⚡ [GROK] API error ${response.status}: ${errorText}`);
+      return null;
+    }
+
     const data = await response.json();
+    console.log('⚡ [GROK] Response received, parsing...');
+
     if (data.choices && data.choices[0]) {
       const text = data.choices[0].message.content;
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        return { source: 'grok', ...JSON.parse(jsonMatch[0]) };
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log(`⚡ [GROK] Success - found ${parsed.topPicks?.length || 0} picks`);
+        return { source: 'grok', ...parsed };
+      } else {
+        console.warn('⚡ [GROK] No JSON found in response');
       }
+    } else {
+      console.warn('⚡ [GROK] Unexpected response structure:', JSON.stringify(data).slice(0, 200));
     }
   } catch (error) {
-    console.error('Grok analysis error:', error);
+    console.error('⚡ [GROK] Analysis error:', error.message || error);
   }
   return null;
 }
@@ -1491,11 +1595,15 @@ export default async function handler(request, response) {
     }
 
     // Check if we have at least 2 AI APIs configured
-    const aiCount = [
-      process.env.CLAUDE_API_KEY,
-      process.env.OPENAI_API_KEY,
-      process.env.GROK_API_KEY
-    ].filter(Boolean).length;
+    const hasClaudeKey = !!process.env.CLAUDE_API_KEY;
+    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    const hasGrokKey = !!process.env.GROK_API_KEY;
+    const aiCount = [hasClaudeKey, hasOpenAIKey, hasGrokKey].filter(Boolean).length;
+
+    console.log('🔑 API Keys configured:');
+    console.log(`   Claude: ${hasClaudeKey ? '✅' : '❌'}`);
+    console.log(`   OpenAI: ${hasOpenAIKey ? '✅' : '❌'}`);
+    console.log(`   Grok: ${hasGrokKey ? '✅' : '❌'} ${hasGrokKey ? `(starts with: ${process.env.GROK_API_KEY.slice(0, 8)}...)` : ''}`);
 
     if (aiCount < 2) {
       return response.status(200).json({
@@ -1544,6 +1652,9 @@ export default async function handler(request, response) {
     // Find consensus signals
     const consensusSignals = findConsensusSignals(analyses, indicatorData);
     console.log(`🎯 Found ${consensusSignals.length} consensus signals`);
+
+    // Update AI signal counts in Redis (persists even when frontend is closed)
+    await updateAISignalCounts(analyses, consensusSignals);
 
     // Filter by confidence and TP%
     let alertSignals = consensusSignals.filter(signal => {
