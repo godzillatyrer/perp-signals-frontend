@@ -9,8 +9,8 @@ import { getRecentCalls, formatCallsForAIContext } from './discord.js';
 import { addPendingSignal, evaluatePendingSignals, getPendingSignalsSummary } from './pending-signals.js';
 
 const CONFIG = {
-  // Minimum confidence for alerts - STRICT (raised to 85%)
-  ALERT_CONFIDENCE: 85,
+  // Minimum confidence for alerts
+  ALERT_CONFIDENCE: 75,
   // Minimum TP percentages by market cap
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
@@ -32,7 +32,7 @@ const CONFIG = {
   MAX_SIGNALS_PER_GROUP: 1,
   MIN_RISK_REWARD: 2,
   MIN_ATR_PERCENT: 0.4,
-  MAX_ENTRY_WIGGLE_PERCENT: 3,
+  MAX_ENTRY_WIGGLE_PERCENT: 4,
   MAX_SL_WIGGLE_PERCENT: 3,
   MAX_TP_WIGGLE_PERCENT: 5,
   // GOLD CONSENSUS ONLY - require all 3 AIs to agree
