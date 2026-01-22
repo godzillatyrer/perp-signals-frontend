@@ -61,7 +61,7 @@ const CONFIG = {
   CHART_HISTORY_LIMIT: 1000, // More candles for longer history
   MIN_RISK_REWARD: 2,
   MIN_ATR_PERCENT: 0.4,
-  MAX_ENTRY_WIGGLE_PERCENT: 2,
+  MAX_ENTRY_WIGGLE_PERCENT: 3,
   MAX_SL_WIGGLE_PERCENT: 3,
   MAX_TP_WIGGLE_PERCENT: 5,
   MIN_AI_WINRATE: 0.4,
@@ -4173,8 +4173,6 @@ async function runAiAnalysis() {
         const matches = picks.filter(p =>
           p.source !== pick.source &&
           isEntryMatch(p.entry, pick.entry) &&
-          isStopMatch(p.stopLoss, pick.stopLoss) &&
-          isTakeProfitMatch(p.takeProfit, pick.takeProfit) &&
           isTriggerMatch(p.entryTrigger, pick.entryTrigger)
         );
         if (matches.length > 0 && !matchingPicks.some(m => m.source === pick.source)) {

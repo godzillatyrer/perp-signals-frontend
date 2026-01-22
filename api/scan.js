@@ -32,7 +32,7 @@ const CONFIG = {
   MAX_SIGNALS_PER_GROUP: 1,
   MIN_RISK_REWARD: 2,
   MIN_ATR_PERCENT: 0.4,
-  MAX_ENTRY_WIGGLE_PERCENT: 2,
+  MAX_ENTRY_WIGGLE_PERCENT: 3,
   MAX_SL_WIGGLE_PERCENT: 3,
   MAX_TP_WIGGLE_PERCENT: 5,
   // GOLD CONSENSUS ONLY - require all 3 AIs to agree
@@ -1508,8 +1508,6 @@ function findConsensusSignals(analyses, indicatorData) {
         const matches = signals.filter(s =>
           s.aiSource !== signal.aiSource &&
           isWithinPercent(s.entry, signal.entry, CONFIG.MAX_ENTRY_WIGGLE_PERCENT) &&
-          isWithinPercent(s.stopLoss, signal.stopLoss, CONFIG.MAX_SL_WIGGLE_PERCENT) &&
-          isWithinPercent(s.takeProfit, signal.takeProfit, CONFIG.MAX_TP_WIGGLE_PERCENT) &&
           (!s.entryTrigger || !signal.entryTrigger || s.entryTrigger === signal.entryTrigger)
         );
         if (matches.length > 0 && !matchingSignals.some(m => m.aiSource === signal.aiSource)) {
