@@ -48,8 +48,8 @@ const CONFIG = {
   PNL_UPDATE_INTERVAL: 500,
   CACHE_TTL: 30000,
   MIN_CONFIDENCE: 65,
-  HIGH_CONFIDENCE: 85, // Alert threshold - only notify for 85%+
-  ALERT_CONFIDENCE: 85, // Minimum confidence for alerts - raised back to 85% for quality
+  HIGH_CONFIDENCE: 75, // Alert threshold
+  ALERT_CONFIDENCE: 75, // Minimum confidence for alerts
   TOP_COINS: 50,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
@@ -57,11 +57,11 @@ const CONFIG = {
   SL_PERCENT: 2, // Stop loss
   MAX_OPEN_TRADES: 5, // Increased for more trades
   MAX_POSITION_SIZE_PERCENT: 20, // 20% of balance per trade
-  AI_MIN_CONFIDENCE: 85, // Only auto-trade 85%+ confidence signals
+  AI_MIN_CONFIDENCE: 75, // Only auto-trade 75%+ confidence signals
   CHART_HISTORY_LIMIT: 1000, // More candles for longer history
   MIN_RISK_REWARD: 2,
   MIN_ATR_PERCENT: 0.4,
-  MAX_ENTRY_WIGGLE_PERCENT: 2,
+  MAX_ENTRY_WIGGLE_PERCENT: 4,
   MAX_SL_WIGGLE_PERCENT: 3,
   MAX_TP_WIGGLE_PERCENT: 5,
   MIN_AI_WINRATE: 0.4,
@@ -4173,8 +4173,6 @@ async function runAiAnalysis() {
         const matches = picks.filter(p =>
           p.source !== pick.source &&
           isEntryMatch(p.entry, pick.entry) &&
-          isStopMatch(p.stopLoss, pick.stopLoss) &&
-          isTakeProfitMatch(p.takeProfit, pick.takeProfit) &&
           isTriggerMatch(p.entryTrigger, pick.entryTrigger)
         );
         if (matches.length > 0 && !matchingPicks.some(m => m.source === pick.source)) {
