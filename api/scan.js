@@ -1338,7 +1338,7 @@ CRITICAL REQUIREMENTS:
       prompt += `\n  Trend: ${indicators.trend}`;
       prompt += `\n  RSI(14): ${indicators.rsi} ${indicators.rsi < 30 ? '🟢 OVERSOLD' : indicators.rsi > 70 ? '🔴 OVERBOUGHT' : ''}`;
       prompt += `\n  StochRSI: ${indicators.stochRsi?.k} (${indicators.stochRsi?.signal})`;
-      prompt += `\n  ADX: ${indicators.adx?.adx} (${indicators.adx?.trend}) ${indicators.adx?.adx >= 22 ? '✅ OK TREND' : '⚠️ WEAK TREND - SKIP'}`;
+      prompt += `\n  ADX: ${indicators.adx?.adx} (${indicators.adx?.trend}) ${indicators.adx?.adx >= 20 ? '✅ STRONG TREND' : indicators.adx?.adx >= 15 ? '⚡ MODERATE TREND' : '⚠️ WEAK TREND'}`;
       prompt += `\n  +DI/-DI: ${indicators.adx?.plusDI}/${indicators.adx?.minusDI}`;
       prompt += `\n  Supertrend: ${indicators.supertrend?.direction} (${indicators.supertrend?.signal})`;
       prompt += `\n  EMAs: 20=${indicators.ema20} | 50=${indicators.ema50} | 200=${indicators.ema200}`;
@@ -1362,16 +1362,18 @@ CRITICAL REQUIREMENTS:
 
   prompt += `
 
-ANALYSIS RULES:
-1. **ADX MUST BE >= 22** - Skip ANY coin with ADX < 22 (no exceptions)
-2. **SUPERTREND MUST CONFIRM** - Supertrend UP = LONG only, Supertrend DOWN = SHORT only
-3. **CONFLUENCE REQUIRED** - Multiple indicators must align:
-   - For LONG: RSI < 50 (not overbought), MACD bullish, price above VWAP, Supertrend UP
-   - For SHORT: RSI > 50 (not oversold), MACD bearish, price below VWAP, Supertrend DOWN
+ANALYSIS RULES (ranked by importance):
+1. **ADX >= 15 required** - Higher ADX = stronger trend. Prefer >= 20, but 15+ is acceptable
+2. **SUPERTREND should confirm** - Supertrend UP = prefer LONG, Supertrend DOWN = prefer SHORT
+3. **CONFLUENCE preferred** - More aligned indicators = higher confidence score:
+   - For LONG: RSI < 50, MACD bullish, price above VWAP, Supertrend UP
+   - For SHORT: RSI > 50, MACD bearish, price below VWAP, Supertrend DOWN
 4. **ENTRY TIMING** - Use StochRSI: OVERSOLD for long entries, OVERBOUGHT for short entries
-5. **TREND ALIGNMENT** - EMAs should confirm direction (price > EMA20 > EMA50 for longs)
-6. **REGIME & VOLUME** - Skip RANGING/CHOPPY regimes and avoid DECREASING volume
+5. **TREND ALIGNMENT** - EMAs confirming direction adds confidence
+6. **REGIME & VOLUME** - TRENDING regime and INCREASING volume add confidence
 7. **RISK/REWARD** - Must be >= 2.0 based on Entry/Stop/Target
+
+IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15. Use lower confidence (60-70) for weaker setups rather than returning empty signals.
 
 TASK: Identify 1-3 highest conviction trade setups. For each, provide:
 1. Symbol, Direction (LONG/SHORT), Confidence (0-100%)

@@ -3754,22 +3754,22 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **FUNDING RATE TRAPS**: High positive funding with price stalling = longs paying heavy fees, potential short squeeze setup.
 6. **RISK/REWARD**: Only pick trades with at least 2:1 R/R ratio. Calculate: (TP - Entry) / (Entry - SL) >= 2
 
-CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
-- **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
-- ONLY trade in direction of higher timeframe trend (check MTF Confluence)
-- Market Regime must be TRENDING (UP or DOWN), NOT VOLATILE or RANGING
-- Must have clear structure break (BULLISH_BOS for longs, BEARISH_BOS for shorts) OR price at strong order block
+REQUIREMENTS (ranked by importance):
+- **ADX should be >= 15** (Higher ADX = stronger trend, prefer >= 20 but 15+ is acceptable)
+- **SUPERTREND should confirm direction** (UP = longs, DOWN = shorts) — strong preference, not absolute
+- Prefer trading in direction of higher timeframe trend (check MTF Confluence)
+- Prefer TRENDING regime (UP or DOWN) over VOLATILE or RANGING
+- Look for structure breaks (BULLISH_BOS for longs, BEARISH_BOS for shorts) or price at strong order block
 - Place SL behind the nearest swing high/low with ATR buffer
-- Entry must be at a favorable level (near support for longs, near resistance for shorts)
+- Entry should be at a favorable level (near support for longs, near resistance for shorts)
 - **Stochastic RSI timing**: For longs prefer OVERSOLD or rising from <30. For shorts prefer OVERBOUGHT or falling from >70
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory.
+IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 with reasonable setup. Do NOT return empty topPicks unless truly nothing qualifies. Lower confidence (60-70) is fine for weaker setups.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
 
-Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than signal weak setups.`;
+Select 1-3 best setups. Use lower confidence scores (60-75) for weaker setups rather than skipping them entirely.`;
 }
 
 // Gemini - Technical Analyst (focuses on chart patterns, S/R, price action)
@@ -3801,22 +3801,22 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **VWAP ANALYSIS**: Price above VWAP = bullish bias. Price below VWAP = bearish bias. Extended (>3% deviation) = mean reversion expected.
 6. **PIVOT POINTS**: Use daily pivots as targets. S1/S2 for support, R1/R2 for resistance.
 
-CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
-- **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
-- ONLY trade when technical indicators ALIGN (RSI + MACD + EMA + Supertrend all same direction)
-- Price must be respecting key levels (not in no-man's-land)
-- Volume should confirm the move (INCREASING volume trend preferred)
-- MTF Confluence should be at least PARTIAL alignment
-- Ichimoku signal should support the direction (not IN_CLOUD)
+REQUIREMENTS (ranked by importance):
+- **ADX should be >= 15** (Higher ADX = stronger signal. Prefer >= 20, but 15+ is acceptable)
+- **SUPERTREND should confirm direction** (UP = longs only, DOWN = shorts only) — strong preference
+- Prefer when multiple technical indicators align (RSI + MACD + EMA + Supertrend)
+- Price should be at or near key levels (support/resistance)
+- INCREASING volume is preferred but not mandatory
+- MTF Confluence: PARTIAL or better alignment preferred
+- Ichimoku: support the direction is preferred
 - **Stochastic RSI**: Use for entry timing - OVERSOLD for longs, OVERBOUGHT for shorts
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory.
+IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 with a reasonable chart setup. Do NOT return empty topPicks unless truly nothing qualifies. Use lower confidence (60-70) for weaker setups.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
 
-Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than signal weak setups.`;
+Select 1-3 best setups. Use lower confidence scores (60-75) for weaker setups rather than skipping them entirely.`;
 }
 
 // GROK - Momentum Hunter (focuses on trend strength, breakouts, volume)
@@ -3850,22 +3850,21 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **ORDER BLOCK MOMENTUM**: Price breaking through order block with momentum = strong continuation signal
 6. **ICHIMOKU MOMENTUM**: STRONG_BULLISH or STRONG_BEARISH signals with TK cross = high momentum
 
-CRITICAL REQUIREMENTS (ALL must be met):
-- **ADX MUST BE >= 22** (Moderate+ trend required) - Skip coins with ADX < 22 (weak/no trend)
-- **SUPERTREND must confirm direction** (Supertrend UP = longs only, DOWN = shorts only)
-- ONLY trade with the trend (no counter-trend trades)
-- Market Structure must show UPTREND for longs, DOWNTREND for shorts
-- Volume must be INCREASING or STABLE (never DECREASING)
-- Prefer symbols with high 24h change (momentum already present)
-- Entry should be on pullback to VWAP or EMA20, not at extended levels
-- **Stochastic RSI**: K value should be in momentum zone (40-60) or just exiting oversold/overbought
+REQUIREMENTS (ranked by importance):
+- **ADX should be >= 15** (Higher = better momentum. Prefer >= 20, but 15+ is acceptable)
+- **SUPERTREND should confirm direction** (UP = longs only, DOWN = shorts only) — strong preference
+- Prefer trading with the trend (UPTREND for longs, DOWNTREND for shorts)
+- INCREASING or STABLE volume preferred, avoid DECREASING volume
+- Prefer symbols with higher 24h change (existing momentum)
+- Entry should be on pullback to VWAP or EMA20 when possible
+- **Stochastic RSI**: K value in momentum zone (40-60) or just exiting oversold/overbought
 
-⚠️ DO NOT SIGNAL ANY COIN WITH ADX < 22 - This is mandatory. No exceptions.
+IMPORTANT: You MUST return at least 1 signal if any coin shows momentum with ADX >= 15. Do NOT return empty topPicks unless truly nothing qualifies. Use lower confidence (60-70) for weaker setups.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
 
-Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than chase weak momentum.`;
+Select 1-3 best setups. Use lower confidence scores (60-75) for weaker setups rather than skipping them entirely.`;
 }
 
 // Legacy function for backwards compatibility
@@ -4046,12 +4045,21 @@ async function runAiAnalysis() {
     const apiPromises = [];
     if (isClaudeConfigured()) {
       apiPromises.push(callClaudeAPI(claudePrompt).then(r => ({ source: 'claude', response: r })));
+    } else {
+      console.warn('⚠️ Claude API key not configured — skipping Claude analysis');
+      updateAiDebugStatus('claude', 'error', 'No API key');
     }
     if (isGeminiConfigured()) {
       apiPromises.push(callGeminiAPI(openaiPrompt).then(r => ({ source: 'openai', response: r })));
+    } else {
+      console.warn('⚠️ Gemini API key not configured — skipping Gemini analysis. Add key in Settings.');
+      updateAiDebugStatus('openai', 'error', 'No API key');
     }
     if (isGrokConfigured()) {
       apiPromises.push(callGrokAPI(grokPrompt).then(r => ({ source: 'grok', response: r })));
+    } else {
+      console.warn('⚠️ Grok API key not configured — skipping Grok analysis. Add key in Settings.');
+      updateAiDebugStatus('grok', 'error', 'No API key');
     }
 
     const results = await Promise.allSettled(apiPromises);
@@ -4152,7 +4160,7 @@ async function runAiAnalysis() {
     }
     const allPicks = [
       ...claudePicks.map(p => ({ ...p, source: 'claude', aiModel: CONFIG.CLAUDE_MODEL })),
-      ...openaiPicks.map(p => ({ ...p, source: 'openai', aiModel: CONFIG.OPENAI_MODEL })),
+      ...openaiPicks.map(p => ({ ...p, source: 'openai', aiModel: CONFIG.GEMINI_MODEL })),
       ...grokPicks.map(p => ({ ...p, source: 'grok', aiModel: CONFIG.GROK_MODEL }))
     ].filter(pick => eligibleSources.includes(pick.source));
 
@@ -7279,12 +7287,19 @@ function renderAiDetailPanel(source) {
     wrEl.className = 'ai-stat-value ' + (shadowWinRate >= 50 ? 'positive' : shadowWinRate > 0 ? 'negative' : '');
   }
 
-  // Status
+  // Status - check if API key is configured
   const statusEl = document.getElementById(`${prefix}DetailStatus`);
   if (statusEl) {
-    const isOk = debug?.status === 'success' || debug?.status === 'idle';
-    statusEl.textContent = debug?.status === 'success' ? 'Active' : debug?.status === 'error' ? 'Error' : debug?.status || '--';
-    statusEl.className = 'ai-stat-value ' + (isOk ? 'status-ok' : 'status-error');
+    const isConfigured = source === 'claude' ? isClaudeConfigured() :
+                         source === 'openai' ? isGeminiConfigured() : isGrokConfigured();
+    if (!isConfigured) {
+      statusEl.textContent = 'No API Key';
+      statusEl.className = 'ai-stat-value status-error';
+    } else {
+      const isOk = debug?.status === 'success' || debug?.status === 'idle';
+      statusEl.textContent = debug?.status === 'success' ? 'Active' : debug?.status === 'error' ? 'Error' : debug?.status || 'Waiting...';
+      statusEl.className = 'ai-stat-value ' + (isOk ? 'status-ok' : 'status-error');
+    }
   }
 
   // Last signal time
@@ -7302,7 +7317,14 @@ function renderAiDetailPanel(source) {
   if (!container) return;
 
   if (signals.length === 0) {
-    container.innerHTML = '<div class="empty-state">No signals recorded yet. Signals appear after AI scanning runs.</div>';
+    const isConfigured = source === 'claude' ? isClaudeConfigured() :
+                         source === 'openai' ? isGeminiConfigured() : isGrokConfigured();
+    const aiName = source === 'claude' ? 'Claude' : source === 'openai' ? 'Gemini' : 'Grok';
+    if (!isConfigured) {
+      container.innerHTML = `<div class="empty-state">⚠️ ${aiName} API key not configured.<br>Go to Settings to add your ${aiName} API key.</div>`;
+    } else {
+      container.innerHTML = '<div class="empty-state">No signals recorded yet. Signals appear after AI scanning runs.</div>';
+    }
     return;
   }
 
@@ -7849,8 +7871,8 @@ function renderDebugPanel() {
         const configured = ai === 'claude' ? isClaudeConfigured() :
                           ai === 'openai' ? isOpenAIConfigured() : isGrokConfigured();
         const model = ai === 'claude' ? CONFIG.CLAUDE_MODEL :
-                      ai === 'openai' ? CONFIG.OPENAI_MODEL : CONFIG.GROK_MODEL;
-        const icon = ai === 'claude' ? '🧠' : ai === 'openai' ? '🤖' : '⚡';
+                      ai === 'openai' ? CONFIG.GEMINI_MODEL : CONFIG.GROK_MODEL;
+        const icon = ai === 'claude' ? '🧠' : ai === 'openai' ? '💎' : '⚡';
 
         return `
           <div class="debug-ai ${getStatusClass(d.status)} ${configured ? '' : 'not-configured'}">
