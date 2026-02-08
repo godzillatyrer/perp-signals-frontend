@@ -4468,24 +4468,33 @@ async function runAiAnalysis() {
         });
         state.aiPredictions = state.aiPredictions.slice(0, 50); // Keep last 50
 
-        // Log consensus signal for AI detail view
-        state.aiSignalLog.consensus.unshift({
-          symbol: signal.symbol,
-          direction: signal.direction,
-          entry: avgEntry,
-          tp: bestTP,
-          sl: safestSL,
-          confidence: boostedConf,
-          aiSources: [...aiSources],
-          isGold: isGoldConsensus,
-          reasoning: reasons.join(' | '),
-          marketRegime: regime,
-          timestamp: Date.now(),
-          tradeResult: null, // filled when trade closes
-          tradePnl: null
-        });
-        state.aiSignalLog.consensus = state.aiSignalLog.consensus.slice(0, 100);
-        saveAiSignalLog();
+        // Log consensus signal for AI detail view (skip if pending one already exists for same symbol+direction)
+        const hasPendingConsensus = state.aiSignalLog.consensus.some(s =>
+          s.symbol === signal.symbol &&
+          s.direction === signal.direction &&
+          !s.tradeResult
+        );
+        if (!hasPendingConsensus) {
+          state.aiSignalLog.consensus.unshift({
+            symbol: signal.symbol,
+            direction: signal.direction,
+            entry: avgEntry,
+            tp: bestTP,
+            sl: safestSL,
+            confidence: boostedConf,
+            aiSources: [...aiSources],
+            isGold: isGoldConsensus,
+            reasoning: reasons.join(' | '),
+            marketRegime: regime,
+            timestamp: Date.now(),
+            tradeResult: null, // filled when trade closes
+            tradePnl: null
+          });
+          state.aiSignalLog.consensus = state.aiSignalLog.consensus.slice(0, 100);
+          saveAiSignalLog();
+        } else {
+          console.log(`⏭️ Consensus: Skipping duplicate ${signal.symbol} ${signal.direction} — pending consensus exists`);
+        }
       }
     }
 
@@ -7110,6 +7119,18 @@ function renderAiPredictions() {
 
 function logAiSignal(source, pick) {
   if (!state.aiSignalLog[source]) return;
+
+  // Skip if there's already a PENDING signal for the same symbol+direction from this AI
+  const hasPending = state.aiSignalLog[source].some(s =>
+    s.symbol === pick.symbol &&
+    s.direction === pick.direction &&
+    s.shadowStatus === 'pending'
+  );
+  if (hasPending) {
+    console.log(`⏭️ ${source}: Skipping duplicate ${pick.symbol} ${pick.direction} — pending signal already exists`);
+    return;
+  }
+
   state.aiSignalLog[source].unshift({
     symbol: pick.symbol,
     direction: pick.direction,
@@ -7171,13 +7192,21 @@ async function loadAiSignalLogFromServer() {
       const localSigs = state.aiSignalLog[source] || [];
       // Create set of existing keys for dedup (timestamp + symbol)
       const localKeys = new Set(localSigs.map(s => `${s.timestamp}-${s.symbol}`));
+      // Track pending symbols+directions to prevent duplicate pending signals
+      const pendingKeys = new Set(localSigs
+        .filter(s => s.shadowStatus === 'pending' || !s.tradeResult)
+        .map(s => `${s.symbol}-${s.direction}`)
+      );
 
       for (const sig of serverSigs) {
         const key = `${sig.timestamp}-${sig.symbol}`;
-        if (!localKeys.has(key)) {
-          localSigs.push(sig);
-          merged = true;
-        }
+        if (localKeys.has(key)) continue; // exact duplicate
+        // Skip if there's already a pending signal for same symbol+direction
+        const pendingKey = `${sig.symbol}-${sig.direction}`;
+        if ((sig.shadowStatus === 'pending' || !sig.tradeResult) && pendingKeys.has(pendingKey)) continue;
+        localSigs.push(sig);
+        pendingKeys.add(pendingKey);
+        merged = true;
       }
 
       // Sort newest first, keep max 100

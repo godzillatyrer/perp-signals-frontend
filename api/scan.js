@@ -350,6 +350,17 @@ async function saveAiSignalLogToRedis(analyses, consensusSignals) {
         const normalized = normalizeSignal(sig);
         if (!normalized) continue;
 
+        // Skip if there's already a pending signal for same symbol+direction from this AI
+        const hasPending = log[source].some(s =>
+          s.symbol === normalized.symbol &&
+          s.direction === normalized.direction &&
+          s.shadowStatus === 'pending'
+        );
+        if (hasPending) {
+          console.log(`⏭️ ${source}: Skipping duplicate ${normalized.symbol} ${normalized.direction} — pending signal exists`);
+          continue;
+        }
+
         log[source].unshift({
           symbol: normalized.symbol,
           direction: normalized.direction,
@@ -371,6 +382,18 @@ async function saveAiSignalLogToRedis(analyses, consensusSignals) {
     // Add consensus signals
     for (const sig of consensusSignals) {
       if (!log.consensus) log.consensus = [];
+
+      // Skip if pending consensus already exists for same symbol+direction
+      const hasPendingConsensus = log.consensus.some(s =>
+        s.symbol === sig.symbol &&
+        s.direction === sig.direction &&
+        !s.tradeResult
+      );
+      if (hasPendingConsensus) {
+        console.log(`⏭️ consensus: Skipping duplicate ${sig.symbol} ${sig.direction} — pending consensus exists`);
+        continue;
+      }
+
       log.consensus.unshift({
         symbol: sig.symbol,
         direction: sig.direction,
