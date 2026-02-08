@@ -4261,22 +4261,24 @@ async function runAiAnalysis() {
         const avgEntry = matchingPicks.reduce((sum, p) => sum + p.entry, 0) / matchingPicks.length;
         let avgConf = matchingPicks.reduce((sum, p) => sum + p.confidence, 0) / matchingPicks.length;
 
-        // AI PERFORMANCE WEIGHTING - Weight by historical win rate
+        // AI PERFORMANCE WEIGHTING - Weight by shadow P&L win rate + Redis stats
         const stats = state.performanceStats;
         const getAiWeight = (source) => {
-          if (source === 'claude') {
-            const total = stats.claudeWins + stats.claudeLosses;
-            return total >= 3 ? (stats.claudeWins / total) : 0.5;
+          // Use shadow P&L data first (more data points)
+          const shadowSigs = state.aiSignalLog[source] || [];
+          const resolved = shadowSigs.filter(s => s.shadowStatus === 'win' || s.shadowStatus === 'loss');
+          if (resolved.length >= 5) {
+            const shadowWR = resolved.filter(s => s.shadowStatus === 'win').length / resolved.length;
+            return Math.max(0.3, Math.min(2.0, shadowWR * 2)); // 0% WR = 0.3, 50% = 1.0, 100% = 2.0
           }
-          if (source === 'openai') {
-            const total = stats.openaiWins + stats.openaiLosses;
-            return total >= 3 ? (stats.openaiWins / total) : 0.5;
+          // Fall back to Redis stats
+          const key = source === 'claude' ? 'claude' : source === 'openai' ? 'openai' : 'grok';
+          const total = (stats[`${key}Wins`] || 0) + (stats[`${key}Losses`] || 0);
+          if (total >= 3) {
+            const wr = stats[`${key}Wins`] / total;
+            return Math.max(0.3, Math.min(2.0, wr * 2));
           }
-          if (source === 'grok') {
-            const total = stats.grokWins + stats.grokLosses;
-            return total >= 3 ? (stats.grokWins / total) : 0.5;
-          }
-          return 0.5;
+          return 1.0; // Default equal weight
         };
 
         // Calculate weighted confidence
@@ -7257,8 +7259,8 @@ function updateShadowPnL() {
         }
       }
 
-      // Expire pending signals older than 48h as "expired"
-      if (sig.shadowStatus === 'pending' && Date.now() - sig.timestamp > 48 * 60 * 60 * 1000) {
+      // Expire pending signals older than 6h (stale entry prices)
+      if (sig.shadowStatus === 'pending' && Date.now() - sig.timestamp > 6 * 60 * 60 * 1000) {
         const priceDiff = isLong ? currentPrice - sig.entry : sig.entry - currentPrice;
         sig.shadowStatus = priceDiff > 0 ? 'win' : 'loss';
         sig.shadowPnl = (priceDiff / sig.entry * 100).toFixed(2);

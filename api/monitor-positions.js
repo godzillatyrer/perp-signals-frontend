@@ -12,6 +12,16 @@ const TRAIL_CONFIG = {
   gold:   { breakevenThreshold: 0.50, trailPercent: 1.5 }
 };
 
+// Partial Take Profit levels
+// TP1: Close 40% at 50% of target, move SL to breakeven
+// TP2: Close 30% at 75% of target
+// TP3: Close remaining 30% at full target (or trail)
+const PARTIAL_TP = {
+  tp1: { percent: 0.50, closeRatio: 0.40 },
+  tp2: { percent: 0.75, closeRatio: 0.30 },
+  tp3: { percent: 1.00, closeRatio: 0.30 }
+};
+
 let redis = null;
 
 function getRedis() {
@@ -87,18 +97,26 @@ async function sendTelegramMessage(message) {
 function formatTradeCloseMessage(trade, portfolioType, exitPrice, pnl, isTP) {
   const emoji = trade.isGoldConsensus ? '🥇' : '🥈';
   const resultEmoji = pnl > 0 ? '✅' : '❌';
-  const resultText = isTP ? 'TP HIT' : 'SL HIT';
+  const resultText = isTP ? 'FULL TP HIT' : (trade.isTrailing ? 'TRAIL SL HIT' : 'SL HIT');
   const pnlSign = pnl >= 0 ? '+' : '';
+
+  let partialInfo = '';
+  if (trade.tp1Hit || trade.tp2Hit) {
+    const parts = [];
+    if (trade.tp1Hit) parts.push('TP1 ✅');
+    if (trade.tp2Hit) parts.push('TP2 ✅');
+    if (trade.tp3Hit) parts.push('TP3 ✅');
+    partialInfo = `\n📊 Partial TPs: ${parts.join(' → ')}`;
+  }
 
   return `${emoji} <b>${portfolioType.toUpperCase()} PORTFOLIO - ${resultText}</b>
 
 ${resultEmoji} <b>${trade.symbol}</b> ${trade.direction}
 
 📊 Entry: $${trade.entry.toFixed(4)}
-📊 Exit: $${exitPrice.toFixed(4)}
-${isTP ? '🎯' : '🛑'} ${isTP ? 'Take Profit' : 'Stop Loss'}: $${(isTP ? trade.tp : trade.sl).toFixed(4)}
+📊 Exit: $${exitPrice.toFixed(4)}${partialInfo}
 
-💰 PnL: <b>${pnlSign}$${pnl.toFixed(2)}</b>
+💰 Total PnL: <b>${pnlSign}$${pnl.toFixed(2)}</b>
 📈 Position Size: $${trade.size.toFixed(2)}
 
 ⏰ Closed by: Backend Monitor
@@ -335,58 +353,110 @@ export default async function handler(request, response) {
         }
       }
 
-      // --- TP/SL Check (uses potentially updated SL) ---
-      let shouldClose = false;
-      let isTP = false;
+      // --- Partial TP + SL Check ---
       const currentSL = tradeInPortfolio.sl;
+      const remainingSize = tradeInPortfolio.remainingSize || tradeInPortfolio.size;
 
-      if (isLong) {
-        if (currentPrice >= trade.tp) {
-          shouldClose = true;
-          isTP = true;
-        } else if (currentPrice <= currentSL) {
-          shouldClose = true;
-          isTP = false;
-        }
-      } else {
-        if (currentPrice <= trade.tp) {
-          shouldClose = true;
-          isTP = true;
-        } else if (currentPrice >= currentSL) {
-          shouldClose = true;
-          isTP = false;
-        }
-      }
+      // Check SL first
+      const slHit = isLong ? currentPrice <= currentSL : currentPrice >= currentSL;
 
-      if (shouldClose) {
-        const exitPrice = isTP ? trade.tp : currentSL;
-        const priceDiff = isLong
-          ? exitPrice - trade.entry
-          : trade.entry - exitPrice;
-        const pnl = (priceDiff / trade.entry) * trade.size;
+      if (slHit) {
+        // Close entire remaining position at SL
+        const priceDiff = isLong ? currentSL - trade.entry : trade.entry - currentSL;
+        const pnl = (priceDiff / trade.entry) * remainingSize;
+        const totalPnl = (tradeInPortfolio.partialPnl || 0) + pnl;
 
         tradeInPortfolio.status = 'closed';
-        tradeInPortfolio.exitPrice = exitPrice;
-        tradeInPortfolio.pnl = pnl;
+        tradeInPortfolio.exitPrice = currentSL;
+        tradeInPortfolio.pnl = totalPnl;
         tradeInPortfolio.closeTimestamp = Date.now();
         tradeInPortfolio.closedBy = 'backend-monitor';
+        tradeInPortfolio.remainingSize = 0;
 
         portfolio.balance += pnl;
-        portfolio.equityHistory.push({
-          time: Date.now(),
-          value: portfolio.balance
-        });
+        portfolio.equityHistory.push({ time: Date.now(), value: portfolio.balance });
 
         closedTrades.push({
           trade: tradeInPortfolio,
           portfolioType: trade.portfolioType,
-          exitPrice,
-          pnl,
-          isTP
+          exitPrice: currentSL,
+          pnl: totalPnl,
+          isTP: false
         });
 
-        const closeType = isTP ? '🎯 TP' : (tradeInPortfolio.isTrailing ? '🔄 TRAIL SL' : '🛑 SL');
-        console.log(`${closeType} Closed ${trade.symbol} ${trade.direction} | PnL: $${pnl.toFixed(2)}`);
+        const closeType = tradeInPortfolio.isTrailing ? '🔄 TRAIL SL' : '🛑 SL';
+        console.log(`${closeType} Closed ${trade.symbol} ${trade.direction} | PnL: $${totalPnl.toFixed(2)}`);
+      } else {
+        // Check partial TP levels
+        const tpLevels = [
+          { key: 'tp1Hit', ...PARTIAL_TP.tp1 },
+          { key: 'tp2Hit', ...PARTIAL_TP.tp2 },
+          { key: 'tp3Hit', ...PARTIAL_TP.tp3 }
+        ];
+
+        for (const level of tpLevels) {
+          if (tradeInPortfolio[level.key]) continue; // Already hit this level
+
+          const tpPrice = isLong
+            ? trade.entry + tpDistance * level.percent
+            : trade.entry - tpDistance * level.percent;
+          const hit = isLong ? currentPrice >= tpPrice : currentPrice <= tpPrice;
+
+          if (hit) {
+            const closeSize = trade.size * level.closeRatio;
+            const priceDiff = isLong ? tpPrice - trade.entry : trade.entry - tpPrice;
+            const partialPnl = (priceDiff / trade.entry) * closeSize;
+
+            tradeInPortfolio[level.key] = true;
+            tradeInPortfolio.remainingSize = (tradeInPortfolio.remainingSize || trade.size) - closeSize;
+            tradeInPortfolio.partialPnl = (tradeInPortfolio.partialPnl || 0) + partialPnl;
+            portfolio.balance += partialPnl;
+            slAdjusted = true; // Mark as changed to trigger save
+
+            const tpLabel = level.key.toUpperCase().replace('HIT', '');
+            console.log(`🎯 ${tpLabel} HIT ${trade.symbol}: closed ${(level.closeRatio * 100)}% @ $${tpPrice.toFixed(4)} | +$${partialPnl.toFixed(2)}`);
+
+            // Move SL to breakeven after TP1
+            if (level.key === 'tp1Hit' && !tradeInPortfolio.originalSl) {
+              tradeInPortfolio.originalSl = tradeInPortfolio.sl;
+              tradeInPortfolio.sl = trade.entry;
+              console.log(`🔒 ${trade.symbol}: SL moved to BREAKEVEN after TP1`);
+            }
+
+            // Send Telegram for partial TP
+            const emoji = trade.isGoldConsensus ? '🥇' : '🥈';
+            const tpMsg = `${emoji} <b>PARTIAL ${tpLabel} HIT</b> — ${trade.symbol} ${trade.direction}\n\n` +
+              `🎯 Closed ${(level.closeRatio * 100)}% @ $${tpPrice.toFixed(4)}\n` +
+              `💰 Partial PnL: +$${partialPnl.toFixed(2)}\n` +
+              `📊 Remaining: ${((tradeInPortfolio.remainingSize / trade.size) * 100).toFixed(0)}%\n` +
+              (level.key === 'tp1Hit' ? `🔒 SL moved to BREAKEVEN` : `🛑 SL: $${tradeInPortfolio.sl.toFixed(4)}`);
+            await sendTelegramMessage(tpMsg);
+
+            // If TP3 hit (full target), close remaining position
+            if (level.key === 'tp3Hit') {
+              const totalPnl = tradeInPortfolio.partialPnl;
+              tradeInPortfolio.status = 'closed';
+              tradeInPortfolio.exitPrice = tpPrice;
+              tradeInPortfolio.pnl = totalPnl;
+              tradeInPortfolio.closeTimestamp = Date.now();
+              tradeInPortfolio.closedBy = 'backend-monitor';
+              tradeInPortfolio.remainingSize = 0;
+
+              portfolio.equityHistory.push({ time: Date.now(), value: portfolio.balance });
+
+              closedTrades.push({
+                trade: tradeInPortfolio,
+                portfolioType: trade.portfolioType,
+                exitPrice: tpPrice,
+                pnl: totalPnl,
+                isTP: true
+              });
+
+              console.log(`🎯 FULL TP Closed ${trade.symbol} ${trade.direction} | Total PnL: $${totalPnl.toFixed(2)}`);
+            }
+            break; // Only process one TP level per check
+          }
+        }
       }
     }
 
