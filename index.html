@@ -140,7 +140,7 @@
         </div>
         <div class="ai-badge openai" id="openaiBadge" style="display: none;">
           <svg class="ai-icon"><use href="#icon-sparkles"/></svg>
-          <span class="ai-name">GPT-4o</span>
+          <span class="ai-name">GPT-5.1</span>
           <span class="ai-status-dot"></span>
         </div>
         <div class="ai-badge grok" id="grokBadge" style="display: none;">
@@ -219,6 +219,16 @@
               <polyline points="17 6 23 6 23 12"/>
             </svg>
             Portfolio
+          </button>
+          <button class="nav-btn" data-view="ai">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93"/>
+              <path d="M8 6a4 4 0 0 1 8 0"/>
+              <path d="M12 18v4"/>
+              <rect x="4" y="10" width="16" height="8" rx="2"/>
+              <circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/>
+            </svg>
+            AI
           </button>
         </div>
         <div class="nav-center">
@@ -502,6 +512,172 @@
           </div>
         </div>
       </div>
+
+      <!-- AI ANALYSIS VIEW -->
+      <div class="view" id="view-ai">
+        <div class="ai-view-content">
+          <div class="ai-view-header">
+            <h2>AI Analysis</h2>
+            <span class="ai-view-subtitle" id="aiViewSubtitle">Individual AI signals &amp; shadow performance</span>
+          </div>
+
+          <!-- AI Tabs -->
+          <div class="ai-detail-tabs">
+            <button class="ai-detail-tab active" data-ai-tab="claude">
+              <span class="ai-tab-icon claude-icon">C</span>
+              <span class="ai-tab-name">Claude</span>
+              <span class="ai-tab-count" id="claudeTabCount">0</span>
+            </button>
+            <button class="ai-detail-tab" data-ai-tab="openai">
+              <span class="ai-tab-icon openai-icon">G</span>
+              <span class="ai-tab-name">GPT-5.1</span>
+              <span class="ai-tab-count" id="openaiTabCount">0</span>
+            </button>
+            <button class="ai-detail-tab" data-ai-tab="grok">
+              <span class="ai-tab-icon grok-icon">X</span>
+              <span class="ai-tab-name">Grok</span>
+              <span class="ai-tab-count" id="grokTabCount">0</span>
+            </button>
+            <button class="ai-detail-tab" data-ai-tab="consensus">
+              <span class="ai-tab-icon consensus-icon">*</span>
+              <span class="ai-tab-name">Consensus</span>
+              <span class="ai-tab-count" id="consensusTabCount">0</span>
+            </button>
+          </div>
+
+          <!-- Claude Tab -->
+          <div class="ai-tab-panel active" id="ai-panel-claude">
+            <div class="ai-panel-stats">
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Signals</span>
+                <span class="ai-stat-value" id="claudeDetailSignals">0</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Shadow Win Rate</span>
+                <span class="ai-stat-value" id="claudeDetailWinRate">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Shadow P&amp;L</span>
+                <span class="ai-stat-value" id="claudeDetailPnl">$0.00</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Avg Confidence</span>
+                <span class="ai-stat-value" id="claudeDetailConf">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Status</span>
+                <span class="ai-stat-value" id="claudeDetailStatus">--</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Last Signal</span>
+                <span class="ai-stat-value" id="claudeDetailLast">--</span>
+              </div>
+            </div>
+            <div class="ai-signal-log" id="claudeSignalLog">
+              <div class="empty-state">No signals recorded yet</div>
+            </div>
+          </div>
+
+          <!-- OpenAI Tab -->
+          <div class="ai-tab-panel" id="ai-panel-openai">
+            <div class="ai-panel-stats">
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Signals</span>
+                <span class="ai-stat-value" id="openaiDetailSignals">0</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Shadow Win Rate</span>
+                <span class="ai-stat-value" id="openaiDetailWinRate">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Shadow P&amp;L</span>
+                <span class="ai-stat-value" id="openaiDetailPnl">$0.00</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Avg Confidence</span>
+                <span class="ai-stat-value" id="openaiDetailConf">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Status</span>
+                <span class="ai-stat-value" id="openaiDetailStatus">--</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Last Signal</span>
+                <span class="ai-stat-value" id="openaiDetailLast">--</span>
+              </div>
+            </div>
+            <div class="ai-signal-log" id="openaiSignalLog">
+              <div class="empty-state">No signals recorded yet</div>
+            </div>
+          </div>
+
+          <!-- Grok Tab -->
+          <div class="ai-tab-panel" id="ai-panel-grok">
+            <div class="ai-panel-stats">
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Signals</span>
+                <span class="ai-stat-value" id="grokDetailSignals">0</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Shadow Win Rate</span>
+                <span class="ai-stat-value" id="grokDetailWinRate">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Shadow P&amp;L</span>
+                <span class="ai-stat-value" id="grokDetailPnl">$0.00</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Avg Confidence</span>
+                <span class="ai-stat-value" id="grokDetailConf">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Status</span>
+                <span class="ai-stat-value" id="grokDetailStatus">--</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Last Signal</span>
+                <span class="ai-stat-value" id="grokDetailLast">--</span>
+              </div>
+            </div>
+            <div class="ai-signal-log" id="grokSignalLog">
+              <div class="empty-state">No signals recorded yet</div>
+            </div>
+          </div>
+
+          <!-- Consensus Tab -->
+          <div class="ai-tab-panel" id="ai-panel-consensus">
+            <div class="ai-panel-stats">
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Gold Signals</span>
+                <span class="ai-stat-value" id="consensusGoldCount">0</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Silver Signals</span>
+                <span class="ai-stat-value" id="consensusSilverCount">0</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Gold Win Rate</span>
+                <span class="ai-stat-value" id="consensusGoldWR">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Silver Win Rate</span>
+                <span class="ai-stat-value" id="consensusSilverWR">--%</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Total P&amp;L</span>
+                <span class="ai-stat-value" id="consensusTotalPnl">$0.00</span>
+              </div>
+              <div class="ai-stat-box">
+                <span class="ai-stat-label">Best AI</span>
+                <span class="ai-stat-value" id="consensusBestAi">--</span>
+              </div>
+            </div>
+            <div class="ai-signal-log" id="consensusSignalLog">
+              <div class="empty-state">No consensus trades yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
 
     <!-- RIGHT PANEL — Watchlist + Signals -->
@@ -704,7 +880,7 @@
             <div class="perf-card openai-perf">
               <div class="perf-header">
                 <svg class="perf-icon" width="18" height="18"><use href="#icon-sparkles"/></svg>
-                <span class="perf-name">GPT-4o</span>
+                <span class="perf-name">GPT-5.1</span>
               </div>
               <div class="perf-stats">
                 <div class="perf-stat">
@@ -1038,6 +1214,10 @@
     <button class="mobile-nav-btn" data-view="growth">
       <span class="nav-icon">💼</span>
       <span class="nav-label">Portfolio</span>
+    </button>
+    <button class="mobile-nav-btn" data-view="ai">
+      <span class="nav-icon">🤖</span>
+      <span class="nav-label">AI</span>
     </button>
     <button class="mobile-nav-btn" data-view="watchlist">
       <span class="nav-icon">👁</span>

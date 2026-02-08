@@ -1017,6 +1017,12 @@ const state = {
     peakBalance: 2000
   },
   aiPredictions: [], // Track individual AI predictions for stats view
+  aiSignalLog: {
+    claude: [],   // { symbol, direction, entry, tp, sl, confidence, reasoning, timestamp, shadowStatus, shadowPnl }
+    openai: [],
+    grok: [],
+    consensus: [] // { symbol, direction, entry, tp, sl, confidence, aiSources, isGold, reasoning, timestamp, tradeResult, tradePnl }
+  },
   aiDebugStatus: {
     claude: { status: 'idle', lastCall: null, lastError: null, callCount: 0, successCount: 0 },
     openai: { status: 'idle', lastCall: null, lastError: null, callCount: 0, successCount: 0 },
@@ -4081,6 +4087,8 @@ async function runAiAnalysis() {
               // Track AI performance stats
               state.performanceStats.claudeSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.claudeTotalConf += p.confidence || 0; });
+              // Log individual signals for AI detail view
+              claudePicks.forEach(p => logAiSignal('claude', p));
             } else if (result.value.source === 'openai') {
               openaiAnalysis = analysis;
               if (analysis.topPicks) {
@@ -4096,9 +4104,10 @@ async function runAiAnalysis() {
                   }
                 });
               }
-              console.log('✅ GPT-4o analysis received:', analysis.topPicks?.length || 0, 'picks');
+              console.log('✅ GPT-5.1 analysis received:', analysis.topPicks?.length || 0, 'picks');
               state.performanceStats.openaiSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.openaiTotalConf += p.confidence || 0; });
+              openaiPicks.forEach(p => logAiSignal('openai', p));
             } else if (result.value.source === 'grok') {
               grokAnalysis = analysis;
               if (analysis.topPicks) {
@@ -4117,6 +4126,7 @@ async function runAiAnalysis() {
               console.log('✅ Grok analysis received:', analysis.topPicks?.length || 0, 'picks');
               state.performanceStats.grokSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.grokTotalConf += p.confidence || 0; });
+              grokPicks.forEach(p => logAiSignal('grok', p));
             }
           }
         } catch (parseError) {
@@ -4447,6 +4457,25 @@ async function runAiAnalysis() {
           status: 'pending'
         });
         state.aiPredictions = state.aiPredictions.slice(0, 50); // Keep last 50
+
+        // Log consensus signal for AI detail view
+        state.aiSignalLog.consensus.unshift({
+          symbol: signal.symbol,
+          direction: signal.direction,
+          entry: avgEntry,
+          tp: bestTP,
+          sl: safestSL,
+          confidence: boostedConf,
+          aiSources: [...aiSources],
+          isGold: isGoldConsensus,
+          reasoning: reasons.join(' | '),
+          marketRegime: regime,
+          timestamp: Date.now(),
+          tradeResult: null, // filled when trade closes
+          tradePnl: null
+        });
+        state.aiSignalLog.consensus = state.aiSignalLog.consensus.slice(0, 100);
+        saveAiSignalLog();
       }
     }
 
@@ -4460,6 +4489,9 @@ async function runAiAnalysis() {
     // This ensures individual AI signal counts are persisted
     syncAIStatsToRedis();
     localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+
+    // Refresh AI detail view after scan
+    renderAiDetailView();
 
     // Sort by gold consensus first, then silver, then confidence
     allSignals.sort((a, b) => {
@@ -4691,7 +4723,10 @@ async function executeAiTrades() {
       pnl: 0,
       isAiTrade: true,
       aiConfidence: signal.confidence,
-      aiReasoning: signal.reasons[0]
+      aiReasoning: signal.reasons[0],
+      aiSources: signal.aiSources || [],
+      isGoldConsensus: signal.isGoldConsensus || false,
+      isSilverConsensus: signal.isSilverConsensus || false
     };
 
     state.trades.push(trade);
@@ -5266,6 +5301,42 @@ function closeDualPortfolioTrade(portfolioType, trade, exitPrice) {
   portfolio.stats.totalTrades++;
   portfolio.stats.totalPnL += trade.pnl;
 
+  // UPDATE PER-AI WIN/LOSS STATS (fixes 0% win rate bug)
+  if (trade.aiSources && trade.aiSources.length > 0) {
+    for (const source of trade.aiSources) {
+      if (isWin) {
+        if (source === 'claude') state.performanceStats.claudeWins++;
+        else if (source === 'openai') state.performanceStats.openaiWins++;
+        else if (source === 'grok') state.performanceStats.grokWins++;
+      } else {
+        if (source === 'claude') state.performanceStats.claudeLosses++;
+        else if (source === 'openai') state.performanceStats.openaiLosses++;
+        else if (source === 'grok') state.performanceStats.grokLosses++;
+      }
+    }
+    if (trade.isGoldConsensus) {
+      if (isWin) state.performanceStats.goldConsensusWins++;
+      else state.performanceStats.goldConsensusLosses++;
+    } else if (trade.isSilverConsensus) {
+      if (isWin) state.performanceStats.silverConsensusWins++;
+      else state.performanceStats.silverConsensusLosses++;
+    }
+    localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
+    syncAIStatsToRedis();
+  }
+
+  // Update consensus trade log entry with result
+  const matchingLog = state.aiSignalLog.consensus.find(c =>
+    c.symbol === trade.symbol && c.direction === trade.direction && !c.tradeResult
+  );
+  if (matchingLog) {
+    matchingLog.tradeResult = isWin ? 'win' : 'loss';
+    matchingLog.tradePnl = trade.pnl;
+    matchingLog.exitPrice = exitPrice;
+    matchingLog.closedAt = Date.now();
+    saveAiSignalLog();
+  }
+
   const result = isWin ? '✅ WIN' : '❌ LOSS';
   console.log(`${trade.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: ${result} ${trade.symbol} | PnL: $${trade.pnl.toFixed(2)}`);
 
@@ -5274,6 +5345,8 @@ function closeDualPortfolioTrade(portfolioType, trade, exitPrice) {
   updateDualPortfolioStats(portfolioType);
   updateDualPortfolioEquityChart(portfolioType);
   updatePortfolioComparison();
+  renderStatsView();
+  renderAiDetailView();
 
   // Sync to backend
   syncDualPortfolioToBackend();
@@ -7022,6 +7095,328 @@ function renderAiPredictions() {
 }
 
 // ============================================
+// AI SIGNAL LOG & SHADOW P&L SYSTEM
+// ============================================
+
+function logAiSignal(source, pick) {
+  if (!state.aiSignalLog[source]) return;
+  state.aiSignalLog[source].unshift({
+    symbol: pick.symbol,
+    direction: pick.direction,
+    entry: pick.entry,
+    tp: pick.takeProfit || pick.tp,
+    sl: pick.stopLoss || pick.sl,
+    confidence: pick.confidence,
+    reasoning: pick.reasoning || '',
+    timestamp: Date.now(),
+    shadowStatus: 'pending', // pending, win, loss
+    shadowPnl: null
+  });
+  // Keep last 100 per AI
+  state.aiSignalLog[source] = state.aiSignalLog[source].slice(0, 100);
+  saveAiSignalLog();
+}
+
+function saveAiSignalLog() {
+  try {
+    localStorage.setItem('ai_signal_log', JSON.stringify(state.aiSignalLog));
+  } catch (e) {
+    // localStorage full, trim older entries
+    for (const key of ['claude', 'openai', 'grok', 'consensus']) {
+      state.aiSignalLog[key] = state.aiSignalLog[key].slice(0, 50);
+    }
+    try { localStorage.setItem('ai_signal_log', JSON.stringify(state.aiSignalLog)); } catch (e2) { /* ignore */ }
+  }
+}
+
+function loadAiSignalLog() {
+  try {
+    const saved = localStorage.getItem('ai_signal_log');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      state.aiSignalLog = {
+        claude: parsed.claude || [],
+        openai: parsed.openai || [],
+        grok: parsed.grok || [],
+        consensus: parsed.consensus || []
+      };
+    }
+  } catch (e) { /* ignore parse errors */ }
+}
+
+// Check shadow P&L for all pending individual AI signals
+function updateShadowPnL() {
+  let changed = false;
+  for (const source of ['claude', 'openai', 'grok']) {
+    for (const sig of state.aiSignalLog[source]) {
+      if (sig.shadowStatus !== 'pending') continue;
+
+      const currentPrice = state.priceCache[sig.symbol];
+      if (!currentPrice) continue;
+
+      const isLong = sig.direction === 'LONG';
+
+      if (isLong) {
+        if (currentPrice >= sig.tp) {
+          sig.shadowStatus = 'win';
+          sig.shadowPnl = ((sig.tp - sig.entry) / sig.entry * 100).toFixed(2);
+          changed = true;
+        } else if (currentPrice <= sig.sl) {
+          sig.shadowStatus = 'loss';
+          sig.shadowPnl = ((sig.sl - sig.entry) / sig.entry * 100).toFixed(2);
+          changed = true;
+        }
+      } else {
+        if (currentPrice <= sig.tp) {
+          sig.shadowStatus = 'win';
+          sig.shadowPnl = ((sig.entry - sig.tp) / sig.entry * 100).toFixed(2);
+          changed = true;
+        } else if (currentPrice >= sig.sl) {
+          sig.shadowStatus = 'loss';
+          sig.shadowPnl = ((sig.entry - sig.sl) / sig.entry * 100).toFixed(2);
+          changed = true;
+        }
+      }
+
+      // Expire pending signals older than 48h as "expired"
+      if (sig.shadowStatus === 'pending' && Date.now() - sig.timestamp > 48 * 60 * 60 * 1000) {
+        const priceDiff = isLong ? currentPrice - sig.entry : sig.entry - currentPrice;
+        sig.shadowStatus = priceDiff > 0 ? 'win' : 'loss';
+        sig.shadowPnl = (priceDiff / sig.entry * 100).toFixed(2);
+        changed = true;
+      }
+    }
+  }
+  if (changed) saveAiSignalLog();
+}
+
+// ============================================
+// AI DETAIL VIEW RENDER
+// ============================================
+
+function renderAiDetailView() {
+  renderAiDetailPanel('claude');
+  renderAiDetailPanel('openai');
+  renderAiDetailPanel('grok');
+  renderConsensusPanel();
+}
+
+function renderAiDetailPanel(source) {
+  const signals = state.aiSignalLog[source] || [];
+  const stats = state.performanceStats;
+  const debug = state.aiDebugStatus[source];
+
+  // Calculate shadow stats
+  const resolved = signals.filter(s => s.shadowStatus !== 'pending');
+  const wins = resolved.filter(s => s.shadowStatus === 'win');
+  const losses = resolved.filter(s => s.shadowStatus === 'loss');
+  const shadowWinRate = resolved.length > 0 ? Math.round(wins.length / resolved.length * 100) : 0;
+  const totalShadowPnl = resolved.reduce((sum, s) => sum + (parseFloat(s.shadowPnl) || 0), 0);
+  const avgConf = signals.length > 0
+    ? Math.round(signals.reduce((sum, s) => sum + (s.confidence || 0), 0) / signals.length)
+    : 0;
+
+  const updateEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  const prefix = source === 'openai' ? 'openai' : source;
+
+  updateEl(`${prefix}DetailSignals`, signals.length);
+  updateEl(`${prefix}DetailWinRate`, shadowWinRate + '%');
+  updateEl(`${prefix}DetailConf`, avgConf + '%');
+  updateEl(`${prefix}TabCount`, signals.length);
+
+  // Shadow P&L
+  const pnlEl = document.getElementById(`${prefix}DetailPnl`);
+  if (pnlEl) {
+    pnlEl.textContent = (totalShadowPnl >= 0 ? '+' : '') + totalShadowPnl.toFixed(2) + '%';
+    pnlEl.className = 'ai-stat-value ' + (totalShadowPnl >= 0 ? 'positive' : 'negative');
+  }
+
+  // Win rate color
+  const wrEl = document.getElementById(`${prefix}DetailWinRate`);
+  if (wrEl) {
+    wrEl.className = 'ai-stat-value ' + (shadowWinRate >= 50 ? 'positive' : shadowWinRate > 0 ? 'negative' : '');
+  }
+
+  // Status
+  const statusEl = document.getElementById(`${prefix}DetailStatus`);
+  if (statusEl) {
+    const isOk = debug?.status === 'success' || debug?.status === 'idle';
+    statusEl.textContent = debug?.status === 'success' ? 'Active' : debug?.status === 'error' ? 'Error' : debug?.status || '--';
+    statusEl.className = 'ai-stat-value ' + (isOk ? 'status-ok' : 'status-error');
+  }
+
+  // Last signal time
+  const lastEl = document.getElementById(`${prefix}DetailLast`);
+  if (lastEl && signals.length > 0) {
+    const ago = Date.now() - signals[0].timestamp;
+    if (ago < 60000) lastEl.textContent = '<1m ago';
+    else if (ago < 3600000) lastEl.textContent = Math.round(ago / 60000) + 'm ago';
+    else if (ago < 86400000) lastEl.textContent = Math.round(ago / 3600000) + 'h ago';
+    else lastEl.textContent = Math.round(ago / 86400000) + 'd ago';
+  }
+
+  // Render signal log
+  const container = document.getElementById(`${prefix}SignalLog`);
+  if (!container) return;
+
+  if (signals.length === 0) {
+    container.innerHTML = '<div class="empty-state">No signals recorded yet. Signals appear after AI scanning runs.</div>';
+    return;
+  }
+
+  container.innerHTML = signals.slice(0, 50).map(sig => {
+    const statusClass = sig.shadowStatus === 'win' ? 'shadow-win' : sig.shadowStatus === 'loss' ? 'shadow-loss' : 'shadow-pending';
+    const resultLabel = sig.shadowStatus === 'win' ? `+${sig.shadowPnl}%` : sig.shadowStatus === 'loss' ? `${sig.shadowPnl}%` : 'Pending';
+    const resultClass = sig.shadowStatus === 'win' ? 'win' : sig.shadowStatus === 'loss' ? 'loss' : 'pending';
+    const timeStr = new Date(sig.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    return `
+      <div class="ai-log-entry ${statusClass}">
+        <div class="ai-log-header">
+          <div>
+            <span class="ai-log-symbol">${sig.symbol.replace('USDT', '')}</span>
+            <span class="ai-log-dir ${sig.direction.toLowerCase()}">${sig.direction}</span>
+          </div>
+          <span class="ai-log-time">${timeStr}</span>
+        </div>
+        <div class="ai-log-levels">
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Entry</span>
+            <span class="ai-log-level-value">$${formatPrice(sig.entry)}</span>
+          </div>
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Target</span>
+            <span class="ai-log-level-value" style="color:var(--long)">$${formatPrice(sig.tp)}</span>
+          </div>
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Stop</span>
+            <span class="ai-log-level-value" style="color:var(--short)">$${formatPrice(sig.sl)}</span>
+          </div>
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">R:R</span>
+            <span class="ai-log-level-value">${(Math.abs(sig.tp - sig.entry) / Math.abs(sig.entry - sig.sl)).toFixed(1)}</span>
+          </div>
+        </div>
+        ${sig.reasoning ? `<div class="ai-log-reasoning">${sig.reasoning.length > 150 ? sig.reasoning.slice(0, 150) + '...' : sig.reasoning}</div>` : ''}
+        <div class="ai-log-footer">
+          <span class="ai-log-conf">Conf: ${sig.confidence}%</span>
+          <span class="ai-log-shadow-result ${resultClass}">${resultLabel}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderConsensusPanel() {
+  const signals = state.aiSignalLog.consensus || [];
+  const stats = state.performanceStats;
+
+  const gold = signals.filter(s => s.isGold);
+  const silver = signals.filter(s => !s.isGold);
+  const goldResolved = gold.filter(s => s.tradeResult);
+  const silverResolved = silver.filter(s => s.tradeResult);
+  const goldWR = goldResolved.length > 0 ? Math.round(goldResolved.filter(s => s.tradeResult === 'win').length / goldResolved.length * 100) : 0;
+  const silverWR = silverResolved.length > 0 ? Math.round(silverResolved.filter(s => s.tradeResult === 'win').length / silverResolved.length * 100) : 0;
+  const totalPnl = signals.reduce((sum, s) => sum + (s.tradePnl || 0), 0);
+
+  // Find best AI by shadow win rate
+  let bestAi = '--';
+  const aiWinRates = {};
+  for (const source of ['claude', 'openai', 'grok']) {
+    const sigs = state.aiSignalLog[source] || [];
+    const resolved = sigs.filter(s => s.shadowStatus !== 'pending');
+    if (resolved.length >= 3) {
+      aiWinRates[source] = Math.round(resolved.filter(s => s.shadowStatus === 'win').length / resolved.length * 100);
+    }
+  }
+  const best = Object.entries(aiWinRates).sort((a, b) => b[1] - a[1])[0];
+  if (best) bestAi = `${best[0].charAt(0).toUpperCase() + best[0].slice(1)} (${best[1]}%)`;
+
+  const updateEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  updateEl('consensusGoldCount', gold.length);
+  updateEl('consensusSilverCount', silver.length);
+  updateEl('consensusGoldWR', goldWR + '%');
+  updateEl('consensusSilverWR', silverWR + '%');
+  updateEl('consensusBestAi', bestAi);
+  updateEl('consensusTabCount', signals.length);
+
+  const pnlEl = document.getElementById('consensusTotalPnl');
+  if (pnlEl) {
+    pnlEl.textContent = '$' + (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2);
+    pnlEl.className = 'ai-stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+  }
+
+  const container = document.getElementById('consensusSignalLog');
+  if (!container) return;
+
+  if (signals.length === 0) {
+    container.innerHTML = '<div class="empty-state">No consensus trades yet. Trades appear when 2+ AIs agree.</div>';
+    return;
+  }
+
+  container.innerHTML = signals.slice(0, 50).map(sig => {
+    const statusClass = sig.tradeResult === 'win' ? 'shadow-win' : sig.tradeResult === 'loss' ? 'shadow-loss' : 'shadow-pending';
+    const resultLabel = sig.tradeResult === 'win' ? `+$${sig.tradePnl?.toFixed(2)}` : sig.tradeResult === 'loss' ? `-$${Math.abs(sig.tradePnl || 0).toFixed(2)}` : 'Open';
+    const resultClass = sig.tradeResult || 'pending';
+    const timeStr = new Date(sig.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    return `
+      <div class="ai-log-entry ${statusClass}">
+        <div class="ai-log-header">
+          <div>
+            <span class="ai-log-consensus-badge ${sig.isGold ? 'gold' : 'silver'}">${sig.isGold ? '3/3 GOLD' : '2/3 SILVER'}</span>
+            <span class="ai-log-symbol" style="margin-left:8px">${sig.symbol.replace('USDT', '')}</span>
+            <span class="ai-log-dir ${sig.direction.toLowerCase()}">${sig.direction}</span>
+          </div>
+          <span class="ai-log-time">${timeStr}</span>
+        </div>
+        <div class="ai-log-levels">
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Entry</span>
+            <span class="ai-log-level-value">$${formatPrice(sig.entry)}</span>
+          </div>
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Target</span>
+            <span class="ai-log-level-value" style="color:var(--long)">$${formatPrice(sig.tp)}</span>
+          </div>
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Stop</span>
+            <span class="ai-log-level-value" style="color:var(--short)">$${formatPrice(sig.sl)}</span>
+          </div>
+          <div class="ai-log-level">
+            <span class="ai-log-level-label">Conf</span>
+            <span class="ai-log-level-value">${sig.confidence}%</span>
+          </div>
+        </div>
+        <div class="ai-log-sources">
+          ${sig.aiSources.map(s => `<span class="ai-log-source-chip ${s}">${s === 'claude' ? 'Claude' : s === 'openai' ? 'GPT' : 'Grok'}</span>`).join('')}
+          ${sig.marketRegime ? `<span style="font-size:10px;color:var(--t4);margin-left:6px">${sig.marketRegime}</span>` : ''}
+        </div>
+        ${sig.reasoning ? `<div class="ai-log-reasoning" style="margin-top:6px">${sig.reasoning.length > 200 ? sig.reasoning.slice(0, 200) + '...' : sig.reasoning}</div>` : ''}
+        <div class="ai-log-footer" style="margin-top:6px">
+          <span class="ai-log-conf">${sig.tradeResult ? (sig.exitPrice ? 'Exit: $' + formatPrice(sig.exitPrice) : '') : ''}</span>
+          <span class="ai-log-shadow-result ${resultClass}">${resultLabel}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// AI Detail Tab Switching
+function initAiDetailTabs() {
+  document.querySelectorAll('.ai-detail-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const aiTab = tab.dataset.aiTab;
+      document.querySelectorAll('.ai-detail-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.ai-tab-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panel = document.getElementById(`ai-panel-${aiTab}`);
+      if (panel) panel.classList.add('active');
+    });
+  });
+}
+
+// ============================================
 // NEWS VIEW
 // ============================================
 
@@ -8079,6 +8474,7 @@ function initEventListeners() {
       if (viewEl) viewEl.classList.add('active');
       // Re-render signals when switching to signals view
       if (view === 'signals') renderSignalsMainView();
+      if (view === 'ai') renderAiDetailView();
       // Resize chart when switching back
       if (view === 'chart') {
         setTimeout(() => {
@@ -8131,6 +8527,7 @@ function initEventListeners() {
 
       // View-specific actions
       if (view === 'signals') renderSignalsMainView();
+      if (view === 'ai') renderAiDetailView();
       if (view === 'chart') {
         setTimeout(() => {
           if (state.chart) {
@@ -8740,6 +9137,7 @@ async function init() {
   loadTrades();
   await loadPerformanceStats();
   loadSignalHistory();
+  loadAiSignalLog();
 
   // Render loaded signal history immediately
   if (state.signalHistory.length > 0) {
@@ -8808,6 +9206,10 @@ async function init() {
   updatePortfolioComparison();
   console.log('💼 Dual Portfolio System initialized');
 
+  // Initialize AI Detail view
+  initAiDetailTabs();
+  renderAiDetailView();
+
   if (state.markets.length > 0) selectMarket(state.markets[0].symbol);
 
   initWebSocket();
@@ -8824,6 +9226,8 @@ async function init() {
   setInterval(updateOpenPositions, CONFIG.PNL_UPDATE_INTERVAL);
   setInterval(updateDualPortfolioPositions, CONFIG.PNL_UPDATE_INTERVAL); // Update dual portfolios
   setInterval(renderMarkets, 2000);
+  setInterval(updateShadowPnL, 5000); // Check shadow P&L for AI signal log every 5s
+  setInterval(renderAiDetailView, 30000); // Refresh AI detail view every 30s
 
   // Initialize AI scanning with 10-minute interval
   console.log('🤖 Sentient Trader v4.0 - Dual AI System');

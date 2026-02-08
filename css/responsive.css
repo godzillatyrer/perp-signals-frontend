@@ -164,6 +164,15 @@
   .pos-levels { grid-template-columns: repeat(2, 1fr); gap: 4px; }
   .pos-meta { gap: 8px; }
 
+  /* AI View mobile */
+  .ai-view-content { padding: 10px; gap: 10px; }
+  .ai-detail-tabs { flex-wrap: wrap; }
+  .ai-detail-tab { padding: 6px 8px; font-size: 11px; }
+  .ai-tab-name { display: none; }
+  .ai-panel-stats { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .ai-log-levels { grid-template-columns: repeat(2, 1fr); }
+  .ai-log-symbol { font-size: 13px; }
+
   /* Settings modal — full screen on mobile */
   .settings-panel {
     width: 100%;
