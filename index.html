@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Sentient Trader - AI Crypto Trading Intelligence</title>
-  <link rel="stylesheet" href="styles.css?v=4.1" />
+  <title>Sentient Trader</title>
+  <link rel="stylesheet" href="styles.css?v=5.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -15,7 +15,6 @@
   <!-- SVG Icon Definitions -->
   <svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
     <defs>
-      <!-- AI Model Icons -->
       <symbol id="icon-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M12 4.5c-1.5 0-2.7.6-3.6 1.5-.5.5-.9 1.1-1.2 1.8-.3-.1-.6-.2-.9-.2-1.7 0-3.3 1.4-3.3 3.2 0 .8.3 1.5.7 2.1-.4.5-.7 1.2-.7 2 0 1.8 1.5 3.2 3.3 3.2.5 0 .9-.1 1.3-.3.5 1.3 1.7 2.2 3.1 2.2h2.6c1.4 0 2.6-.9 3.1-2.2.4.2.8.3 1.3.3 1.8 0 3.3-1.4 3.3-3.2 0-.8-.3-1.5-.7-2 .4-.6.7-1.3.7-2.1 0-1.8-1.6-3.2-3.3-3.2-.3 0-.6.1-.9.2-.3-.7-.7-1.3-1.2-1.8-.9-.9-2.1-1.5-3.6-1.5z"/>
         <path d="M9 11.5c0-.8.7-1.5 1.5-1.5s1.5.7 1.5 1.5-.7 1.5-1.5 1.5-1.5-.7-1.5-1.5zm4.5 0c0-.8.7-1.5 1.5-1.5s1.5.7 1.5 1.5-.7 1.5-1.5 1.5-1.5-.7-1.5-1.5z"/>
@@ -36,7 +35,6 @@
         <path d="M10 17h4"/>
         <path d="M2 12h2m18 0h-2"/>
       </symbol>
-      <!-- Navigation & UI Icons -->
       <symbol id="icon-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M3 3v18h18"/>
         <path d="M7 14l4-4 4 4 5-5"/>
@@ -128,10 +126,10 @@
     <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
   </audio>
 
-  <!-- Signal Alert Notification -->
+  <!-- Notification Container -->
   <div class="notification-container" id="notificationContainer"></div>
 
-  <!-- HIGH CONFIDENCE ALERT BAR - AI POWERED -->
+  <!-- TOP TOOLBAR — Signal alerts bar -->
   <div class="alert-bar" id="alertBar">
     <div class="alert-bar-icon">
       <div class="ai-badges" id="aiActiveBadges">
@@ -162,72 +160,37 @@
     </div>
     <div class="ai-status">
       <div class="scan-label">
-        <svg width="14" height="14"><use href="#icon-clock"/></svg>
-        <span>Next Scan</span>
+        <svg width="12" height="12"><use href="#icon-clock"/></svg>
+        <span>Next</span>
       </div>
       <span class="next-scan" id="nextAiScan">--:--</span>
     </div>
   </div>
 
+  <!-- MAIN NAV — Tabs + Controls -->
   <div class="app-container">
-    <!-- LEFT SIDEBAR - Market List -->
-    <aside class="sidebar-left" id="sidebarLeft">
-      <!-- Toggle Button -->
-      <button class="sidebar-toggle" id="toggleLeftSidebar" title="Toggle sidebar">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
-      </button>
-
+    <!-- LEFT SIDEBAR (hidden - markets moved to right panel) -->
+    <aside class="sidebar-left" id="sidebarLeft" style="display:none">
+      <button class="sidebar-toggle" id="toggleLeftSidebar"></button>
       <div class="sidebar-header">
         <div class="brand">
-          <div class="logo">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-              <path d="M2 17l10 5 10-5"/>
-              <path d="M2 12l10 5 10-5"/>
-            </svg>
-          </div>
+          <div class="logo"></div>
           <div class="brand-text">
             <span class="brand-name">Sentient</span>
             <span class="brand-sub">Trader</span>
           </div>
-          <span class="version-badge">v2.1 Pro</span>
+          <span class="version-badge">v5</span>
         </div>
       </div>
-
       <div class="sidebar-section">
         <div class="section-header">
-          <span class="section-title">TOP 50 VOLUME</span>
+          <span class="section-title">MARKETS</span>
           <div class="tiered-alert">
             <span class="alert-dot pulse"></span>
-            Tiered Alerting Active
+            Active
           </div>
         </div>
-
-        <div class="market-list" id="marketList">
-          <!-- Skeleton loaders -->
-          <div class="skeleton-card" style="padding: 10px;">
-            <div class="skeleton skeleton-text short"></div>
-            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
-          </div>
-          <div class="skeleton-card" style="padding: 10px;">
-            <div class="skeleton skeleton-text short"></div>
-            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
-          </div>
-          <div class="skeleton-card" style="padding: 10px;">
-            <div class="skeleton skeleton-text short"></div>
-            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
-          </div>
-          <div class="skeleton-card" style="padding: 10px;">
-            <div class="skeleton skeleton-text short"></div>
-            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
-          </div>
-          <div class="skeleton-card" style="padding: 10px;">
-            <div class="skeleton skeleton-text short"></div>
-            <div class="skeleton skeleton-text medium" style="height: 10px;"></div>
-          </div>
-        </div>
+        <!-- Market list placeholder for JS compatibility -->
       </div>
     </aside>
 
@@ -236,18 +199,19 @@
       <!-- TOP NAV -->
       <nav class="main-nav">
         <div class="nav-left">
+          <span style="font-size:13px;font-weight:700;color:var(--tw);margin-right:8px;letter-spacing:-0.02em;">Sentient</span>
           <button class="nav-btn active" data-view="chart">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
             </svg>
             Chart
           </button>
           <button class="nav-btn" data-view="growth">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
               <polyline points="17 6 23 6 23 12"/>
             </svg>
-            Growth
+            Portfolio
           </button>
         </div>
         <div class="nav-center">
@@ -258,24 +222,24 @@
         </div>
         <div class="nav-right">
           <button class="icon-btn" id="notificationsBtn" title="Notifications">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
               <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
             </svg>
           </button>
           <button class="icon-btn" id="settingsBtn" title="Settings">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/>
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
           </button>
-          <button class="icon-btn debug-btn" id="debugBtn" title="AI Debug Panel">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="icon-btn debug-btn" id="debugBtn" title="Debug">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
             </svg>
           </button>
           <button class="icon-btn" id="refreshBtn" title="Force Scan">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="23 4 23 10 17 10"/>
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
             </svg>
@@ -286,7 +250,6 @@
       <!-- CHART VIEW -->
       <div class="view active" id="view-chart">
         <div class="chart-area chart-fullscreen">
-          <!-- Trading Chart - Full Screen -->
           <div class="chart-container">
             <div class="chart-header">
               <div class="chart-symbol">
@@ -302,12 +265,12 @@
                 <button class="tf-btn" data-tf="D">1D</button>
               </div>
               <div class="chart-tools">
-                <button class="tool-btn active" id="toggleSR" title="Support/Resistance">S/R</button>
+                <button class="tool-btn active" id="toggleSR" title="S/R">S/R</button>
                 <button class="tool-btn" id="toggleIndicators" title="Indicators">IND</button>
                 <button class="tool-btn" id="toggleVolume" title="Volume">VOL</button>
                 <span class="tool-divider"></span>
-                <button class="tool-btn draw-btn" id="drawHLine" title="Draw Horizontal Line">━</button>
-                <button class="tool-btn draw-btn" id="clearLines" title="Clear All Lines">✕</button>
+                <button class="tool-btn draw-btn" id="drawHLine" title="Horizontal Line">&#9473;</button>
+                <button class="tool-btn draw-btn" id="clearLines" title="Clear Lines">&#10005;</button>
               </div>
             </div>
             <div class="chart-body" id="tradingChart">
@@ -326,10 +289,9 @@
         </div>
       </div>
 
-      <!-- GROWTH VIEW - Dual Portfolio Simulator -->
+      <!-- GROWTH VIEW - Portfolio -->
       <div class="view" id="view-growth">
         <div class="growth-content">
-          <!-- Portfolio Strategy Tabs -->
           <div class="portfolio-strategy-tabs">
             <button class="strategy-tab active" data-strategy="silver">
               <span class="strategy-icon silver">2/3</span>
@@ -339,39 +301,38 @@
               <span class="strategy-icon gold">3/3</span>
               <span class="strategy-label">Gold Consensus</span>
             </button>
-            <button class="sync-btn" id="syncPortfolioBtn" title="Sync with server">
+            <button class="sync-btn" id="syncPortfolioBtn" title="Sync">
               <span class="sync-icon">&#x21BB;</span>
             </button>
           </div>
 
-          <!-- Silver Portfolio (2/3 Consensus) -->
+          <!-- Silver Portfolio -->
           <div class="portfolio-panel-growth portfolio-silver active" id="portfolio-silver">
             <div class="portfolio-header">
               <div class="portfolio-title">
                 <span class="portfolio-icon silver">$</span>
                 <div>
                   <h3>Silver Portfolio</h3>
-                  <span class="strategy-name">2/3 AI Consensus (10x Leverage, 5% Risk)</span>
+                  <span class="strategy-name">2/3 AI Consensus (10x, 5% Risk)</span>
                 </div>
               </div>
               <div class="portfolio-balance">
-                <span class="label">START BAL:</span>
+                <span class="label">START:</span>
                 <span class="value" id="startBalanceSilver">$5,000</span>
-                <button class="reset-balance-btn" id="resetBalanceSilverBtn" title="Reset to $5000">Reset</button>
+                <button class="reset-balance-btn" id="resetBalanceSilverBtn" title="Reset">Reset</button>
               </div>
             </div>
-
             <div class="portfolio-stats">
               <div class="stat-item">
                 <span class="stat-label">EQUITY</span>
                 <span class="stat-value accent" id="equityValueSilver">$5,000</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">UNREALIZED PNL</span>
+                <span class="stat-label">UNREALIZED</span>
                 <span class="stat-value" id="unrealizedPnlSilver">+0.00</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">MAX DRAWDOWN</span>
+                <span class="stat-label">DRAWDOWN</span>
                 <span class="stat-value" id="maxDrawdownSilver">0.0%</span>
               </div>
               <div class="stat-item">
@@ -383,17 +344,15 @@
                 <span class="stat-value" id="totalPnlSilver">$0.00</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">RETURN %</span>
+                <span class="stat-label">RETURN</span>
                 <span class="stat-value" id="returnPctSilver">0%</span>
               </div>
             </div>
-
             <div class="portfolio-tabs">
-              <button class="portfolio-tab active" data-tab="curve-silver">Performance Curve</button>
-              <button class="portfolio-tab" data-tab="positions-silver">Open Positions <span class="count" id="positionCountSilver">0</span></button>
-              <button class="portfolio-tab" data-tab="history-silver">Trade History <span class="count" id="historyCountSilver">0</span></button>
+              <button class="portfolio-tab active" data-tab="curve-silver">Performance</button>
+              <button class="portfolio-tab" data-tab="positions-silver">Positions <span class="count" id="positionCountSilver">0</span></button>
+              <button class="portfolio-tab" data-tab="history-silver">History <span class="count" id="historyCountSilver">0</span></button>
             </div>
-
             <div class="portfolio-content">
               <div class="tab-content active" id="tab-curve-silver">
                 <div class="equity-chart" id="equityChartSilver"></div>
@@ -411,34 +370,33 @@
             </div>
           </div>
 
-          <!-- Gold Portfolio (3/3 Consensus) -->
+          <!-- Gold Portfolio -->
           <div class="portfolio-panel-growth portfolio-gold" id="portfolio-gold">
             <div class="portfolio-header">
               <div class="portfolio-title">
                 <span class="portfolio-icon gold">$</span>
                 <div>
                   <h3>Gold Portfolio</h3>
-                  <span class="strategy-name">3/3 AI Consensus (15x Leverage, 8% Risk)</span>
+                  <span class="strategy-name">3/3 AI Consensus (15x, 8% Risk)</span>
                 </div>
               </div>
               <div class="portfolio-balance">
-                <span class="label">START BAL:</span>
+                <span class="label">START:</span>
                 <span class="value" id="startBalanceGold">$5,000</span>
-                <button class="reset-balance-btn" id="resetBalanceGoldBtn" title="Reset to $5000">Reset</button>
+                <button class="reset-balance-btn" id="resetBalanceGoldBtn" title="Reset">Reset</button>
               </div>
             </div>
-
             <div class="portfolio-stats">
               <div class="stat-item">
                 <span class="stat-label">EQUITY</span>
                 <span class="stat-value accent" id="equityValueGold">$5,000</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">UNREALIZED PNL</span>
+                <span class="stat-label">UNREALIZED</span>
                 <span class="stat-value" id="unrealizedPnlGold">+0.00</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">MAX DRAWDOWN</span>
+                <span class="stat-label">DRAWDOWN</span>
                 <span class="stat-value" id="maxDrawdownGold">0.0%</span>
               </div>
               <div class="stat-item">
@@ -450,17 +408,15 @@
                 <span class="stat-value" id="totalPnlGold">$0.00</span>
               </div>
               <div class="stat-item">
-                <span class="stat-label">RETURN %</span>
+                <span class="stat-label">RETURN</span>
                 <span class="stat-value" id="returnPctGold">0%</span>
               </div>
             </div>
-
             <div class="portfolio-tabs">
-              <button class="portfolio-tab active" data-tab="curve-gold">Performance Curve</button>
-              <button class="portfolio-tab" data-tab="positions-gold">Open Positions <span class="count" id="positionCountGold">0</span></button>
-              <button class="portfolio-tab" data-tab="history-gold">Trade History <span class="count" id="historyCountGold">0</span></button>
+              <button class="portfolio-tab active" data-tab="curve-gold">Performance</button>
+              <button class="portfolio-tab" data-tab="positions-gold">Positions <span class="count" id="positionCountGold">0</span></button>
+              <button class="portfolio-tab" data-tab="history-gold">History <span class="count" id="historyCountGold">0</span></button>
             </div>
-
             <div class="portfolio-content">
               <div class="tab-content active" id="tab-curve-gold">
                 <div class="equity-chart" id="equityChartGold"></div>
@@ -478,7 +434,6 @@
             </div>
           </div>
 
-          <!-- Performance Comparison -->
           <div class="portfolio-comparison">
             <h4>Strategy Comparison</h4>
             <div class="comparison-grid">
@@ -504,34 +459,63 @@
       </div>
     </main>
 
-    <!-- RIGHT SIDEBAR - Signals Panel -->
+    <!-- RIGHT PANEL — Watchlist + Signals -->
     <aside class="sidebar-right" id="sidebarRight">
-      <!-- Toggle Button -->
-      <button class="sidebar-toggle" id="toggleRightSidebar" title="Toggle signals panel">
+      <button class="sidebar-toggle" id="toggleRightSidebar" title="Toggle panel" style="display:none">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
       </button>
 
-      <!-- Collapsed state icons -->
       <div class="collapsed-icons">
-        <button class="collapsed-icon-btn active" data-expand-tab="new" title="New Signals">
-          <svg width="18" height="18"><use href="#icon-signal"/></svg>
+        <button class="collapsed-icon-btn active" data-expand-tab="new" title="Signals">
+          <svg width="16" height="16"><use href="#icon-signal"/></svg>
         </button>
-        <button class="collapsed-icon-btn" data-expand-tab="data" title="Market Data">
-          <svg width="18" height="18"><use href="#icon-droplet"/></svg>
+        <button class="collapsed-icon-btn" data-expand-tab="data" title="Data">
+          <svg width="16" height="16"><use href="#icon-droplet"/></svg>
         </button>
         <button class="collapsed-icon-btn" data-expand-tab="news" title="News">
-          <svg width="18" height="18"><use href="#icon-newspaper"/></svg>
+          <svg width="16" height="16"><use href="#icon-newspaper"/></svg>
         </button>
-        <button class="collapsed-icon-btn" data-expand-tab="stats" title="AI Stats">
-          <svg width="18" height="18"><use href="#icon-stats"/></svg>
+        <button class="collapsed-icon-btn" data-expand-tab="stats" title="Stats">
+          <svg width="16" height="16"><use href="#icon-stats"/></svg>
         </button>
       </div>
 
+      <!-- WATCHLIST SECTION -->
+      <div class="watchlist-section">
+        <div class="watchlist-header">
+          <span>Watchlist</span>
+          <span class="watchlist-count">50 coins</span>
+        </div>
+        <div class="watchlist-table-header">
+          <span>Symbol</span>
+          <span>Last</span>
+          <span>Chg</span>
+          <span>Chg%</span>
+        </div>
+        <div class="watchlist-scroll">
+          <div class="market-list" id="marketList">
+            <div class="skeleton-card" style="padding: 6px 8px;">
+              <div class="skeleton skeleton-text short"></div>
+              <div class="skeleton skeleton-text medium" style="height: 8px;"></div>
+            </div>
+            <div class="skeleton-card" style="padding: 6px 8px;">
+              <div class="skeleton skeleton-text short"></div>
+              <div class="skeleton skeleton-text medium" style="height: 8px;"></div>
+            </div>
+            <div class="skeleton-card" style="padding: 6px 8px;">
+              <div class="skeleton skeleton-text short"></div>
+              <div class="skeleton skeleton-text medium" style="height: 8px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MARKET BIAS -->
       <div class="market-bias-section">
         <div class="bias-header">
-          <span class="bias-label">MARKET BIAS</span>
+          <span class="bias-label">Market Bias</span>
           <span class="bias-value" id="marketBiasValue">Neutral (50%)</span>
         </div>
         <div class="bias-bar">
@@ -540,30 +524,31 @@
         </div>
       </div>
 
+      <!-- SIGNAL TABS -->
       <div class="signal-tabs">
         <button class="signal-tab active" data-signal-tab="new">
-          <svg width="14" height="14"><use href="#icon-zap"/></svg>
-          <span>NEW</span>
+          <svg width="12" height="12"><use href="#icon-zap"/></svg>
+          <span>Signals</span>
         </button>
         <button class="signal-tab" data-signal-tab="all">
-          <svg width="14" height="14"><use href="#icon-layers"/></svg>
-          <span>ALL</span>
+          <svg width="12" height="12"><use href="#icon-layers"/></svg>
+          <span>All</span>
         </button>
         <button class="signal-tab" data-signal-tab="data">
-          <svg width="14" height="14"><use href="#icon-droplet"/></svg>
-          <span>DATA</span>
+          <svg width="12" height="12"><use href="#icon-droplet"/></svg>
+          <span>Data</span>
         </button>
         <button class="signal-tab" data-signal-tab="news">
-          <svg width="14" height="14"><use href="#icon-newspaper"/></svg>
-          <span>NEWS</span>
+          <svg width="12" height="12"><use href="#icon-newspaper"/></svg>
+          <span>News</span>
         </button>
         <button class="signal-tab" data-signal-tab="calendar">
-          <svg width="14" height="14"><use href="#icon-calendar"/></svg>
-          <span>EVENTS</span>
+          <svg width="12" height="12"><use href="#icon-calendar"/></svg>
+          <span>Events</span>
         </button>
         <button class="signal-tab" data-signal-tab="stats">
-          <svg width="14" height="14"><use href="#icon-stats"/></svg>
-          <span>STATS</span>
+          <svg width="12" height="12"><use href="#icon-stats"/></svg>
+          <span>Stats</span>
         </button>
       </div>
 
@@ -574,12 +559,10 @@
           <button class="filter-btn" data-filter="longs">Longs</button>
           <button class="filter-btn" data-filter="shorts">Shorts</button>
         </div>
-
         <div class="signal-status-banner" id="signalStatusBanner" style="display: none;"></div>
-
         <div class="scan-status">
           <span class="scan-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/>
               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -587,7 +570,6 @@
           <span>Scanning <span id="scanProgress">0</span>/50</span>
           <span class="analyzed-count" id="analyzedCount">0 analyzed</span>
         </div>
-
         <div class="signals-list" id="signalsList">
           <div class="loading-state">
             <div class="spinner"></div>
@@ -596,70 +578,64 @@
         </div>
       </div>
 
-      <!-- Market Data View (Coinglass/Liquidations) -->
+      <!-- Data View -->
       <div class="sidebar-view" id="dataView">
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-droplet"/></svg>24H Liquidations</span>
-              <span class="data-subtitle">All Exchanges • L=Longs S=Shorts</span>
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-droplet"/></svg>24H Liquidations</span>
+              <span class="data-subtitle">All Exchanges</span>
             </div>
             <span class="data-update" id="liqDataUpdate">--</span>
           </div>
           <div class="data-legend">
-            <span class="legend-item"><span class="legend-badge bottom">BOTTOM</span> Longs rekt → Bullish reversal</span>
-            <span class="legend-item"><span class="legend-badge top">TOP</span> Shorts rekt → Bearish reversal</span>
+            <span class="legend-item"><span class="legend-badge bottom">BOTTOM</span> Longs rekt</span>
+            <span class="legend-item"><span class="legend-badge top">TOP</span> Shorts rekt</span>
           </div>
           <div class="liquidation-list" id="liquidationList">
             <div class="empty-state">
               <p>Configure Coinglass API in Settings</p>
-              <p class="hint">Get key at coinglass.com/api</p>
             </div>
           </div>
         </div>
-
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-users"/></svg>Long/Short Ratio</span>
-              <span class="data-subtitle">Based on 24H liquidation volume</span>
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-users"/></svg>Long/Short Ratio</span>
             </div>
           </div>
           <div class="ls-ratio-list" id="lsRatioList">
             <div class="empty-state">No data available</div>
           </div>
         </div>
-
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-activity"/></svg>Social Sentiment</span>
-              <span class="data-subtitle">LunarCrush Galaxy Score</span>
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-activity"/></svg>Social Sentiment</span>
             </div>
           </div>
           <div class="sentiment-list" id="sentimentList">
             <div class="empty-state">
               <p>Configure LunarCrush API in Settings</p>
-              <p class="hint">Get key at lunarcrush.com/developers</p>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- AI Performance Stats View -->
+      <!-- Stats View -->
       <div class="sidebar-view" id="statsView">
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-stats"/></svg>AI Performance Overview</span>
+            <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-stats"/></svg>AI Performance</span>
             <div class="export-buttons">
-              <button class="export-btn" id="exportCsvBtn" title="Export to CSV"><svg width="12" height="12"><use href="#icon-layers"/></svg>CSV</button>
-              <button class="export-btn" id="exportJsonBtn" title="Export to JSON"><svg width="12" height="12"><use href="#icon-layers"/></svg>JSON</button>
+              <button class="export-btn" id="exportCsvBtn" title="CSV">CSV</button>
+              <button class="export-btn" id="exportJsonBtn" title="JSON">JSON</button>
             </div>
           </div>
           <div class="ai-performance-summary" id="aiPerformanceSummary">
             <div class="perf-card claude-perf">
               <div class="perf-header">
-                <svg class="perf-icon" width="20" height="20"><use href="#icon-brain"/></svg>
+                <svg class="perf-icon" width="18" height="18"><use href="#icon-brain"/></svg>
                 <span class="perf-name">Claude</span>
               </div>
               <div class="perf-stats">
@@ -680,10 +656,9 @@
                 <div class="perf-bar claude-bar" id="claudePerfBar" style="width: 0%"></div>
               </div>
             </div>
-
             <div class="perf-card openai-perf">
               <div class="perf-header">
-                <svg class="perf-icon" width="20" height="20"><use href="#icon-sparkles"/></svg>
+                <svg class="perf-icon" width="18" height="18"><use href="#icon-sparkles"/></svg>
                 <span class="perf-name">GPT-4o</span>
               </div>
               <div class="perf-stats">
@@ -704,10 +679,9 @@
                 <div class="perf-bar openai-bar" id="openaiPerfBar" style="width: 0%"></div>
               </div>
             </div>
-
             <div class="perf-card grok-perf">
               <div class="perf-header">
-                <svg class="perf-icon" width="20" height="20"><use href="#icon-bolt"/></svg>
+                <svg class="perf-icon" width="18" height="18"><use href="#icon-bolt"/></svg>
                 <span class="perf-name">Grok</span>
               </div>
               <div class="perf-stats">
@@ -730,31 +704,29 @@
             </div>
           </div>
         </div>
-
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-target"/></svg>Consensus Performance</span>
+            <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-target"/></svg>Consensus</span>
           </div>
           <div class="consensus-stats" id="consensusStats">
             <div class="consensus-row">
-              <span class="consensus-type gold"><svg class="consensus-icon" width="14" height="14"><use href="#icon-crown"/></svg>3-AI Gold</span>
+              <span class="consensus-type gold"><svg class="consensus-icon" width="12" height="12"><use href="#icon-crown"/></svg>Gold</span>
               <span class="consensus-rate" id="goldConsensusRate">--%</span>
-              <span class="consensus-count" id="goldConsensusCount">0 signals</span>
+              <span class="consensus-count" id="goldConsensusCount">0</span>
             </div>
             <div class="consensus-row">
-              <span class="consensus-type silver"><svg class="consensus-icon" width="14" height="14"><use href="#icon-gem"/></svg>2-AI Match</span>
+              <span class="consensus-type silver"><svg class="consensus-icon" width="12" height="12"><use href="#icon-gem"/></svg>Silver</span>
               <span class="consensus-rate" id="silverConsensusRate">--%</span>
-              <span class="consensus-count" id="silverConsensusCount">0 signals</span>
+              <span class="consensus-count" id="silverConsensusCount">0</span>
             </div>
           </div>
         </div>
-
         <div class="data-section">
           <div class="data-header">
-            <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-trending"/></svg>Recent AI Predictions</span>
+            <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-trending"/></svg>Predictions</span>
           </div>
           <div class="ai-predictions-list" id="aiPredictionsList">
-            <div class="empty-state">No predictions recorded yet</div>
+            <div class="empty-state">No predictions yet</div>
           </div>
         </div>
       </div>
@@ -764,37 +736,31 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-newspaper"/></svg>Crypto News</span>
-              <span class="data-subtitle">Latest market-moving news</span>
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-newspaper"/></svg>Crypto News</span>
             </div>
-            <button class="refresh-btn" id="refreshNewsBtn" title="Refresh news">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <button class="refresh-btn" id="refreshNewsBtn" title="Refresh">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="23 4 23 10 17 10"/>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
               </svg>
             </button>
           </div>
-
-          <!-- High Priority News Section -->
           <div class="news-priority-section">
             <div class="priority-header">
-              <span class="priority-badge high"><svg width="12" height="12"><use href="#icon-fire"/></svg>HIGH IMPACT</span>
-              <span class="priority-desc">AI-analyzed market movers</span>
+              <span class="priority-badge high"><svg width="10" height="10"><use href="#icon-fire"/></svg>HIGH IMPACT</span>
             </div>
             <div class="news-priority-list" id="highPriorityNews">
-              <div class="empty-state">Analyzing news for high-impact events...</div>
+              <div class="empty-state">Analyzing...</div>
             </div>
           </div>
-
-          <!-- All News Section -->
           <div class="news-all-section">
             <div class="news-filter-bar">
               <button class="news-filter active" data-news-filter="all">All</button>
-              <button class="news-filter bullish-filter" data-news-filter="bullish"><svg width="10" height="10"><use href="#icon-arrow-up"/></svg>Bullish</button>
-              <button class="news-filter bearish-filter" data-news-filter="bearish"><svg width="10" height="10"><use href="#icon-arrow-down"/></svg>Bearish</button>
+              <button class="news-filter bullish-filter" data-news-filter="bullish"><svg width="10" height="10"><use href="#icon-arrow-up"/></svg>Bull</button>
+              <button class="news-filter bearish-filter" data-news-filter="bearish"><svg width="10" height="10"><use href="#icon-arrow-down"/></svg>Bear</button>
             </div>
             <div class="news-list" id="newsList">
-              <div class="empty-state">Loading crypto news...</div>
+              <div class="empty-state">Loading news...</div>
             </div>
           </div>
         </div>
@@ -805,41 +771,34 @@
         <div class="data-section">
           <div class="data-header">
             <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="16" height="16"><use href="#icon-calendar"/></svg>Economic Calendar</span>
-              <span class="data-subtitle">Major events that move markets</span>
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-calendar"/></svg>Economic Calendar</span>
             </div>
           </div>
-
-          <!-- Upcoming Events -->
           <div class="calendar-section">
             <div class="calendar-section-header">
-              <span class="calendar-badge upcoming"><svg width="12" height="12"><use href="#icon-clock"/></svg>UPCOMING</span>
+              <span class="calendar-badge upcoming"><svg width="10" height="10"><use href="#icon-clock"/></svg>UPCOMING</span>
             </div>
             <div class="calendar-list" id="upcomingEvents">
-              <div class="empty-state">Loading economic events...</div>
+              <div class="empty-state">Loading events...</div>
             </div>
           </div>
-
-          <!-- Event Types Legend -->
           <div class="calendar-legend">
             <div class="legend-row">
               <span class="event-type fomc">FOMC</span>
-              <span class="legend-text">Federal Reserve meetings - High volatility</span>
+              <span class="legend-text">Fed meetings</span>
             </div>
             <div class="legend-row">
               <span class="event-type cpi">CPI</span>
-              <span class="legend-text">Inflation data - Major price moves</span>
+              <span class="legend-text">Inflation data</span>
             </div>
             <div class="legend-row">
               <span class="event-type nfp">NFP</span>
-              <span class="legend-text">Jobs report - Market sentiment shift</span>
+              <span class="legend-text">Jobs report</span>
             </div>
           </div>
-
-          <!-- Past Events (Last 7 Days) -->
           <div class="calendar-section">
             <div class="calendar-section-header">
-              <span class="calendar-badge past"><svg width="12" height="12"><use href="#icon-check"/></svg>RECENT</span>
+              <span class="calendar-badge past"><svg width="10" height="10"><use href="#icon-check"/></svg>RECENT</span>
             </div>
             <div class="calendar-list" id="pastEvents">
               <div class="empty-state">No recent events</div>
@@ -851,7 +810,7 @@
       <div class="data-source">
         <span>Powered by</span>
         <span class="source-name" id="dataSourceName">Binance</span>
-        <span class="source-status" id="dataSourceStatus">● Live</span>
+        <span class="source-status" id="dataSourceStatus">Live</span>
       </div>
     </aside>
   </div>
@@ -866,78 +825,55 @@
       </div>
       <div class="settings-body">
         <div class="settings-section">
-          <h3>🤖 AI Services (Required)</h3>
-          <p class="settings-desc">At least one AI service is required for signal generation</p>
-
+          <h3>AI Services (Required)</h3>
+          <p class="settings-desc">At least one AI service needed for signals</p>
           <div class="api-input-group">
-            <label for="claudeApiKey">
-              <span class="api-icon">🧠</span>
-              Claude API Key
-            </label>
+            <label for="claudeApiKey"><span class="api-icon">C</span>Claude API Key</label>
             <div class="api-input-wrapper">
               <input type="password" id="claudeApiKey" placeholder="sk-ant-api03-..." autocomplete="off">
-              <button class="toggle-visibility" data-target="claudeApiKey">👁</button>
+              <button class="toggle-visibility" data-target="claudeApiKey">eye</button>
             </div>
             <span class="api-hint">Get key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></span>
           </div>
-
           <div class="api-input-group">
-            <label for="openaiApiKey">
-              <span class="api-icon">🤖</span>
-              OpenAI API Key
-            </label>
+            <label for="openaiApiKey"><span class="api-icon">O</span>OpenAI API Key</label>
             <div class="api-input-wrapper">
               <input type="password" id="openaiApiKey" placeholder="sk-proj-..." autocomplete="off">
-              <button class="toggle-visibility" data-target="openaiApiKey">👁</button>
+              <button class="toggle-visibility" data-target="openaiApiKey">eye</button>
             </div>
             <span class="api-hint">Get key at <a href="https://platform.openai.com" target="_blank">platform.openai.com</a></span>
           </div>
-
           <div class="api-input-group">
-            <label for="grokApiKey">
-              <span class="api-icon">⚡</span>
-              Grok API Key
-            </label>
+            <label for="grokApiKey"><span class="api-icon">G</span>Grok API Key</label>
             <div class="api-input-wrapper">
               <input type="password" id="grokApiKey" placeholder="xai-..." autocomplete="off">
-              <button class="toggle-visibility" data-target="grokApiKey">👁</button>
+              <button class="toggle-visibility" data-target="grokApiKey">eye</button>
             </div>
             <span class="api-hint">Get key at <a href="https://console.x.ai" target="_blank">console.x.ai</a></span>
           </div>
         </div>
-
         <div class="settings-section">
-          <h3>📊 Data Providers (Optional)</h3>
-          <p class="settings-desc">Enhance AI analysis with social sentiment and liquidation data</p>
-
+          <h3>Data Providers (Optional)</h3>
+          <p class="settings-desc">Enhance AI analysis with extra data</p>
           <div class="api-input-group">
-            <label for="lunarcrushApiKey">
-              <span class="api-icon">🌙</span>
-              LunarCrush API Key
-            </label>
+            <label for="lunarcrushApiKey"><span class="api-icon">L</span>LunarCrush API Key</label>
             <div class="api-input-wrapper">
-              <input type="password" id="lunarcrushApiKey" placeholder="Your LunarCrush API key..." autocomplete="off">
-              <button class="toggle-visibility" data-target="lunarcrushApiKey">👁</button>
+              <input type="password" id="lunarcrushApiKey" placeholder="Your LunarCrush key..." autocomplete="off">
+              <button class="toggle-visibility" data-target="lunarcrushApiKey">eye</button>
             </div>
-            <span class="api-hint">Social sentiment data - <a href="https://lunarcrush.com/developers" target="_blank">lunarcrush.com/developers</a></span>
+            <span class="api-hint"><a href="https://lunarcrush.com/developers" target="_blank">lunarcrush.com/developers</a></span>
           </div>
-
           <div class="api-input-group">
-            <label for="coinglassApiKey">
-              <span class="api-icon">💧</span>
-              Coinglass API Key
-            </label>
+            <label for="coinglassApiKey"><span class="api-icon">C</span>Coinglass API Key</label>
             <div class="api-input-wrapper">
-              <input type="password" id="coinglassApiKey" placeholder="Your Coinglass API key..." autocomplete="off">
-              <button class="toggle-visibility" data-target="coinglassApiKey">👁</button>
+              <input type="password" id="coinglassApiKey" placeholder="Your Coinglass key..." autocomplete="off">
+              <button class="toggle-visibility" data-target="coinglassApiKey">eye</button>
             </div>
-            <span class="api-hint">Liquidation & derivatives data - <a href="https://coinglass.com/api" target="_blank">coinglass.com/api</a></span>
+            <span class="api-hint"><a href="https://coinglass.com/api" target="_blank">coinglass.com/api</a></span>
           </div>
         </div>
-
         <div class="settings-section">
-          <h3>⚙️ Trading Settings</h3>
-
+          <h3>Trading Settings</h3>
           <div class="settings-row">
             <label>AI Auto-Trade</label>
             <label class="toggle-switch">
@@ -945,7 +881,6 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-
           <div class="settings-row">
             <label>Sound Alerts</label>
             <label class="toggle-switch">
@@ -953,7 +888,6 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-
           <div class="settings-row">
             <label>Browser Notifications</label>
             <label class="toggle-switch">
@@ -962,85 +896,60 @@
             </label>
           </div>
         </div>
-
         <div class="settings-section">
-          <h3>📱 Telegram Alerts</h3>
-          <p class="settings-desc">Get signal alerts directly to your Telegram</p>
-
+          <h3>Telegram Alerts</h3>
+          <p class="settings-desc">Get signal alerts to your Telegram</p>
           <div class="api-input-group">
-            <label for="telegramBotToken">
-              <span class="api-icon">🤖</span>
-              Bot Token
-            </label>
+            <label for="telegramBotToken"><span class="api-icon">T</span>Bot Token</label>
             <div class="api-input-wrapper">
               <input type="password" id="telegramBotToken" placeholder="123456789:ABCdefGHI..." autocomplete="off">
-              <button class="toggle-visibility" data-target="telegramBotToken">👁</button>
+              <button class="toggle-visibility" data-target="telegramBotToken">eye</button>
             </div>
-            <span class="api-hint">Create bot via <a href="https://t.me/BotFather" target="_blank">@BotFather</a> on Telegram</span>
           </div>
-
           <div class="api-input-group">
-            <label for="telegramChatId">
-              <span class="api-icon">💬</span>
-              Chat ID
-            </label>
+            <label for="telegramChatId"><span class="api-icon">C</span>Chat ID</label>
             <div class="api-input-wrapper">
-              <input type="text" id="telegramChatId" placeholder="Your chat ID or group ID..." autocomplete="off">
-              <button class="toggle-visibility" data-target="telegramChatId">👁</button>
+              <input type="text" id="telegramChatId" placeholder="Your chat ID..." autocomplete="off">
+              <button class="toggle-visibility" data-target="telegramChatId">eye</button>
             </div>
-            <span class="api-hint">Get via <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> or use group ID for groups</span>
           </div>
-
           <div class="settings-row">
-            <label>Enable Telegram Alerts</label>
+            <label>Enable Telegram</label>
             <label class="toggle-switch">
               <input type="checkbox" id="telegramToggle">
               <span class="toggle-slider"></span>
             </label>
           </div>
-
-          <button class="test-telegram-btn" id="testTelegramBtn">📤 Send Test Message</button>
+          <button class="test-telegram-btn" id="testTelegramBtn">Send Test Message</button>
         </div>
-
         <div class="settings-section">
-          <h3>⏱️ Signal Cooldown</h3>
-          <p class="settings-desc">Manage the 12-hour cooldown between signals for the same coin</p>
-
+          <h3>Signal Cooldown</h3>
+          <p class="settings-desc">12-hour cooldown between same-coin signals</p>
           <div class="cooldown-info" id="cooldownInfo">
-            <div class="muted">Loading cooldown status...</div>
+            <div class="muted">Loading...</div>
           </div>
-
-          <button class="test-telegram-btn danger-btn" id="clearAllCooldownsBtn">🗑️ Clear All Cooldowns</button>
-          <p class="settings-desc">This allows all coins to signal again immediately</p>
+          <button class="test-telegram-btn danger-btn" id="clearAllCooldownsBtn">Clear All Cooldowns</button>
         </div>
-
         <div class="settings-section">
-          <h3>🎮 Discord Call Tracking</h3>
-          <p class="settings-desc">Collect trading calls from Discord to enhance AI analysis</p>
-
+          <h3>Discord Integration</h3>
+          <p class="settings-desc">Collect trading calls from Discord</p>
           <div class="api-input-group">
-            <label for="discordWebhookUrl">
-              <span class="api-icon">🔗</span>
-              Webhook URL (Optional)
-            </label>
+            <label for="discordWebhookUrl"><span class="api-icon">D</span>Webhook URL</label>
             <div class="api-input-wrapper">
               <input type="password" id="discordWebhookUrl" placeholder="https://discord.com/api/webhooks/..." autocomplete="off">
-              <button class="toggle-visibility" data-target="discordWebhookUrl">👁</button>
+              <button class="toggle-visibility" data-target="discordWebhookUrl">eye</button>
             </div>
-            <span class="api-hint">For sending alerts back to Discord</span>
           </div>
-
           <div class="settings-row">
-            <label>Enable Discord Integration</label>
+            <label>Enable Discord</label>
             <label class="toggle-switch">
               <input type="checkbox" id="discordToggle">
               <span class="toggle-slider"></span>
             </label>
           </div>
-
           <div class="discord-stats" id="discordStats">
             <div class="discord-stat">
-              <span class="stat-label">Open Calls:</span>
+              <span class="stat-label">Open:</span>
               <span class="stat-value" id="discordOpenCalls">-</span>
             </div>
             <div class="discord-stat">
@@ -1048,53 +957,45 @@
               <span class="stat-value" id="discordWinRate">-</span>
             </div>
           </div>
-
-          <button class="test-telegram-btn" id="viewDiscordCallsBtn">📊 View Discord Calls</button>
-          <button class="test-telegram-btn" id="addDiscordCallBtn" style="margin-top: 8px;">➕ Add Manual Call</button>
+          <button class="test-telegram-btn" id="viewDiscordCallsBtn">View Discord Calls</button>
+          <button class="test-telegram-btn" id="addDiscordCallBtn" style="margin-top: 6px;">Add Manual Call</button>
         </div>
       </div>
       <div class="settings-footer">
         <div class="api-status" id="settingsApiStatus">
           <span class="status-indicator"></span>
-          <span class="status-text">Checking API status...</span>
+          <span class="status-text">Checking...</span>
         </div>
-        <button class="settings-save-btn" id="settingsSaveBtn">Save Settings</button>
+        <button class="settings-save-btn" id="settingsSaveBtn">Save</button>
       </div>
     </div>
   </div>
 
-  <!-- AI Debug Panel -->
+  <!-- Debug Panel -->
   <div class="debug-panel" id="debugPanel">
     <div class="debug-header">
-      <span class="debug-title">🔧 AI Debug Status</span>
-      <button class="debug-close" onclick="toggleDebugPanel()">×</button>
+      <span class="debug-title">AI Debug</span>
+      <button class="debug-close" onclick="toggleDebugPanel()">x</button>
     </div>
-    <div class="debug-body">
-      <!-- Populated by JavaScript -->
-    </div>
+    <div class="debug-body"></div>
   </div>
 
-  <!-- Mobile Bottom Navigation -->
+  <!-- Mobile Bottom Nav -->
   <nav class="mobile-nav" style="display: none;">
     <button class="mobile-nav-btn active" data-view="chart">
-      <span class="nav-icon">📈</span>
-      <span>Chart</span>
+      <span class="nav-icon">Chart</span>
     </button>
     <button class="mobile-nav-btn" data-view="signals">
-      <span class="nav-icon">🎯</span>
-      <span>Signals</span>
+      <span class="nav-icon">Signals</span>
     </button>
     <button class="mobile-nav-btn" data-view="data">
-      <span class="nav-icon">💧</span>
-      <span>Data</span>
+      <span class="nav-icon">Data</span>
     </button>
     <button class="mobile-nav-btn" data-view="portfolio">
-      <span class="nav-icon">💰</span>
-      <span>Portfolio</span>
+      <span class="nav-icon">Portfolio</span>
     </button>
     <button class="mobile-nav-btn" data-view="settings">
-      <span class="nav-icon">⚙️</span>
-      <span>Settings</span>
+      <span class="nav-icon">Settings</span>
     </button>
   </nav>
 

@@ -1,5 +1,5 @@
 /* ============================================
-   SENTIENT TRADER v4 — MOTION & RESPONSIVE
+   SENTIENT TRADER v5 — MOTION & RESPONSIVE
    Animations · Breakpoints · Mobile
    ============================================ */
 
@@ -8,7 +8,7 @@
 
 @keyframes breathe {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 0.4; transform: scale(0.85); }
 }
 
 @keyframes blink {
@@ -17,33 +17,33 @@
 }
 
 @keyframes signalAppear {
-  from { opacity: 0; transform: translateY(12px) scale(0.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes signalGlow {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 0 5px var(--pri-soft); }
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 3px var(--pri-soft); }
 }
 
 @keyframes goldShine {
-  0%, 100% { box-shadow: 0 0 10px var(--gold-soft); }
-  50% { box-shadow: 0 0 22px var(--gold-glow); }
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 12px var(--gold-soft); }
 }
 
 @keyframes notifIn {
-  from { transform: translateX(110%); opacity: 0; }
+  from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
 
 @keyframes notifOut {
   from { transform: translateX(0); opacity: 1; }
-  to { transform: translateX(110%); opacity: 0; }
+  to { transform: translateX(100%); opacity: 0; }
 }
 
 @keyframes modalIn {
-  from { opacity: 0; transform: scale(0.95) translateY(10px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 @keyframes shimmer {
@@ -63,9 +63,9 @@
 @keyframes shine { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 @keyframes status-ring { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(2.5); opacity: 0; } }
-@keyframes newSignalPulse { 0%, 100% { box-shadow: 0 0 0 transparent; } 50% { box-shadow: 0 0 0 5px var(--pri-soft); } }
-@keyframes badgeGlow { 0%, 100% { box-shadow: 0 0 0 transparent; } 50% { box-shadow: 0 0 14px var(--gold-glow); } }
-@keyframes gold-glow { 0%, 100% { box-shadow: 0 0 10px var(--gold-soft); } 50% { box-shadow: 0 0 22px var(--gold-glow); } }
+@keyframes newSignalPulse { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 3px var(--pri-soft); } }
+@keyframes badgeGlow { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 8px var(--gold-glow); } }
+@keyframes gold-glow { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 12px var(--gold-glow); } }
 @keyframes consensus-glow { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
@@ -73,75 +73,65 @@
 @keyframes statusPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 @keyframes drawing-mode { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @keyframes logoGradient { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-@keyframes fairPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes fairPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
 @keyframes clockPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-@keyframes firePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+@keyframes firePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
 
 /* ===== BREAKPOINTS ===== */
 
-@media (max-width: 1600px) {
-  :root { --right-w: 370px; }
-}
-
 @media (max-width: 1400px) {
-  :root { --right-w: 340px; --left-w: 180px; }
+  :root { --right-w: 310px; }
 }
 
 @media (max-width: 1200px) {
-  .sidebar-left { width: var(--left-w-mini); min-width: var(--left-w-mini); }
-  .sidebar-left .brand-text, .sidebar-left .version-badge,
-  .sidebar-left .section-header, .sidebar-left .tiered-alert,
-  .sidebar-left .market-meta, .sidebar-left .market-volume { display: none; }
-  .sidebar-left .market-item { justify-content: center; padding: 7px 2px; }
-  .sidebar-left .market-symbol { font-size: 10px; }
+  :root { --right-w: 280px; }
+  .signal-levels { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 1024px) {
-  .sidebar-left { display: none; }
+  .sidebar-right { display: none; }
   .portfolio-stats { grid-template-columns: repeat(2, 1fr); }
   .signal-levels { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 768px) {
-  :root { --bar-h: 0px; --nav-h: 42px; }
+  :root { --toolbar-h: 0px; }
   .alert-bar { display: none; }
 
-  .app-container { flex-direction: column; height: calc(100vh - 80px); }
-  .sidebar-left { display: none; }
-
+  .app-container { flex-direction: column; height: calc(100vh - 60px); }
   .sidebar-right {
-    position: fixed; bottom: 80px; left: 0; right: 0; top: auto;
-    width: 100% !important; min-width: 100% !important;
-    max-height: 60vh;
-    border-left: none; border-top: 1px solid var(--edge-subtle);
-    border-radius: var(--r-2xl) var(--r-2xl) 0 0;
-    transform: translateY(100%);
-    transition: transform var(--flow) var(--ease);
-    z-index: 200;
-    box-shadow: var(--sh-up);
+    display: none;
   }
-  .sidebar-right.mobile-active { transform: translateY(0); }
-  .sidebar-right .sidebar-toggle, .sidebar-right .collapsed-icons { display: none; }
 
-  .chart-header { flex-wrap: wrap; padding: 6px 10px; gap: 6px; }
+  .chart-header { flex-wrap: wrap; padding: 4px 8px; gap: 4px; height: auto; }
   .chart-symbol { width: 100%; }
 
-  .growth-content { padding: 12px; }
+  .growth-content { padding: 10px; }
   .portfolio-stats { grid-template-columns: repeat(2, 1fr); }
 
   .settings-panel { width: 100%; max-width: 100%; max-height: 100vh; border-radius: 0; }
-  .notification-container { right: 8px; left: 8px; max-width: none; }
-  .debug-panel { width: calc(100% - 16px); right: 8px; bottom: 88px; }
+  .notification-container { right: 6px; left: 6px; max-width: none; }
+  .debug-panel { width: calc(100% - 12px); right: 6px; bottom: 68px; }
 
   .mobile-nav {
     display: flex !important;
     position: fixed; bottom: 0; left: 0; right: 0;
-    height: 80px;
-    padding: 4px 6px calc(env(safe-area-inset-bottom, 6px) + 4px);
-    background: var(--deep);
+    height: 60px;
+    padding: 4px 4px calc(env(safe-area-inset-bottom, 4px) + 2px);
+    background: var(--tv-bg-secondary);
     border-top: 1px solid var(--edge);
     z-index: 300; gap: 2px;
     align-items: flex-start; justify-content: space-around;
+  }
+
+  .sidebar-right.mobile-active {
+    display: flex;
+    position: fixed; bottom: 60px; left: 0; right: 0; top: auto;
+    width: 100% !important; min-width: 100% !important;
+    max-height: 55vh;
+    border-left: none; border-top: 1px solid var(--edge);
+    z-index: 200;
+    box-shadow: var(--sh-up);
   }
 }
 
@@ -156,15 +146,15 @@
 
 .mobile-nav-btn {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 6px 14px; border-radius: var(--r);
-  font-size: 10px; font-weight: 700; color: var(--t3);
-  transition: all var(--quick) var(--ease);
-  min-width: 52px;
+  padding: 4px 10px; border-radius: var(--r-sm);
+  font-size: 9px; font-weight: 600; color: var(--t3);
+  transition: color var(--quick);
+  min-width: 48px;
 }
-.mobile-nav-btn .nav-icon { font-size: 20px; line-height: 1; }
+.mobile-nav-btn .nav-icon { font-size: 18px; line-height: 1; }
 .mobile-nav-btn:hover { color: var(--t1); }
 .mobile-nav-btn.active {
-  color: var(--pri-hover); background: var(--pri-soft);
+  color: var(--pri);
 }
 
 /* ===== UTILS ===== */
