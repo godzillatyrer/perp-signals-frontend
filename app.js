@@ -8584,7 +8584,10 @@ function initEventListeners() {
       if (viewEl) viewEl.classList.add('active');
       // Re-render signals when switching to signals view
       if (view === 'signals') renderSignalsMainView();
-      if (view === 'ai') renderAiDetailView();
+      if (view === 'ai') {
+        renderAiDetailView();
+        loadAiSignalLogFromServer(); // Fetch latest signals immediately
+      }
       // Resize chart when switching back
       if (view === 'chart') {
         setTimeout(() => {
@@ -8637,7 +8640,10 @@ function initEventListeners() {
 
       // View-specific actions
       if (view === 'signals') renderSignalsMainView();
-      if (view === 'ai') renderAiDetailView();
+      if (view === 'ai') {
+        renderAiDetailView();
+        loadAiSignalLogFromServer();
+      }
       if (view === 'chart') {
         setTimeout(() => {
           if (state.chart) {
@@ -9340,6 +9346,7 @@ async function init() {
   setInterval(updateShadowPnL, 5000); // Check shadow P&L for AI signal log every 5s
   setInterval(renderAiDetailView, 30000); // Refresh AI detail view every 30s
   setInterval(loadAiSignalLogFromServer, 120000); // Sync AI signal log from server every 2 min
+  setInterval(loadPerformanceStatsFromRedis, 120000); // Refresh sidebar AI stats from server every 2 min
   setInterval(loadOptimizerStatus, 600000); // Refresh optimizer status every 10 min
 
   // Initialize AI scanning with 10-minute interval
