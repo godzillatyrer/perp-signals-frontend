@@ -1088,3 +1088,81 @@
 .ai-log-source-chip.claude { background: rgba(168,85,247,0.15); color: #a855f7; }
 .ai-log-source-chip.openai { background: rgba(16,163,127,0.15); color: #10a37f; }
 .ai-log-source-chip.grok { background: rgba(249,115,22,0.15); color: #f97316; }
+
+/* ===== SELF-LEARNING OPTIMIZER ===== */
+.optimizer-section {
+  background: var(--tv-bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.optimizer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.optimizer-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--t1);
+  letter-spacing: 0.3px;
+}
+.optimizer-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.05);
+  color: var(--t3);
+}
+.optimizer-status.active { background: rgba(38,166,154,0.15); color: var(--long); }
+.optimizer-status.waiting { background: rgba(234,179,8,0.15); color: #eab308; }
+.optimizer-status.paused { background: rgba(239,83,80,0.15); color: var(--short); }
+
+.optimizer-params {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.opt-param {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--tv-raised);
+  border-radius: var(--r-sm);
+}
+.opt-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--t4);
+  letter-spacing: 0.3px;
+}
+.opt-value {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--t1);
+}
+.opt-value.changed { color: #eab308; }
+
+.optimizer-changes {
+  padding: 8px;
+  background: var(--tv-raised);
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  color: var(--t3);
+  line-height: 1.5;
+}
+.opt-changes-label { color: var(--t4); font-size: 10px; }
+.opt-change-item {
+  padding: 2px 0;
+  color: var(--t2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.opt-change-item::before { content: '→ '; color: #eab308; }

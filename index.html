@@ -672,6 +672,43 @@
                 <span class="ai-stat-value" id="consensusBestAi">--</span>
               </div>
             </div>
+            <!-- Self-Learning Optimizer Status -->
+            <div class="optimizer-section" id="optimizerSection">
+              <div class="optimizer-header">
+                <span class="optimizer-title">Self-Learning Optimizer</span>
+                <span class="optimizer-status" id="optimizerStatus">Loading...</span>
+              </div>
+              <div class="optimizer-params" id="optimizerParams">
+                <div class="opt-param">
+                  <span class="opt-label">Min Confidence</span>
+                  <span class="opt-value" id="optConfidence">75</span>
+                </div>
+                <div class="opt-param">
+                  <span class="opt-label">Min R:R</span>
+                  <span class="opt-value" id="optRR">2.0</span>
+                </div>
+                <div class="opt-param">
+                  <span class="opt-label">Min ADX</span>
+                  <span class="opt-value" id="optADX">15</span>
+                </div>
+                <div class="opt-param">
+                  <span class="opt-label">Claude Weight</span>
+                  <span class="opt-value" id="optClaudeW">1.0</span>
+                </div>
+                <div class="opt-param">
+                  <span class="opt-label">GPT Weight</span>
+                  <span class="opt-value" id="optOpenaiW">1.0</span>
+                </div>
+                <div class="opt-param">
+                  <span class="opt-label">Grok Weight</span>
+                  <span class="opt-value" id="optGrokW">1.0</span>
+                </div>
+              </div>
+              <div class="optimizer-changes" id="optimizerChanges">
+                <span class="opt-changes-label">Needs 10+ closed trades to start optimizing.</span>
+              </div>
+            </div>
+
             <div class="ai-signal-log" id="consensusSignalLog">
               <div class="empty-state">No consensus trades yet</div>
             </div>
