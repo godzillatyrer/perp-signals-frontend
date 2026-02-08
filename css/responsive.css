@@ -157,6 +157,13 @@
   .comparison-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
   .position-item, .history-item { padding: 8px 10px; font-size: 11px; flex-wrap: wrap; gap: 4px; }
 
+  /* Position cards mobile */
+  .position-card { padding: 10px 12px; }
+  .pos-symbol { font-size: 14px; }
+  .pos-pnl-value { font-size: 15px; }
+  .pos-levels { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .pos-meta { gap: 8px; }
+
   /* Settings modal — full screen on mobile */
   .settings-panel {
     width: 100%;

@@ -5353,15 +5353,69 @@ function renderDualPortfolioPositions(portfolioType) {
   container.innerHTML = openTrades.map(t => {
     const currentPrice = state.priceCache[t.symbol] || t.entry;
     const pnlPct = (t.pnl / t.size * 100).toFixed(2);
+    const isLong = t.direction === 'LONG';
+
+    // Progress: 0% = at entry, 100% = at TP, negative = toward SL
+    const tpDist = Math.abs(t.tp - t.entry);
+    const progress = tpDist > 0 ? ((isLong ? currentPrice - t.entry : t.entry - currentPrice) / tpDist * 100) : 0;
+    const progressClamped = Math.max(-100, Math.min(100, progress));
+    const progressColor = progressClamped >= 0 ? 'var(--long)' : 'var(--short)';
+    const progressWidth = Math.abs(progressClamped);
+
+    // Risk:Reward
+    const risk = Math.abs(t.entry - t.sl);
+    const reward = Math.abs(t.tp - t.entry);
+    const rr = risk > 0 ? (reward / risk).toFixed(1) : '—';
+
+    // Time open
+    const elapsed = Date.now() - (t.timestamp || Date.now());
+    const hours = Math.floor(elapsed / 3600000);
+    const mins = Math.floor((elapsed % 3600000) / 60000);
+    const timeOpen = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+    // AI sources
+    const aiList = (t.aiSources || []).map(s => {
+      if (s === 'claude') return '<span class="ai-src claude">C</span>';
+      if (s === 'openai') return '<span class="ai-src openai">G</span>';
+      if (s === 'grok') return '<span class="ai-src grok">X</span>';
+      return '';
+    }).join('');
+
+    // Trailing/breakeven indicator
+    const trailBadge = t.isTrailing ? '<span class="trail-badge">TRAILING</span>' :
+                       (t.originalSl ? '<span class="be-badge">BE</span>' : '');
 
     return `
-      <div class="position-item">
-        <span class="symbol">${t.symbol.replace('USDT', '')} <span class="ai-trade-badge">${t.isGoldConsensus ? '🥇' : '🥈'}</span></span>
-        <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
-        <span class="entry">$${formatPrice(t.entry)}</span>
-        <span class="current">$${formatPrice(currentPrice)}</span>
-        <span class="pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
-        <span class="pnl-pct ${t.pnl >= 0 ? 'positive' : 'negative'}">${pnlPct}%</span>
+      <div class="position-card ${t.pnl >= 0 ? 'positive' : 'negative'}">
+        <div class="pos-header">
+          <div class="pos-symbol-row">
+            <span class="pos-symbol">${t.symbol.replace('USDT', '')}</span>
+            <span class="pos-dir ${t.direction.toLowerCase()}">${t.direction}</span>
+            <span class="pos-consensus">${t.isGoldConsensus ? '🥇' : '🥈'}</span>
+            ${trailBadge}
+          </div>
+          <div class="pos-pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">
+            <span class="pos-pnl-value">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
+            <span class="pos-pnl-pct">${pnlPct}%</span>
+          </div>
+        </div>
+        <div class="pos-progress-bar">
+          <div class="pos-progress-fill" style="width: ${progressWidth}%; background: ${progressColor};"></div>
+          <span class="pos-progress-label">${progressClamped >= 0 ? '+' : ''}${progressClamped.toFixed(0)}% to TP</span>
+        </div>
+        <div class="pos-levels">
+          <div class="pos-level"><span class="pos-level-label">Entry</span><span class="pos-level-value">$${formatPrice(t.entry)}</span></div>
+          <div class="pos-level"><span class="pos-level-label">Current</span><span class="pos-level-value" style="color: ${t.pnl >= 0 ? 'var(--long)' : 'var(--short)'}">$${formatPrice(currentPrice)}</span></div>
+          <div class="pos-level"><span class="pos-level-label">TP</span><span class="pos-level-value tp">$${formatPrice(t.tp)}</span></div>
+          <div class="pos-level"><span class="pos-level-label">SL</span><span class="pos-level-value sl">$${formatPrice(t.sl)}</span></div>
+        </div>
+        <div class="pos-meta">
+          <span class="pos-meta-item"><span class="pos-meta-label">Size</span> $${t.size.toFixed(0)}</span>
+          <span class="pos-meta-item"><span class="pos-meta-label">Lev</span> ${t.leverage || '—'}x</span>
+          <span class="pos-meta-item"><span class="pos-meta-label">R:R</span> 1:${rr}</span>
+          <span class="pos-meta-item"><span class="pos-meta-label">Open</span> ${timeOpen}</span>
+          <span class="pos-meta-item">${aiList}</span>
+        </div>
       </div>
     `;
   }).join('');

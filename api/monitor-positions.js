@@ -1,9 +1,16 @@
 // Backend Position Monitor - Checks open trades and executes TP/SL
 // Runs as a Vercel cron job every 2 minutes to ensure trades are managed 24/7
+// Features: TP/SL execution, breakeven stop-loss, trailing stop
 
 import { Redis } from '@upstash/redis';
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
+
+// Trailing stop config per portfolio type
+const TRAIL_CONFIG = {
+  silver: { breakevenThreshold: 0.50, trailPercent: 2.0 },
+  gold:   { breakevenThreshold: 0.50, trailPercent: 1.5 }
+};
 
 let redis = null;
 
@@ -254,8 +261,9 @@ export default async function handler(request, response) {
 
     console.log('💰 Fetched prices:', prices);
 
-    // 4. Check each trade for TP/SL
+    // 4. Check each trade for TP/SL + breakeven + trailing stop
     const closedTrades = [];
+    let slAdjusted = false;
 
     for (const trade of openTrades) {
       const currentPrice = prices[trade.symbol];
@@ -264,67 +272,126 @@ export default async function handler(request, response) {
         continue;
       }
 
+      const portfolio = portfolioData[trade.portfolioType];
+      const tradeInPortfolio = portfolio.trades.find(t => t.id === trade.id);
+      if (!tradeInPortfolio) continue;
+
+      const config = TRAIL_CONFIG[trade.portfolioType] || TRAIL_CONFIG.silver;
+
+      // --- Breakeven + Trailing Stop Logic ---
+      const tpDistance = Math.abs(trade.tp - trade.entry);
+      const breakevenTarget = trade.direction === 'LONG'
+        ? trade.entry + tpDistance * config.breakevenThreshold
+        : trade.entry - tpDistance * config.breakevenThreshold;
+
+      const originalSL = trade.originalSl || trade.sl;
+      const isLong = trade.direction === 'LONG';
+      const priceProgress = isLong
+        ? (currentPrice - trade.entry) / tpDistance
+        : (trade.entry - currentPrice) / tpDistance;
+
+      // Only adjust if price has moved past breakeven threshold
+      if (priceProgress >= config.breakevenThreshold) {
+        const trailDistance = trade.entry * (config.trailPercent / 100);
+        const newTrailSL = isLong
+          ? currentPrice - trailDistance
+          : currentPrice + trailDistance;
+
+        // Breakeven floor: SL never goes below entry once breakeven is triggered
+        const breakevenSL = trade.entry;
+        const bestSL = isLong
+          ? Math.max(newTrailSL, breakevenSL)
+          : Math.min(newTrailSL, breakevenSL);
+
+        // Only move SL in favorable direction (never widen the stop)
+        const shouldUpdate = isLong
+          ? bestSL > tradeInPortfolio.sl
+          : bestSL < tradeInPortfolio.sl;
+
+        if (shouldUpdate) {
+          // Save original SL for reference
+          if (!tradeInPortfolio.originalSl) {
+            tradeInPortfolio.originalSl = tradeInPortfolio.sl;
+          }
+
+          const oldSL = tradeInPortfolio.sl;
+          tradeInPortfolio.sl = bestSL;
+          tradeInPortfolio.slAdjustedAt = Date.now();
+          tradeInPortfolio.isTrailing = true;
+          slAdjusted = true;
+
+          const moveType = Math.abs(bestSL - trade.entry) < 0.0001 ? 'BREAKEVEN' : 'TRAILING';
+          console.log(`🔄 ${trade.symbol}: SL moved ${moveType} $${oldSL.toFixed(4)} → $${bestSL.toFixed(4)} (price: $${currentPrice.toFixed(4)})`);
+
+          // Send Telegram notification for SL adjustment
+          const emoji = trade.isGoldConsensus ? '🥇' : '🥈';
+          const slMsg = `${emoji} <b>SL ${moveType}</b> — ${trade.symbol} ${trade.direction}\n\n` +
+            `📊 Entry: $${trade.entry.toFixed(4)}\n` +
+            `💰 Current: $${currentPrice.toFixed(4)} (${priceProgress > 0 ? '+' : ''}${(priceProgress * 100).toFixed(1)}%)\n` +
+            `🛑 SL: $${oldSL.toFixed(4)} → <b>$${bestSL.toFixed(4)}</b>\n` +
+            `🎯 TP: $${trade.tp.toFixed(4)}\n\n` +
+            `🔒 ${moveType === 'BREAKEVEN' ? 'Zero-risk trade' : 'Profits locked in'}`;
+          await sendTelegramMessage(slMsg);
+        }
+      }
+
+      // --- TP/SL Check (uses potentially updated SL) ---
       let shouldClose = false;
       let isTP = false;
+      const currentSL = tradeInPortfolio.sl;
 
-      if (trade.direction === 'LONG') {
+      if (isLong) {
         if (currentPrice >= trade.tp) {
           shouldClose = true;
           isTP = true;
-        } else if (currentPrice <= trade.sl) {
+        } else if (currentPrice <= currentSL) {
           shouldClose = true;
           isTP = false;
         }
-      } else { // SHORT
+      } else {
         if (currentPrice <= trade.tp) {
           shouldClose = true;
           isTP = true;
-        } else if (currentPrice >= trade.sl) {
+        } else if (currentPrice >= currentSL) {
           shouldClose = true;
           isTP = false;
         }
       }
 
       if (shouldClose) {
-        const exitPrice = isTP ? trade.tp : trade.sl;
-        const priceDiff = trade.direction === 'LONG'
+        const exitPrice = isTP ? trade.tp : currentSL;
+        const priceDiff = isLong
           ? exitPrice - trade.entry
           : trade.entry - exitPrice;
         const pnl = (priceDiff / trade.entry) * trade.size;
 
-        // Update trade in portfolio data
-        const portfolio = portfolioData[trade.portfolioType];
-        const tradeInPortfolio = portfolio.trades.find(t => t.id === trade.id);
+        tradeInPortfolio.status = 'closed';
+        tradeInPortfolio.exitPrice = exitPrice;
+        tradeInPortfolio.pnl = pnl;
+        tradeInPortfolio.closeTimestamp = Date.now();
+        tradeInPortfolio.closedBy = 'backend-monitor';
 
-        if (tradeInPortfolio) {
-          tradeInPortfolio.status = 'closed';
-          tradeInPortfolio.exitPrice = exitPrice;
-          tradeInPortfolio.pnl = pnl;
-          tradeInPortfolio.closeTimestamp = Date.now();
-          tradeInPortfolio.closedBy = 'backend-monitor';
+        portfolio.balance += pnl;
+        portfolio.equityHistory.push({
+          time: Date.now(),
+          value: portfolio.balance
+        });
 
-          // Update portfolio balance
-          portfolio.balance += pnl;
-          portfolio.equityHistory.push({
-            time: Date.now(),
-            value: portfolio.balance
-          });
+        closedTrades.push({
+          trade: tradeInPortfolio,
+          portfolioType: trade.portfolioType,
+          exitPrice,
+          pnl,
+          isTP
+        });
 
-          closedTrades.push({
-            trade: tradeInPortfolio,
-            portfolioType: trade.portfolioType,
-            exitPrice,
-            pnl,
-            isTP
-          });
-
-          console.log(`${isTP ? '🎯' : '🛑'} Closed ${trade.symbol} ${trade.direction} | PnL: $${pnl.toFixed(2)}`);
-        }
+        const closeType = isTP ? '🎯 TP' : (tradeInPortfolio.isTrailing ? '🔄 TRAIL SL' : '🛑 SL');
+        console.log(`${closeType} Closed ${trade.symbol} ${trade.direction} | PnL: $${pnl.toFixed(2)}`);
       }
     }
 
-    // 5. Save updated portfolio data if any trades were closed
-    if (closedTrades.length > 0) {
+    // 5. Save updated portfolio data if trades were closed OR stop-losses adjusted
+    if (closedTrades.length > 0 || slAdjusted) {
       // Recalculate stats
       portfolioData.silver.stats = calculateStats(portfolioData.silver);
       portfolioData.gold.stats = calculateStats(portfolioData.gold);
@@ -351,12 +418,13 @@ export default async function handler(request, response) {
     }
 
     const duration = Date.now() - startTime;
-    console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length} | Closed: ${closedTrades.length}`);
+    console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length} | Closed: ${closedTrades.length} | SL adjusted: ${slAdjusted}`);
 
     return response.status(200).json({
       success: true,
       tradesChecked: openTrades.length,
       tradesClosed: closedTrades.length,
+      slAdjusted,
       closedTrades: closedTrades.map(ct => ({
         symbol: ct.trade.symbol,
         direction: ct.trade.direction,
