@@ -3583,8 +3583,7 @@ async function callOpenAIAPI(prompt) {
             content: 'You are an expert crypto perpetual futures trader. Always respond with valid JSON only.'
           },
           { role: 'user', content: prompt }
-        ],
-        temperature: 0.3
+        ]
       })
     });
 
