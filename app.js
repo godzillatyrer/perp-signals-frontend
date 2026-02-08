@@ -972,6 +972,7 @@ const state = {
   equitySeries: null,
   wsConnection: null,
   signalFilter: 'all',
+  mainSignalFilter: 'all',
   signalTab: 'new', // 'new' or 'all'
   nextAiScanTime: null,
   lastAiAnalysis: null,
@@ -6561,6 +6562,202 @@ function renderSignals() {
       }
     });
   });
+
+  // Also render to main signals view
+  renderSignalsMainView();
+}
+
+// Render signals to the main content area view
+function renderSignalsMainView() {
+  const mainContainer = document.getElementById('signalsMainList');
+  if (!mainContainer) return;
+
+  // Get all signals (regardless of sidebar tab/filter)
+  let allSignals;
+  if (isAnyAiConfigured()) {
+    allSignals = state.aiSignals.length ? state.aiSignals : state.signalHistory.filter(s => s.isAiGenerated);
+  } else {
+    allSignals = state.signals;
+  }
+
+  // Apply main view filter
+  const mainFilter = state.mainSignalFilter || 'all';
+  if (mainFilter === 'longs') allSignals = allSignals.filter(s => s.direction === 'LONG');
+  else if (mainFilter === 'shorts') allSignals = allSignals.filter(s => s.direction === 'SHORT');
+  else if (mainFilter === 'gold') allSignals = allSignals.filter(s => s.isGoldConsensus);
+  else if (mainFilter === 'silver') allSignals = allSignals.filter(s => s.isSilverConsensus || s.isConsensus);
+
+  // Update count
+  const countEl = document.getElementById('signalsMainCount');
+  if (countEl) countEl.textContent = `${allSignals.length} signal${allSignals.length !== 1 ? 's' : ''}`;
+
+  // Sync scan progress to main view
+  const scanMainEl = document.getElementById('scanProgressMain');
+  const scanEl = document.getElementById('scanProgress');
+  if (scanMainEl && scanEl) scanMainEl.textContent = scanEl.textContent;
+  const analyzedMainEl = document.getElementById('analyzedCountMain');
+  const analyzedEl = document.getElementById('analyzedCount');
+  if (analyzedMainEl && analyzedEl) analyzedMainEl.textContent = analyzedEl.textContent;
+
+  if (allSignals.length === 0) {
+    const apiStatus = isAnyAiConfigured();
+    if (!apiStatus) {
+      mainContainer.innerHTML = `
+        <div class="empty-state api-setup" style="grid-column: 1 / -1;">
+          <h3>Setup AI Analysis</h3>
+          <p>Go to Settings to add your API keys for Claude, OpenAI, or Grok.</p>
+        </div>`;
+    } else {
+      mainContainer.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;">Waiting for AI consensus signals...<br><br>Gold = All 3 AIs agree &nbsp; Silver = 2 AIs agree</div>`;
+    }
+    return;
+  }
+
+  // Sort by confidence
+  allSignals = [...allSignals].sort((a, b) => b.confidence - a.confidence);
+
+  // Reuse the same card HTML as the sidebar
+  mainContainer.innerHTML = allSignals.map(signal => {
+    const isRecent = Date.now() - signal.timestamp < 300000;
+    const isNew = signal.isNew && isRecent;
+    const hasOpenTrade = state.trades.some(t => t.status === 'open' && t.symbol === signal.symbol);
+    const qualityScore = signal.qualityScore ?? Math.round(signal.confidence || 0);
+    const qualityClass = qualityScore >= 80 ? 'quality-high' : qualityScore >= 65 ? 'quality-mid' : 'quality-low';
+
+    let aiSourceBadge = '';
+    if (signal.isAiGenerated) {
+      const hasClaude = signal.aiSources?.includes('claude');
+      const hasOpenAI = signal.aiSources?.includes('openai');
+      const hasGrok = signal.aiSources?.includes('grok');
+
+      if (signal.isGoldConsensus) {
+        aiSourceBadge = `
+          <div class="gold-consensus-badge">
+            <span class="gold-icon">🥇</span>
+            <span class="gold-label">GOLD CONSENSUS</span>
+            <div class="ai-trio">
+              <span class="ai-model claude">Claude</span>
+              <span class="ai-model openai">GPT-4o</span>
+              <span class="ai-model grok">Grok</span>
+            </div>
+          </div>`;
+      } else if (signal.isSilverConsensus || signal.isConsensus) {
+        const aiModels = [];
+        if (hasClaude) aiModels.push('<span class="ai-model claude">Claude</span>');
+        if (hasOpenAI) aiModels.push('<span class="ai-model openai">GPT-4o</span>');
+        if (hasGrok) aiModels.push('<span class="ai-model grok">Grok</span>');
+        aiSourceBadge = `
+          <div class="silver-consensus-badge">
+            <span class="silver-icon">🥈</span>
+            <span class="silver-label">CONSENSUS</span>
+            <div class="ai-models">${aiModels.join('')}</div>
+          </div>`;
+      } else {
+        const src = hasClaude ? 'claude' : hasOpenAI ? 'openai' : hasGrok ? 'grok' : 'claude';
+        const cls = src === 'claude' ? 'claude-model-badge' : src === 'openai' ? 'openai-model-badge' : 'grok-model-badge';
+        const icon = src === 'claude' ? '🧠' : src === 'grok' ? '⚡' : '🤖';
+        const name = src === 'claude' ? 'Claude' : src === 'openai' ? 'GPT-4o' : 'Grok';
+        aiSourceBadge = `<div class="${cls}"><span class="model-icon">${icon}</span><span class="model-name">${name}</span></div>`;
+      }
+    }
+
+    const consensusClass = signal.isGoldConsensus ? 'gold-consensus' : (signal.isSilverConsensus ? 'silver-consensus' : (signal.isConsensus ? 'consensus-signal' : ''));
+    const consensusBadge = signal.isGoldConsensus ? '<span class="gold-badge">🥇 GOLD</span>' :
+                           (signal.isSilverConsensus ? '<span class="silver-badge">🥈 CONSENSUS</span>' : '');
+    const market = state.markets.find(m => m.symbol === signal.symbol);
+    const hlBadge = market?.isHyperliquidOnly ? '<span class="hl-badge" title="Hyperliquid Only">HL</span>' : '';
+
+    return `
+    <div class="signal-card ${signal.direction.toLowerCase()} ${isNew ? 'new-signal' : ''} ${consensusClass} ${market?.isHyperliquidOnly ? 'hyperliquid-signal' : ''}" data-symbol="${signal.symbol}">
+      <div class="signal-header">
+        <div class="signal-symbol-info">
+          <span class="signal-symbol">${signal.symbol.replace('USDT', '')}${hlBadge}</span>
+          <span class="signal-direction ${signal.direction.toLowerCase()}">${signal.direction}</span>
+          ${consensusBadge}
+          ${hasOpenTrade ? '<span class="trading-badge">TRADING</span>' : ''}
+        </div>
+        <div class="signal-confidence">
+          <span class="conf-label">Confidence:</span>
+          <span class="conf-value">${signal.confidence}%</span>
+          <span class="signal-time">${timeAgo(signal.timestamp)}</span>
+        </div>
+      </div>
+      <div class="signal-body">
+        ${aiSourceBadge}
+        <div class="signal-analysis">${signal.reasons ? signal.reasons.slice(0, 3).join('. ') : ''}</div>
+        <div class="signal-levels">
+          <div class="level-item tp-pct"><div class="level-label">Target %</div><div class="level-value green">${signal.tpPercent ? '+' + signal.tpPercent.toFixed(1) + '%' : '+' + Math.abs((signal.tp - signal.entry) / signal.entry * 100).toFixed(1) + '%'}</div></div>
+          <div class="level-item entry"><div class="level-label">Entry</div><div class="level-value">${formatPrice(signal.entry)}</div></div>
+          <div class="level-item target"><div class="level-label">Target</div><div class="level-value">${formatPrice(signal.tp)}</div></div>
+          <div class="level-item stop"><div class="level-label">Stop</div><div class="level-value">${formatPrice(signal.sl)}</div></div>
+        </div>
+      </div>
+      <div class="signal-footer">
+        <div class="footer-stat"><div class="label">Risk ($)</div><div class="value">${(state.balance * CONFIG.RISK_PERCENT / 100).toFixed(0)}</div></div>
+        <div class="footer-stat"><div class="label">Size</div><div class="value green">$${(state.balance * CONFIG.RISK_PERCENT / 100 * CONFIG.LEVERAGE).toFixed(0)}</div></div>
+        <div class="footer-stat">
+          <div class="label">Status</div>
+          <div class="value ${hasOpenTrade ? 'green' : signal.isGoldConsensus ? 'gold' : signal.isSilverConsensus ? 'silver' : ''}">${hasOpenTrade ? '✓ In Trade' : signal.isGoldConsensus ? '🥇 Gold' : signal.isSilverConsensus ? '🥈 Silver' : 'Watching'}</div>
+        </div>
+        <button class="telegram-send-btn" data-symbol="${signal.symbol}" data-direction="${signal.direction}" title="Send to Telegram">📤</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Attach click handlers
+  mainContainer.querySelectorAll('.signal-card').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.classList.contains('telegram-send-btn')) return;
+      selectMarket(el.dataset.symbol);
+      // Switch to chart view
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('.nav-btn[data-view="chart"]')?.classList.add('active');
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-chart')?.classList.add('active');
+    });
+  });
+
+  // Telegram buttons in main view
+  mainContainer.querySelectorAll('.telegram-send-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const symbol = btn.dataset.symbol;
+      const direction = btn.dataset.direction;
+      const signal = allSignals.find(s => s.symbol === symbol && s.direction === direction);
+      if (signal) {
+        btn.disabled = true;
+        btn.textContent = '...';
+        const success = await sendSignalToTelegramManual(signal);
+        btn.textContent = success ? '✅' : '❌';
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = '📤'; }, 2000);
+      }
+    });
+  });
+
+  // Update badge count
+  updateSignalsBadge();
+}
+
+// Update the unread signals badge in the nav
+function updateSignalsBadge() {
+  const badge = document.getElementById('signalsBadge');
+  if (!badge) return;
+
+  let allSignals;
+  if (isAnyAiConfigured()) {
+    allSignals = state.aiSignals.length ? state.aiSignals : state.signalHistory.filter(s => s.isAiGenerated);
+  } else {
+    allSignals = state.signals;
+  }
+
+  const count = allSignals.length;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = 'inline-flex';
+  } else {
+    badge.style.display = 'none';
+  }
 }
 
 // ============================================
@@ -7764,6 +7961,17 @@ function initEventListeners() {
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
       const viewEl = document.getElementById(`view-${view}`);
       if (viewEl) viewEl.classList.add('active');
+      // Re-render signals when switching to signals view
+      if (view === 'signals') renderSignalsMainView();
+      // Resize chart when switching back
+      if (view === 'chart') {
+        setTimeout(() => {
+          if (state.chart) {
+            const c = document.getElementById('tradingChart');
+            if (c) state.chart.resize(c.clientWidth, c.clientHeight);
+          }
+        }, 100);
+      }
     });
   });
 
@@ -7974,13 +8182,23 @@ function initEventListeners() {
     });
   });
 
-  // Signal filters
-  document.querySelectorAll('.filter-btn').forEach(btn => {
+  // Signal filters (sidebar)
+  document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.closest('.signal-filters')?.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.signalFilter = btn.dataset.filter;
       renderSignals();
+    });
+  });
+
+  // Signal filters (main view)
+  document.querySelectorAll('.filter-btn[data-main-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn[data-main-filter]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.mainSignalFilter = btn.dataset.mainFilter;
+      renderSignalsMainView();
     });
   });
 
