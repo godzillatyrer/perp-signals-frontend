@@ -18,11 +18,11 @@ const CONFIG = {
   // Claude API
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
   CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
-  CLAUDE_MODEL: 'claude-sonnet-4-20250514', // Claude Sonnet 4 (latest)
+  CLAUDE_MODEL: 'claude-opus-4-6', // Claude Opus 4.6 (flagship)
   // OpenAI API
   OPENAI_API: 'https://api.openai.com/v1/chat/completions',
   OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
-  OPENAI_MODEL: 'gpt-4o', // Using GPT-4o for best analysis
+  OPENAI_MODEL: 'gpt-5.1', // GPT-5.1 (flagship)
   // Grok API (xAI)
   GROK_API: 'https://api.x.ai/v1/chat/completions',
   GROK_API_KEY: '', // Will be loaded from localStorage or prompted
