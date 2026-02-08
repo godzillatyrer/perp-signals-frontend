@@ -1368,7 +1368,7 @@ async function analyzeWithOpenAI(prompt) {
       body: JSON.stringify({
         model: 'gpt-5.1',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2048
+        max_completion_tokens: 2048
       })
     });
 
