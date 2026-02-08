@@ -1629,7 +1629,17 @@ function findConsensusSignals(analyses, indicatorData) {
         const avgEntry = matchingSignals.reduce((sum, s) => sum + s.entry, 0) / matchingSignals.length;
         const avgSL = matchingSignals.reduce((sum, s) => sum + s.stopLoss, 0) / matchingSignals.length;
         const avgTP = matchingSignals.reduce((sum, s) => sum + s.takeProfit, 0) / matchingSignals.length;
-        const avgConfidence = matchingSignals.reduce((sum, s) => sum + s.confidence, 0) / matchingSignals.length;
+        // Weighted confidence — use optimizer AI weights if available
+        const getWeight = (src) => optConfig?.aiWeights?.[src] || 1.0;
+        let totalWeight = 0;
+        let weightedConf = 0;
+        for (const s of matchingSignals) {
+          const w = getWeight(s.aiSource);
+          weightedConf += s.confidence * w;
+          totalWeight += w;
+        }
+        const avgConfidence = totalWeight > 0 ? weightedConf / totalWeight
+          : matchingSignals.reduce((sum, s) => sum + s.confidence, 0) / matchingSignals.length;
 
         const allReasons = [...new Set(matchingSignals.flatMap(s => s.reasons || []))];
         const entryTriggers = matchingSignals.map(s => s.entryTrigger).filter(Boolean);
@@ -1896,17 +1906,67 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'duplicate' };
     }
 
+    // Correlation protection — max 1 trade per correlation group
+    const tradeGroup = getCorrelationGroup(signal.symbol);
+    const groupConflict = openTrades.find(t => getCorrelationGroup(t.symbol) === tradeGroup);
+    if (groupConflict) {
+      console.log(`🔗 ${portfolioType.toUpperCase()}: Already in ${groupConflict.symbol} (same ${tradeGroup} group), skipping ${signal.symbol}`);
+      return { opened: false, reason: 'correlation' };
+    }
+
+    // Max exposure limit — total open position value capped at 60% of balance
+    const totalExposure = openTrades.reduce((sum, t) => sum + (t.remainingSize || t.size), 0);
+    const maxExposure = portfolio.balance * 0.60;
+    if (totalExposure >= maxExposure) {
+      console.log(`🛡️ ${portfolioType.toUpperCase()}: Exposure $${totalExposure.toFixed(0)} >= 60% of balance ($${maxExposure.toFixed(0)}), skipping`);
+      return { opened: false, reason: 'max_exposure' };
+    }
+
+    // Session-aware filter — prefer US/EU overlap (13:00-21:00 UTC) for higher quality
+    const utcHour = new Date().getUTCHours();
+    const isHighVolSession = utcHour >= 13 && utcHour <= 21;
+    if (!isHighVolSession && !signal.isGoldConsensus) {
+      // Only allow Gold consensus trades during low-volume hours (Asian session)
+      console.log(`🕐 ${portfolioType.toUpperCase()}: Low-volume session (${utcHour}:00 UTC) — Silver signals blocked, only Gold allowed`);
+      return { opened: false, reason: 'session_filter' };
+    }
+
     // Calculate position size
     const riskAmount = portfolio.balance * (riskPercent / 100);
     const positionSize = riskAmount * leverage;
+
+    // Volatility-adjusted targets — widen TP/SL in high ATR, tighten in low
+    let adjustedTP = signal.takeProfit;
+    let adjustedSL = signal.stopLoss;
+    if (signal.atrPercent) {
+      const atr = signal.atrPercent;
+      // Normal ATR ~1.5-3%. Scale TP/SL if outside that range
+      if (atr > 3) {
+        // High volatility: widen targets by 20%
+        const tpDist = Math.abs(signal.takeProfit - signal.entry) * 1.2;
+        const slDist = Math.abs(signal.stopLoss - signal.entry) * 1.2;
+        adjustedTP = signal.direction === 'LONG' ? signal.entry + tpDist : signal.entry - tpDist;
+        adjustedSL = signal.direction === 'LONG' ? signal.entry - slDist : signal.entry + slDist;
+        console.log(`📐 ${signal.symbol}: High ATR ${atr.toFixed(1)}% — widened TP/SL by 20%`);
+      } else if (atr < 1) {
+        // Low volatility: tighten targets by 15%
+        const tpDist = Math.abs(signal.takeProfit - signal.entry) * 0.85;
+        const slDist = Math.abs(signal.stopLoss - signal.entry) * 0.85;
+        adjustedTP = signal.direction === 'LONG' ? signal.entry + tpDist : signal.entry - tpDist;
+        adjustedSL = signal.direction === 'LONG' ? signal.entry - slDist : signal.entry + slDist;
+        console.log(`📐 ${signal.symbol}: Low ATR ${atr.toFixed(1)}% — tightened TP/SL by 15%`);
+      }
+    }
 
     const trade = {
       id: Date.now(),
       symbol: signal.symbol,
       direction: signal.direction,
       entry: signal.entry,
-      tp: signal.takeProfit,
-      sl: signal.stopLoss,
+      tp: adjustedTP,
+      sl: adjustedSL,
+      originalTp: signal.takeProfit,
+      originalSl: signal.stopLoss,
       size: positionSize,
       leverage: leverage,
       timestamp: Date.now(),
@@ -1917,6 +1977,7 @@ async function openTradeForSignal(signal) {
       isSilverConsensus: signal.isSilverConsensus || false,
       confidence: signal.confidence,
       marketRegime: signal.marketRegime || null,
+      atrPercent: signal.atrPercent || null,
       openedBy: 'backend-scan'
     };
 
@@ -1955,12 +2016,19 @@ function formatTradeOpenMessage(signal, tradeResult) {
   const riskPercent = Math.abs((signal.stopLoss - signal.entry) / signal.entry * 100);
   const rewardPercent = Math.abs((signal.takeProfit - signal.entry) / signal.entry * 100);
 
+  // Calculate partial TP levels
+  const tpDist = Math.abs(signal.takeProfit - signal.entry);
+  const tp1Price = signal.direction === 'LONG' ? signal.entry + tpDist * 0.5 : signal.entry - tpDist * 0.5;
+  const tp2Price = signal.direction === 'LONG' ? signal.entry + tpDist * 0.75 : signal.entry - tpDist * 0.75;
+
   return `${emoji} <b>${portfolioType} PORTFOLIO — TRADE OPENED</b>
 
 📊 <b>${signal.direction} ${signal.symbol}</b>
 
 💰 Entry: $${signal.entry.toLocaleString()}
-🎯 Take Profit: $${signal.takeProfit.toLocaleString()} (+${rewardPercent.toFixed(1)}%)
+🎯 TP1 (40%): $${tp1Price.toLocaleString()} → SL moves to breakeven
+🎯 TP2 (30%): $${tp2Price.toLocaleString()}
+🎯 TP3 (30%): $${signal.takeProfit.toLocaleString()} (+${rewardPercent.toFixed(1)}%)
 🛑 Stop Loss: $${signal.stopLoss.toLocaleString()} (-${riskPercent.toFixed(1)}%)
 
 📈 Position: $${trade.size.toFixed(2)} @ ${trade.leverage}x leverage
@@ -2236,6 +2304,8 @@ export default async function handler(request, response) {
 
     for (const signal of alertSignals) {
       const indicators = indicatorData[signal.symbol];
+      // Attach ATR for volatility-adjusted targets
+      signal.atrPercent = indicators?.atrPercent || null;
       const message = formatSignalForTelegram(signal, majorEvent, indicators);
       const keyboard = createTradeKeyboard(signal);
       const sent = await sendTelegramMessage(message, keyboard);
