@@ -1402,7 +1402,7 @@ async function analyzeWithGrok(prompt) {
         'Authorization': `Bearer ${process.env.GROK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-1-1-fast-reasoning',
+        model: 'grok-4-1-fast-reasoning',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048
       })
