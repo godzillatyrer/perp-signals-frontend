@@ -1542,7 +1542,8 @@ function findConsensusSignals(analyses, indicatorData) {
           isSilverConsensus: aiSources.length === 2,
           reasons: allReasons.slice(0, 5),
           entryTrigger: entryTriggers[0] || null,
-          entryCondition: entryConditions[0] || null
+          entryCondition: entryConditions[0] || null,
+          marketRegime: indicators?.marketRegime || null
         };
 
         const indicators = indicatorData?.[candidate.symbol];
@@ -1810,6 +1811,7 @@ async function openTradeForSignal(signal) {
       isGoldConsensus: signal.isGoldConsensus || false,
       isSilverConsensus: signal.isSilverConsensus || false,
       confidence: signal.confidence,
+      marketRegime: signal.marketRegime || null,
       openedBy: 'backend-scan'
     };
 
@@ -1870,6 +1872,42 @@ export default async function handler(request, response) {
   console.log('🔄 Starting AI scan...');
 
   try {
+    // ======= LOAD OPTIMIZED CONFIG =======
+    // Self-learning optimizer saves tuned parameters to Redis every 6 hours
+    let optConfig = null;
+    try {
+      const r = getRedis();
+      if (r) {
+        const saved = await r.get('optimization_config');
+        if (saved) {
+          optConfig = typeof saved === 'string' ? JSON.parse(saved) : saved;
+          console.log(`🧠 Loaded optimized config (cycle #${optConfig.cycleCount || 0}, ${optConfig.totalTradesAnalyzed || 0} trades analyzed)`);
+
+          // Check if trading is paused due to loss streak
+          if (optConfig.pauseUntil && Date.now() < optConfig.pauseUntil) {
+            const resumeIn = Math.round((optConfig.pauseUntil - Date.now()) / 60000);
+            console.log(`⏸️ Trading PAUSED (${optConfig.consecutiveLosses} consecutive losses). Resuming in ${resumeIn} minutes.`);
+            return response.status(200).json({
+              success: true,
+              paused: true,
+              reason: `${optConfig.consecutiveLosses} consecutive losses`,
+              resumesIn: resumeIn + ' minutes',
+              alertsSent: 0,
+              tradesOpened: 0
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.log('⚠️ Could not load optimization config, using defaults:', e.message);
+    }
+
+    // Helper: get optimized value or fall back to CONFIG default
+    const opt = (key, fallback) => {
+      if (optConfig && optConfig[key] !== undefined && optConfig[key] !== null) return optConfig[key];
+      return fallback;
+    };
+
     // Check for major economic events
     const majorEvent = isMajorEventDay();
     if (majorEvent) {
@@ -1944,9 +1982,11 @@ export default async function handler(request, response) {
     // Update AI signal counts in Redis (persists even when frontend is closed)
     await updateAISignalCounts(analyses, consensusSignals);
 
-    // Filter by confidence and TP%
+    // Filter by confidence and TP% (uses optimized threshold if available)
+    const minConfidence = opt('alertConfidence', CONFIG.ALERT_CONFIDENCE);
+    console.log(`🎯 Using min confidence: ${minConfidence}${optConfig ? ' (optimized)' : ' (default)'}`);
     let alertSignals = consensusSignals.filter(signal => {
-      if (signal.confidence < CONFIG.ALERT_CONFIDENCE) return false;
+      if (signal.confidence < minConfidence) return false;
 
       const tpPercent = Math.abs((signal.takeProfit - signal.entry) / signal.entry * 100);
       let minTP = CONFIG.MIN_TP_PERCENT_MID_CAP;
@@ -1972,18 +2012,19 @@ export default async function handler(request, response) {
       console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
     }
 
-    // Filter by ADX >= 15 (relaxed from 22 — allow weaker trends)
+    // Filter by ADX (uses optimized threshold)
+    const minADX = opt('minADX', 15);
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators || !indicators.adx) {
         console.log(`⚠️ ${signal.symbol}: No indicator data - allowing signal`);
         return true;
       }
-      if (indicators.adx.adx < 15) {
-        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < 15 (very weak trend) - BLOCKED`);
+      if (indicators.adx.adx < minADX) {
+        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < ${minADX} - BLOCKED`);
         return false;
       }
-      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= 15 (${indicators.adx.trend}) - OK`);
+      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= ${minADX} (${indicators.adx.trend}) - OK`);
       return true;
     });
     console.log(`📊 After ADX filter: ${alertSignals.length} signals`);
@@ -2012,12 +2053,13 @@ export default async function handler(request, response) {
     });
     console.log(`🔄 After Supertrend filter: ${alertSignals.length} signals`);
 
-    // Filter by market regime (only block CHOPPY — volume/ATR are soft penalties, not hard blocks)
+    // Filter by market regime (uses optimized blocked list)
+    const blockedRegimes = optConfig?.blockedRegimes || ['CHOPPY'];
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators) return true;
-      if (indicators.marketRegime === 'CHOPPY') {
-        console.log(`⛔ ${signal.symbol}: Market regime CHOPPY - BLOCKED`);
+      if (blockedRegimes.includes(indicators.marketRegime)) {
+        console.log(`⛔ ${signal.symbol}: Market regime ${indicators.marketRegime} - BLOCKED`);
         return false;
       }
       // Log soft warnings for volume/ATR but don't block
@@ -2049,12 +2091,14 @@ export default async function handler(request, response) {
     // Adjust TP/SL based on volatility
     alertSignals = alertSignals.map(signal => adjustTPSLForVolatility(signal, marketData));
 
-    // Re-validate risk/reward after volatility adjustment (Gold gets relaxed 1.5 min)
+    // Re-validate risk/reward after volatility adjustment (uses optimized thresholds)
+    const optMinRR = opt('minRiskReward', CONFIG.MIN_RISK_REWARD);
+    const optMinRRGold = opt('minRiskRewardGold', 1.5);
     alertSignals = alertSignals.filter(signal => {
       const risk = Math.abs(signal.entry - signal.stopLoss);
       const reward = Math.abs(signal.takeProfit - signal.entry);
       const rr = reward / Math.max(risk, 1e-9);
-      const minRR = signal.isGoldConsensus ? 1.5 : CONFIG.MIN_RISK_REWARD;
+      const minRR = signal.isGoldConsensus ? optMinRRGold : optMinRR;
       if (rr < minRR) {
         console.log(`⛔ ${signal.symbol}: R/R ${rr.toFixed(2)} < ${minRR} after volatility adjust - BLOCKED`);
         return false;
@@ -2062,6 +2106,19 @@ export default async function handler(request, response) {
       return true;
     });
     console.log(`✅ After R/R validation: ${alertSignals.length} signals`);
+
+    // Filter by symbol blacklist (optimizer auto-blacklists symbols with <30% win rate)
+    const symbolBlacklist = optConfig?.symbolBlacklist || [];
+    if (symbolBlacklist.length > 0) {
+      alertSignals = alertSignals.filter(signal => {
+        if (symbolBlacklist.includes(signal.symbol)) {
+          console.log(`⛔ ${signal.symbol}: BLACKLISTED by optimizer (poor historical performance) - BLOCKED`);
+          return false;
+        }
+        return true;
+      });
+      console.log(`🚫 After blacklist filter: ${alertSignals.length} signals (blacklisted: ${symbolBlacklist.join(', ')})`);
+    }
 
     // Send Telegram alerts, open trades, and track pending signals
     let alertsSent = 0;
@@ -2120,7 +2177,17 @@ export default async function handler(request, response) {
         direction: s.direction,
         confidence: s.confidence,
         aiSources: s.aiSources
-      }))
+      })),
+      optimization: optConfig ? {
+        cycle: optConfig.cycleCount,
+        aiWeights: optConfig.aiWeights,
+        minConfidence: minConfidence,
+        minADX: minADX,
+        minRR: optMinRR,
+        blockedRegimes: blockedRegimes,
+        symbolBlacklist: symbolBlacklist,
+        paused: !!optConfig.pauseUntil
+      } : null
     });
 
   } catch (error) {

@@ -7417,6 +7417,74 @@ function initAiDetailTabs() {
 }
 
 // ============================================
+// SELF-LEARNING OPTIMIZER DISPLAY
+// ============================================
+
+let optimizerCache = null;
+
+async function loadOptimizerStatus() {
+  try {
+    const resp = await fetch('/api/optimize', { method: 'GET' });
+    if (resp.ok) {
+      const data = await resp.json();
+      optimizerCache = data;
+      renderOptimizerPanel(data);
+    }
+  } catch (e) {
+    // Optimizer might not have run yet - that's fine
+    console.log('Optimizer status not available yet');
+  }
+}
+
+function renderOptimizerPanel(data) {
+  const statusEl = document.getElementById('optimizerStatus');
+  const changesEl = document.getElementById('optimizerChanges');
+
+  if (!data || !data.config) {
+    if (statusEl) { statusEl.textContent = 'Waiting'; statusEl.className = 'optimizer-status waiting'; }
+    return;
+  }
+
+  const config = data.config;
+
+  // Status
+  if (statusEl) {
+    if (config.pauseUntil) {
+      statusEl.textContent = 'Paused';
+      statusEl.className = 'optimizer-status paused';
+    } else if (config.alertConfidence) {
+      statusEl.textContent = `Cycle #${data.cycle || 0}`;
+      statusEl.className = 'optimizer-status active';
+    } else {
+      statusEl.textContent = 'Waiting';
+      statusEl.className = 'optimizer-status waiting';
+    }
+  }
+
+  // Update parameter values
+  const updateOpt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  updateOpt('optConfidence', config.alertConfidence || 75);
+  updateOpt('optRR', config.minRiskReward || 2.0);
+  updateOpt('optADX', config.minADX || 15);
+  updateOpt('optClaudeW', config.aiWeights?.claude?.toFixed(2) || '1.00');
+  updateOpt('optOpenaiW', config.aiWeights?.openai?.toFixed(2) || '1.00');
+  updateOpt('optGrokW', config.aiWeights?.grok?.toFixed(2) || '1.00');
+
+  // Show changes
+  if (changesEl) {
+    const changes = data.changes || [];
+    if (changes.length > 0) {
+      changesEl.innerHTML = `<span class="opt-changes-label">Last changes (${data.tradesAnalyzed || 0} trades analyzed):</span>` +
+        changes.map(c => `<div class="opt-change-item">${c}</div>`).join('');
+    } else if (data.tradesAnalyzed && data.tradesAnalyzed >= 10) {
+      changesEl.innerHTML = `<span class="opt-changes-label">No parameter changes needed (${data.tradesAnalyzed} trades analyzed). System is stable.</span>`;
+    } else {
+      changesEl.innerHTML = `<span class="opt-changes-label">Needs 10+ closed trades to start optimizing. Currently: ${data.tradesAnalyzed || 0} trades.</span>`;
+    }
+  }
+}
+
+// ============================================
 // NEWS VIEW
 // ============================================
 
@@ -9209,6 +9277,7 @@ async function init() {
   // Initialize AI Detail view
   initAiDetailTabs();
   renderAiDetailView();
+  loadOptimizerStatus(); // Load self-learning optimizer config
 
   if (state.markets.length > 0) selectMarket(state.markets[0].symbol);
 
@@ -9228,6 +9297,7 @@ async function init() {
   setInterval(renderMarkets, 2000);
   setInterval(updateShadowPnL, 5000); // Check shadow P&L for AI signal log every 5s
   setInterval(renderAiDetailView, 30000); // Refresh AI detail view every 30s
+  setInterval(loadOptimizerStatus, 600000); // Refresh optimizer status every 10 min
 
   // Initialize AI scanning with 10-minute interval
   console.log('🤖 Sentient Trader v4.0 - Dual AI System');
