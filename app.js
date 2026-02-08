@@ -6148,16 +6148,16 @@ function renderMarkets() {
       ? '<span class="hl-badge" title="Hyperliquid Only">HL</span>'
       : '';
 
+    const priceChange = market.price * (market.change / 100);
+    const changeSign = market.change >= 0 ? '+' : '';
+    const changeDir = market.change >= 0 ? 'up' : 'down';
+
     return `
       <div class="${classes}" data-symbol="${market.symbol}">
-        <div class="market-row">
-          <span class="market-symbol">${market.symbol.replace('USDT', '')}${hlBadge}</span>
-          <span class="market-change ${market.change >= 0 ? 'up' : 'down'}">${formatPercent(market.change)}</span>
-        </div>
-        <div class="market-meta">
-          <span class="market-price">$${formatPrice(market.price)}</span>
-          <span class="market-volume">Vol: ${formatVolume(market.volume)}</span>
-        </div>
+        <span class="market-symbol">${market.symbol.replace('USDT', '')}${hlBadge}</span>
+        <span class="market-price">$${formatPrice(market.price)}</span>
+        <span class="market-change ${changeDir}">${changeSign}${formatPrice(Math.abs(priceChange))}</span>
+        <span class="market-pct ${changeDir}">${formatPercent(market.change)}</span>
       </div>
     `;
   }).join('');
