@@ -967,6 +967,7 @@ const state = {
   candleSeries: null,
   volumeSeries: null,
   srLines: [], // Support/Resistance price lines
+  signalTradeLines: [], // Entry/Stop/Target lines from active signal
   userLines: [], // User-drawn lines
   equityChart: null,
   equitySeries: null,
@@ -1055,7 +1056,7 @@ const getAiSampleSize = (source) => {
 
 const isAiEligible = (source) => {
   const sampleSize = getAiSampleSize(source);
-  if (sampleSize < 3) return true;
+  if (sampleSize < 10) return true; // Need 10+ trades before filtering out an AI
   return getAiWinRateForSource(source) >= CONFIG.MIN_AI_WINRATE;
 };
 
@@ -4195,37 +4196,37 @@ async function runAiAnalysis() {
         // Get market data for this symbol (for regime and MTF checks)
         const marketInfo = enrichedData.find(m => m.symbol === symbol);
 
-        // HARD FILTER: ADX must be >= 22 (moderate+ trend required)
+        // SOFT FILTER: ADX - only skip for Gold consensus if ADX is very low
+        // For Silver, allow lower ADX since 2 AIs still agreed
         const adxValue = marketInfo?.adx?.adx || 0;
-        if (adxValue < 22) {
-          console.log(`⛔ ${symbol}: ADX ${adxValue} < 22 - Skipping (weak trend)`);
-          recordFilterReason('ADX < 22');
+        const isGold = matchingPicks.length >= 3;
+        if (adxValue < 15) {
+          console.log(`⛔ ${symbol}: ADX ${adxValue} < 15 - Skipping (very weak trend)`);
+          recordFilterReason('ADX < 15');
           continue;
         }
 
         const regime = marketInfo?.marketRegime || 'UNKNOWN';
-        if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(regime)) {
+        // Only hard-block for CHOPPY regime; allow RANGING/SIDEWAYS with confidence penalty
+        if (regime === 'CHOPPY') {
           console.log(`⛔ ${symbol}: Market regime ${regime} - Skipping`);
           recordFilterReason(`Regime ${regime}`);
           continue;
         }
 
+        // Volume and ATR: soft warnings instead of hard blocks
         if (marketInfo?.volumeTrend === 'DECREASING') {
-          console.log(`⛔ ${symbol}: Volume trend decreasing - Skipping`);
-          recordFilterReason('Volume decreasing');
-          continue;
+          console.log(`⚠️ ${symbol}: Volume decreasing - applying confidence penalty`);
         }
 
         if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
-          console.log(`⛔ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - Skipping`);
-          recordFilterReason('ATR too low');
-          continue;
+          console.log(`⚠️ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - applying penalty`);
         }
 
-        // HARD FILTER: Supertrend must confirm direction
+        // Supertrend: only hard-block for Silver. Gold consensus overrides Supertrend
         const supertrendDir = marketInfo?.supertrend?.direction;
-        if ((direction === 'LONG' && supertrendDir !== 'UP') || (direction === 'SHORT' && supertrendDir !== 'DOWN')) {
-          console.log(`⛔ ${symbol}: Supertrend ${supertrendDir} conflicts with ${direction} - Skipping`);
+        if (!isGold && ((direction === 'LONG' && supertrendDir === 'DOWN') || (direction === 'SHORT' && supertrendDir === 'UP'))) {
+          console.log(`⛔ ${symbol}: Supertrend ${supertrendDir} conflicts with ${direction} - Skipping (Silver only)`);
           recordFilterReason('Supertrend mismatch');
           continue;
         }
@@ -4329,8 +4330,10 @@ async function runAiAnalysis() {
           : Math.min(...matchingPicks.map(p => p.stopLoss));
 
         const riskReward = Math.abs(bestTP - avgEntry) / Math.abs(avgEntry - safestSL);
-        if (riskReward < CONFIG.MIN_RISK_REWARD) {
-          console.log(`⛔ ${symbol}: Risk/Reward ${riskReward.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD} - Skipping`);
+        // Gold consensus: allow lower R:R (1.5) since all 3 AIs agree
+        const minRR = isGold ? 1.5 : CONFIG.MIN_RISK_REWARD;
+        if (riskReward < minRR) {
+          console.log(`⛔ ${symbol}: Risk/Reward ${riskReward.toFixed(2)} < ${minRR} - Skipping`);
           recordFilterReason('Risk/Reward too low');
           continue;
         }
@@ -4517,11 +4520,10 @@ async function runAiAnalysis() {
       const silverCount = filteredSignals.filter(s => s.isSilverConsensus).length;
       console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${goldCount} gold 🥇, ${silverCount} silver 🥈)`);
 
-      // Show consensus notification for GOLD consensus + high-confidence signals only (85%+)
-      // CRITICAL: Only send alerts for Gold consensus (all 3 AIs agree) to prevent spam
+      // Show consensus notification for BOTH Gold and Silver consensus signals
       const alertableSignals = filteredSignals.filter(s =>
         s.confidence >= CONFIG.ALERT_CONFIDENCE &&
-        s.isGoldConsensus === true  // ONLY Gold consensus - skip Silver
+        (s.isGoldConsensus || s.isSilverConsensus || s.isConsensus)
       );
       if (alertableSignals.length > 0) {
         showConsensusNotification(alertableSignals);
@@ -4706,8 +4708,9 @@ async function executeAiTrades() {
 
     saveTrades();
 
-    // Only open one trade per AI scan
-    break;
+    // Allow up to 3 trades per scan (was limited to 1)
+    const newOpenCount = state.trades.filter(t => t.status === 'open').length;
+    if (newOpenCount >= CONFIG.MAX_OPEN_TRADES) break;
   }
 
   renderPositions();
@@ -5751,41 +5754,41 @@ function initChart() {
     width: container.clientWidth,
     height: container.clientHeight,
     layout: {
-      background: { type: 'solid', color: '#06060a' },
-      textColor: '#a8a8be'
+      background: { type: 'solid', color: '#131722' },
+      textColor: '#d1d4dc'
     },
     grid: {
-      vertLines: { color: 'rgba(139, 92, 246, 0.04)' },
-      horzLines: { color: 'rgba(139, 92, 246, 0.04)' }
+      vertLines: { color: 'rgba(42, 46, 57, 0.6)' },
+      horzLines: { color: 'rgba(42, 46, 57, 0.6)' }
     },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: 'rgba(139, 92, 246, 0.4)', width: 1, style: 2 },
-      horzLine: { color: 'rgba(139, 92, 246, 0.4)', width: 1, style: 2 }
+      vertLine: { color: 'rgba(41, 98, 255, 0.4)', width: 1, style: 2 },
+      horzLine: { color: 'rgba(41, 98, 255, 0.4)', width: 1, style: 2 }
     },
     rightPriceScale: {
-      borderColor: 'rgba(255, 255, 255, 0.06)',
+      borderColor: '#2a2e39',
       scaleMargins: { top: 0.1, bottom: 0.2 }
     },
     timeScale: {
-      borderColor: 'rgba(255, 255, 255, 0.06)',
+      borderColor: '#2a2e39',
       timeVisible: true,
       secondsVisible: false
     }
   });
 
   state.candleSeries = state.chart.addCandlestickSeries({
-    upColor: '#34d399',
-    downColor: '#fb7185',
-    borderUpColor: '#34d399',
-    borderDownColor: '#fb7185',
-    wickUpColor: '#6ee7b7',
-    wickDownColor: '#fda4af'
+    upColor: '#26a69a',
+    downColor: '#ef5350',
+    borderUpColor: '#26a69a',
+    borderDownColor: '#ef5350',
+    wickUpColor: '#26a69a',
+    wickDownColor: '#ef5350'
   });
 
   // Add EMA lines (hidden by default, toggle with IND button)
   state.ema20Series = state.chart.addLineSeries({
-    color: '#818cf8',
+    color: '#2962ff',
     lineWidth: 1,
     priceLineVisible: false,
     lastValueVisible: false,
@@ -5794,7 +5797,7 @@ function initChart() {
   });
 
   state.ema50Series = state.chart.addLineSeries({
-    color: '#fbbf24',
+    color: '#ff9800',
     lineWidth: 1,
     priceLineVisible: false,
     lastValueVisible: false,
@@ -5803,7 +5806,7 @@ function initChart() {
   });
 
   state.ema200Series = state.chart.addLineSeries({
-    color: '#fb7185',
+    color: '#e91e63',
     lineWidth: 2,
     priceLineVisible: false,
     lastValueVisible: false,
@@ -5818,7 +5821,7 @@ function initChart() {
   }, 100);
 
   state.volumeSeries = state.chart.addHistogramSeries({
-    color: '#8b5cf6',
+    color: '#2962ff',
     priceFormat: { type: 'volume' },
     priceScaleId: '',
     scaleMargins: { top: 0.85, bottom: 0 }
@@ -7496,9 +7499,9 @@ function updateSRLinesFromAI(signal) {
   if (majorSupport && state.candleSeries) {
     const supportLine = state.candleSeries.createPriceLine({
       price: majorSupport,
-      color: '#34d399',
+      color: '#26a69a',
       lineWidth: 2,
-      lineStyle: 0, // Solid
+      lineStyle: 0,
       axisLabelVisible: true,
       title: 'AI Support',
     });
@@ -7508,7 +7511,7 @@ function updateSRLinesFromAI(signal) {
   if (majorResistance && state.candleSeries) {
     const resistanceLine = state.candleSeries.createPriceLine({
       price: majorResistance,
-      color: '#fb7185',
+      color: '#ef5350',
       lineWidth: 2,
       lineStyle: 0,
       axisLabelVisible: true,
@@ -7520,9 +7523,9 @@ function updateSRLinesFromAI(signal) {
   if (liquidationZone && state.candleSeries) {
     const liqLine = state.candleSeries.createPriceLine({
       price: liquidationZone,
-      color: '#fbbf24',
+      color: '#ff9800',
       lineWidth: 1,
-      lineStyle: 2, // Dashed
+      lineStyle: 2,
       axisLabelVisible: true,
       title: 'Liq Zone',
     });
@@ -7539,7 +7542,67 @@ function updateAllSRFromAISignals() {
 
   if (currentSignal) {
     updateSRLinesFromAI(currentSignal);
+    drawSignalTradeLevels(currentSignal);
+  } else {
+    clearSignalTradeLevels();
   }
+}
+
+// Draw Entry/Stop/Target price lines on chart for the active signal
+function drawSignalTradeLevels(signal) {
+  clearSignalTradeLevels();
+  if (!signal || !state.candleSeries) return;
+
+  const isLong = signal.direction === 'LONG';
+  state.signalTradeLines = [];
+
+  // Entry line (blue)
+  if (signal.entry) {
+    const entryLine = state.candleSeries.createPriceLine({
+      price: signal.entry,
+      color: '#2962ff',
+      lineWidth: 2,
+      lineStyle: 0,
+      axisLabelVisible: true,
+      title: `Entry ${signal.direction}`,
+    });
+    state.signalTradeLines.push(entryLine);
+  }
+
+  // Take profit line (green)
+  if (signal.tp) {
+    const tpLine = state.candleSeries.createPriceLine({
+      price: signal.tp,
+      color: '#26a69a',
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: 'Target',
+    });
+    state.signalTradeLines.push(tpLine);
+  }
+
+  // Stop loss line (red)
+  if (signal.sl) {
+    const slLine = state.candleSeries.createPriceLine({
+      price: signal.sl,
+      color: '#ef5350',
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: 'Stop',
+    });
+    state.signalTradeLines.push(slLine);
+  }
+}
+
+function clearSignalTradeLevels() {
+  if (state.signalTradeLines && state.candleSeries) {
+    state.signalTradeLines.forEach(line => {
+      try { state.candleSeries.removePriceLine(line); } catch(e) {}
+    });
+  }
+  state.signalTradeLines = [];
 }
 
 function renderAlertBar() {
