@@ -112,13 +112,22 @@ export default async function handler(request, response) {
   }
 
   try {
-    // GET - Fetch current stats
+    // GET - Fetch current stats (optionally includes signal log)
     if (request.method === 'GET') {
       const stats = await getStats();
-      return response.status(200).json({
-        success: true,
-        stats
-      });
+      const result = { success: true, stats };
+
+      // Include AI signal log if requested (or always for simplicity)
+      try {
+        const logData = await r.get('ai_signal_log');
+        if (logData) {
+          result.signalLog = typeof logData === 'string' ? JSON.parse(logData) : logData;
+        }
+      } catch (e) {
+        console.error('Failed to load signal log:', e.message);
+      }
+
+      return response.status(200).json(result);
     }
 
     // POST - Replace all stats (full sync from client)

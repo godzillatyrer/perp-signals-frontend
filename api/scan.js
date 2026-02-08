@@ -295,7 +295,7 @@ async function updateAISignalCounts(analyses, consensusSignals) {
       } else if (analysis.source === 'openai') {
         stats.openaiSignals += signalCount;
         stats.openaiTotalConf += totalConf;
-        console.log(`📊 OpenAI: +${signalCount} signals (total: ${stats.openaiSignals})`);
+        console.log(`📊 Gemini: +${signalCount} signals (total: ${stats.openaiSignals})`);
       } else if (analysis.source === 'grok') {
         stats.grokSignals += signalCount;
         stats.grokTotalConf += totalConf;
@@ -317,6 +317,81 @@ async function updateAISignalCounts(analyses, consensusSignals) {
     console.log('📊 AI stats saved to Redis');
   } catch (e) {
     console.error('Failed to update AI stats:', e.message);
+  }
+}
+
+// ============================================
+// AI SIGNAL LOG - Persist individual AI picks to Redis
+// ============================================
+// Saves each AI's individual signal details so the AI tab works even when browser is closed
+
+const AI_SIGNAL_LOG_KEY = 'ai_signal_log';
+
+async function saveAiSignalLogToRedis(analyses, consensusSignals) {
+  const r = getRedis();
+  if (!r) return;
+
+  try {
+    // Load existing signal log
+    const existing = await r.get(AI_SIGNAL_LOG_KEY);
+    const log = existing
+      ? (typeof existing === 'string' ? JSON.parse(existing) : existing)
+      : { claude: [], openai: [], grok: [], consensus: [] };
+
+    const now = Date.now();
+
+    // Add individual AI signals
+    for (const analysis of analyses) {
+      if (!analysis || !analysis.source || !analysis.signals) continue;
+      const source = analysis.source;
+      if (!log[source]) log[source] = [];
+
+      for (const sig of analysis.signals) {
+        const normalized = normalizeSignal(sig);
+        if (!normalized) continue;
+
+        log[source].unshift({
+          symbol: normalized.symbol,
+          direction: normalized.direction,
+          entry: normalized.entry,
+          tp: normalized.takeProfit,
+          sl: normalized.stopLoss,
+          confidence: normalized.confidence,
+          reasoning: (normalized.reasons || []).slice(0, 3).join('; ').slice(0, 200),
+          timestamp: now,
+          shadowStatus: 'pending',
+          shadowPnl: null
+        });
+      }
+
+      // Keep last 50 per AI
+      log[source] = log[source].slice(0, 50);
+    }
+
+    // Add consensus signals
+    for (const sig of consensusSignals) {
+      if (!log.consensus) log.consensus = [];
+      log.consensus.unshift({
+        symbol: sig.symbol,
+        direction: sig.direction,
+        entry: sig.entry,
+        tp: sig.takeProfit,
+        sl: sig.stopLoss,
+        confidence: sig.confidence,
+        aiSources: sig.aiSources,
+        isGold: sig.isGoldConsensus,
+        reasons: (sig.reasons || []).slice(0, 3),
+        timestamp: now,
+        tradeResult: null,
+        tradePnl: null
+      });
+    }
+    log.consensus = (log.consensus || []).slice(0, 50);
+
+    await r.set(AI_SIGNAL_LOG_KEY, JSON.stringify(log));
+    console.log(`📝 AI signal log saved to Redis (claude:${log.claude.length} gemini:${log.openai.length} grok:${log.grok.length} consensus:${log.consensus.length})`);
+  } catch (e) {
+    console.error('Failed to save AI signal log:', e.message);
   }
 }
 
@@ -1355,33 +1430,38 @@ async function analyzeWithClaude(prompt) {
   return null;
 }
 
-async function analyzeWithOpenAI(prompt) {
-  if (!process.env.OPENAI_API_KEY) return null;
+async function analyzeWithGemini(prompt) {
+  if (!process.env.GEMINI_API_KEY) return null;
+
+  console.log('💎 [GEMINI] Starting API call...');
 
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+        'Authorization': `Bearer ${process.env.GEMINI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-5.1',
+        model: 'gemini-2.5-flash',
         messages: [{ role: 'user', content: prompt }],
-        max_completion_tokens: 2048
+        max_tokens: 2048
       })
     });
 
     const data = await response.json();
     if (data.choices && data.choices[0]) {
       const text = data.choices[0].message.content;
+      console.log(`💎 [GEMINI] Response: ${text.length} chars`);
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         return { source: 'openai', ...JSON.parse(jsonMatch[0]) };
       }
+    } else if (data.error) {
+      console.error('💎 [GEMINI] API error:', data.error.message || JSON.stringify(data.error));
     }
   } catch (error) {
-    console.error('OpenAI analysis error:', error);
+    console.error('Gemini analysis error:', error);
   }
   return null;
 }
@@ -1612,7 +1692,7 @@ function formatSignalForTelegram(signal, majorEvent = null, indicators = null) {
 
   const aiList = signal.aiSources.map(s => {
     if (s === 'claude') return '🟣 Claude';
-    if (s === 'openai') return '🟢 GPT-4o';
+    if (s === 'openai') return '💎 Gemini';
     if (s === 'grok') return '⚡ Grok';
     return s;
   }).join(' + ');
@@ -1916,13 +1996,13 @@ export default async function handler(request, response) {
 
     // Check if we have at least 2 AI APIs configured
     const hasClaudeKey = !!process.env.CLAUDE_API_KEY;
-    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    const hasOpenAIKey = !!process.env.GEMINI_API_KEY;
     const hasGrokKey = !!process.env.GROK_API_KEY;
     const aiCount = [hasClaudeKey, hasOpenAIKey, hasGrokKey].filter(Boolean).length;
 
     console.log('🔑 API Keys configured:');
     console.log(`   Claude: ${hasClaudeKey ? '✅' : '❌'}`);
-    console.log(`   OpenAI: ${hasOpenAIKey ? '✅' : '❌'}`);
+    console.log(`   Gemini: ${hasOpenAIKey ? '✅' : '❌'}`);
     console.log(`   Grok: ${hasGrokKey ? '✅' : '❌'} ${hasGrokKey ? `(starts with: ${process.env.GROK_API_KEY.slice(0, 8)}...)` : ''}`);
 
     if (aiCount < 2) {
@@ -1968,7 +2048,7 @@ export default async function handler(request, response) {
     console.log('🤖 Running AI analysis...');
     const [claudeResult, openaiResult, grokResult] = await Promise.all([
       analyzeWithClaude(prompt),
-      analyzeWithOpenAI(prompt),
+      analyzeWithGemini(prompt),
       analyzeWithGrok(prompt)
     ]);
 
@@ -1981,6 +2061,9 @@ export default async function handler(request, response) {
 
     // Update AI signal counts in Redis (persists even when frontend is closed)
     await updateAISignalCounts(analyses, consensusSignals);
+
+    // Save individual AI signal details to Redis (so AI tab works even when browser is closed)
+    await saveAiSignalLogToRedis(analyses, consensusSignals);
 
     // Filter by confidence and TP% (uses optimized threshold if available)
     const minConfidence = opt('alertConfidence', CONFIG.ALERT_CONFIDENCE);

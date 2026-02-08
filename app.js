@@ -1,6 +1,6 @@
 /* ============================================
    SENTIENT TRADER - AI Crypto Trading Intelligence v3.1
-   Powered by Claude AI + ChatGPT + Grok
+   Powered by Claude AI + Gemini + Grok
    ============================================ */
 
 // Debug mode - set to true to see detailed API logs
@@ -19,10 +19,10 @@ const CONFIG = {
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
   CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
   CLAUDE_MODEL: 'claude-opus-4-6', // Claude Opus 4.6 (flagship)
-  // OpenAI API
-  OPENAI_API: 'https://api.openai.com/v1/chat/completions',
-  OPENAI_API_KEY: '', // Will be loaded from localStorage or prompted
-  OPENAI_MODEL: 'gpt-5.1', // GPT-5.1 (flagship)
+  // Gemini API (Google) — uses OpenAI-compatible endpoint
+  GEMINI_API: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  GEMINI_API_KEY: '', // Will be loaded from localStorage or prompted
+  GEMINI_MODEL: 'gemini-2.5-flash', // Gemini 2.5 Flash (fast reasoning)
   // Grok API (xAI)
   GROK_API: 'https://api.x.ai/v1/chat/completions',
   GROK_API_KEY: '', // Will be loaded from localStorage or prompted
@@ -75,7 +75,7 @@ const CONFIG = {
 // Load API keys from localStorage
 function loadApiKeys() {
   const claudeKey = localStorage.getItem('claude_api_key');
-  const openaiKey = localStorage.getItem('openai_api_key');
+  const openaiKey = localStorage.getItem('gemini_api_key') || localStorage.getItem('openai_api_key');
   const grokKey = localStorage.getItem('grok_api_key');
   const lunarcrushKey = localStorage.getItem('lunarcrush_api_key');
   const coinglassKey = localStorage.getItem('coinglass_api_key');
@@ -86,7 +86,7 @@ function loadApiKeys() {
   const discordEnabled = localStorage.getItem('discord_enabled');
 
   if (claudeKey) CONFIG.CLAUDE_API_KEY = claudeKey;
-  if (openaiKey) CONFIG.OPENAI_API_KEY = openaiKey;
+  if (openaiKey) CONFIG.GEMINI_API_KEY = openaiKey;
   if (grokKey) CONFIG.GROK_API_KEY = grokKey;
   if (lunarcrushKey) CONFIG.LUNARCRUSH_API_KEY = lunarcrushKey;
   if (coinglassKey) CONFIG.COINGLASS_API_KEY = coinglassKey;
@@ -318,7 +318,7 @@ function formatSignalForTelegram(signal) {
   const aiSources = signal.aiSources || [];
   const aiList = aiSources.length > 0 ? aiSources.map(ai => {
     if (ai === 'claude') return '🧠 Claude';
-    if (ai === 'openai') return '🤖 GPT-4o';
+    if (ai === 'openai') return '💎 Gemini';
     if (ai === 'grok') return '⚡ Grok';
     return ai;
   }).join(' + ') : 'AI Analysis';
@@ -794,13 +794,13 @@ function promptForApiKeys() {
     }
   }
 
-  // OpenAI API Key
-  if (!CONFIG.OPENAI_API_KEY) {
-    const openaiKey = prompt('Enter your OpenAI API Key:\n\n(Get one at platform.openai.com)\n\nLeave empty to skip.');
-    if (openaiKey && openaiKey.trim().startsWith('sk-')) {
-      CONFIG.OPENAI_API_KEY = openaiKey.trim();
-      localStorage.setItem('openai_api_key', openaiKey.trim());
-      console.log('🔑 OpenAI API Key saved');
+  // Gemini API Key
+  if (!CONFIG.GEMINI_API_KEY) {
+    const geminiKey = prompt('Enter your Google Gemini API Key:\n\n(Get one at aistudio.google.com/apikey)\n\nLeave empty to skip.');
+    if (geminiKey && geminiKey.trim().length > 10) {
+      CONFIG.GEMINI_API_KEY = geminiKey.trim();
+      localStorage.setItem('gemini_api_key', geminiKey.trim());
+      console.log('🔑 Gemini API Key saved');
     }
   }
 
@@ -817,10 +817,12 @@ function isClaudeConfigured() {
   return CONFIG.CLAUDE_API_KEY && CONFIG.CLAUDE_API_KEY.startsWith('sk-ant-');
 }
 
-// Check if OpenAI is configured
-function isOpenAIConfigured() {
-  return CONFIG.OPENAI_API_KEY && CONFIG.OPENAI_API_KEY.startsWith('sk-');
+// Check if Gemini is configured
+function isGeminiConfigured() {
+  return CONFIG.GEMINI_API_KEY && CONFIG.GEMINI_API_KEY.length > 10;
 }
+// Legacy alias
+function isOpenAIConfigured() { return isGeminiConfigured(); }
 
 // Check if Grok is configured
 function isGrokConfigured() {
@@ -858,14 +860,14 @@ function setApiKeyManually(provider, key) {
       console.error('❌ Invalid Claude API key. It should start with "sk-ant-"');
       return false;
     }
-  } else if (provider === 'openai' || provider === 'chatgpt') {
-    if (key && key.startsWith('sk-')) {
-      CONFIG.OPENAI_API_KEY = key;
-      localStorage.setItem('openai_api_key', key);
-      console.log('✅ OpenAI API key saved successfully!');
+  } else if (provider === 'openai' || provider === 'gemini' || provider === 'chatgpt') {
+    if (key && key.length > 10) {
+      CONFIG.GEMINI_API_KEY = key;
+      localStorage.setItem('gemini_api_key', key);
+      console.log('✅ Gemini API key saved successfully!');
       return true;
     } else {
-      console.error('❌ Invalid OpenAI API key. It should start with "sk-"');
+      console.error('❌ Invalid Gemini API key.');
       return false;
     }
   } else if (provider === 'lunarcrush' || provider === 'lunar') {
@@ -3568,21 +3570,21 @@ async function callClaudeAPI(prompt) {
   }
 }
 
-async function callOpenAIAPI(prompt) {
+async function callGeminiAPI(prompt) {
   const startTime = Date.now();
-  if (DEBUG_MODE) console.log(`🤖 [OPENAI] Starting API call with model: ${CONFIG.OPENAI_MODEL}`);
+  if (DEBUG_MODE) console.log(`💎 [GEMINI] Starting API call with model: ${CONFIG.GEMINI_MODEL}`);
   updateAiDebugStatus('openai', 'calling');
 
   try {
-    const response = await fetch(CONFIG.OPENAI_API, {
+    const response = await fetch(CONFIG.GEMINI_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${CONFIG.OPENAI_API_KEY}`
+        'Authorization': `Bearer ${CONFIG.GEMINI_API_KEY}`
       },
       body: JSON.stringify({
-        model: CONFIG.OPENAI_MODEL,
-        max_completion_tokens: 4096,
+        model: CONFIG.GEMINI_MODEL,
+        max_tokens: 4096,
         messages: [
           {
             role: 'system',
@@ -3597,17 +3599,17 @@ async function callOpenAIAPI(prompt) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`🤖 [OPENAI] API error ${response.status}: ${errorText}`);
+      console.error(`💎 [GEMINI] API error ${response.status}: ${errorText}`);
       updateAiDebugStatus('openai', 'error', `HTTP ${response.status}`);
       return null;
     }
 
     const data = await response.json();
-    if (DEBUG_MODE) console.log(`🤖 [OPENAI] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
+    if (DEBUG_MODE) console.log(`💎 [GEMINI] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
     updateAiDebugStatus('openai', 'success', `${elapsed}ms`);
     return data.choices[0].message.content;
   } catch (error) {
-    console.error('🤖 [OPENAI] API call failed:', error.message);
+    console.error('💎 [GEMINI] API call failed:', error.message);
     updateAiDebugStatus('openai', 'error', error.message);
     return null;
   }
@@ -3770,12 +3772,12 @@ ${AI_RESPONSE_FORMAT}
 Select 0-2 setups ONLY if they meet ALL requirements. Better to return empty topPicks than signal weak setups.`;
 }
 
-// GPT-4o - Technical Analyst (focuses on chart patterns, S/R, price action)
+// Gemini - Technical Analyst (focuses on chart patterns, S/R, price action)
 function buildOpenAIPrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('openai');
   const rejectionSummary = summarizeRejections();
-  return `You are GPT-4o, a TECHNICAL ANALYSIS specialist for crypto perpetual futures trading. Your expertise:
+  return `You are Gemini, a TECHNICAL ANALYSIS specialist for crypto perpetual futures trading. Your expertise:
 - Chart pattern recognition (head & shoulders, triangles, wedges)
 - Support/resistance level identification
 - Price action analysis (candlestick patterns)
@@ -3885,7 +3887,7 @@ async function runAiAnalysis() {
   state.signalBlockStats = {};
   const aiNames = [];
   if (isClaudeConfigured()) aiNames.push('Claude');
-  if (isOpenAIConfigured()) aiNames.push('GPT-4o');
+  if (isOpenAIConfigured()) aiNames.push('Gemini');
   if (isGrokConfigured()) aiNames.push('Grok');
   console.log(`🤖 Starting ${aiNames.join(' + ')} AI market analysis...`);
 
@@ -4033,20 +4035,20 @@ async function runAiAnalysis() {
     const marketInfoBySymbol = Object.fromEntries(enrichedData.map(m => [m.symbol, m]));
 
     // Build specialized prompts for each AI
-    // Claude = Risk Manager, GPT-4o = Technical Analyst, Grok = Momentum Hunter
+    // Claude = Risk Manager, Gemini = Technical Analyst, Grok = Momentum Hunter
     const claudePrompt = buildClaudePrompt(enrichedData);
     const openaiPrompt = buildOpenAIPrompt(enrichedData);
     const grokPrompt = buildGrokPrompt(enrichedData);
 
-    console.log('🎯 Using specialized AI roles: Claude=Risk, GPT=Technical, Grok=Momentum');
+    console.log('🎯 Using specialized AI roles: Claude=Risk, Gemini=Technical, Grok=Momentum');
 
     // Call all configured AIs in parallel with their specialized prompts
     const apiPromises = [];
     if (isClaudeConfigured()) {
       apiPromises.push(callClaudeAPI(claudePrompt).then(r => ({ source: 'claude', response: r })));
     }
-    if (isOpenAIConfigured()) {
-      apiPromises.push(callOpenAIAPI(openaiPrompt).then(r => ({ source: 'openai', response: r })));
+    if (isGeminiConfigured()) {
+      apiPromises.push(callGeminiAPI(openaiPrompt).then(r => ({ source: 'openai', response: r })));
     }
     if (isGrokConfigured()) {
       apiPromises.push(callGrokAPI(grokPrompt).then(r => ({ source: 'grok', response: r })));
@@ -4100,11 +4102,11 @@ async function runAiAnalysis() {
                   } else {
                     recordSignalRejection(validation.reason);
                     recordFilterReason(validation.reason);
-                    console.log(`⛔ GPT-4o pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
+                    console.log(`⛔ Gemini pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
               }
-              console.log('✅ GPT-5.1 analysis received:', analysis.topPicks?.length || 0, 'picks');
+              console.log('✅ Gemini analysis received:', analysis.topPicks?.length || 0, 'picks');
               state.performanceStats.openaiSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.openaiTotalConf += p.confidence || 0; });
               openaiPicks.forEach(p => logAiSignal('openai', p));
@@ -4412,7 +4414,7 @@ async function runAiAnalysis() {
           isSilverConsensus: isSilverConsensus,
           aiSources: aiSources,
           claudeModel: aiSources.includes('claude') ? CONFIG.CLAUDE_MODEL : null,
-          openaiModel: aiSources.includes('openai') ? CONFIG.OPENAI_MODEL : null,
+          openaiModel: aiSources.includes('openai') ? CONFIG.GEMINI_MODEL : null,
           grokModel: aiSources.includes('grok') ? CONFIG.GROK_MODEL : null,
           keyLevels: matchingPicks[0].keyLevels,
           timestamp: Date.now(),
@@ -6448,7 +6450,7 @@ function renderSignals() {
             <span class="gold-label">GOLD CONSENSUS</span>
             <div class="ai-trio">
               <span class="claude">Claude</span>
-              <span class="openai">GPT-4o</span>
+              <span class="openai">Gemini</span>
               <span class="grok">Grok</span>
             </div>
           </div>`;
@@ -6456,7 +6458,7 @@ function renderSignals() {
         // Silver consensus - 2 AIs agree
         const aiModels = [];
         if (hasClaude) aiModels.push('<span class="ai-model claude">Claude</span>');
-        if (hasOpenAI) aiModels.push('<span class="ai-model openai">GPT-4o</span>');
+        if (hasOpenAI) aiModels.push('<span class="ai-model openai">Gemini</span>');
         if (hasGrok) aiModels.push('<span class="ai-model grok">Grok</span>');
 
         aiSourceBadge = `
@@ -6477,7 +6479,7 @@ function renderSignals() {
             ${signal.marketSentiment ? `<span class="sentiment ${signal.marketSentiment.toLowerCase()}">${signal.marketSentiment}</span>` : ''}
           </div>`;
       } else if (hasOpenAI) {
-        const modelShort = signal.openaiModel ? signal.openaiModel.replace('gpt-', 'GPT-').replace('-preview', '') : 'GPT-4o';
+        const modelShort = signal.openaiModel || 'Gemini';
         aiSourceBadge = `
           <div class="openai-model-badge">
             <span class="model-icon">🤖</span>
@@ -6734,7 +6736,7 @@ function renderSignalsMainView() {
       mainContainer.innerHTML = `
         <div class="empty-state api-setup" style="grid-column: 1 / -1;">
           <h3>Setup AI Analysis</h3>
-          <p>Go to Settings to add your API keys for Claude, OpenAI, or Grok.</p>
+          <p>Go to Settings to add your API keys for Claude, Gemini, or Grok.</p>
         </div>`;
     } else {
       mainContainer.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;">Waiting for AI consensus signals...<br><br>Gold = All 3 AIs agree &nbsp; Silver = 2 AIs agree</div>`;
@@ -6766,14 +6768,14 @@ function renderSignalsMainView() {
             <span class="gold-label">GOLD CONSENSUS</span>
             <div class="ai-trio">
               <span class="ai-model claude">Claude</span>
-              <span class="ai-model openai">GPT-4o</span>
+              <span class="ai-model openai">Gemini</span>
               <span class="ai-model grok">Grok</span>
             </div>
           </div>`;
       } else if (signal.isSilverConsensus || signal.isConsensus) {
         const aiModels = [];
         if (hasClaude) aiModels.push('<span class="ai-model claude">Claude</span>');
-        if (hasOpenAI) aiModels.push('<span class="ai-model openai">GPT-4o</span>');
+        if (hasOpenAI) aiModels.push('<span class="ai-model openai">Gemini</span>');
         if (hasGrok) aiModels.push('<span class="ai-model grok">Grok</span>');
         aiSourceBadge = `
           <div class="silver-consensus-badge">
@@ -6785,7 +6787,7 @@ function renderSignalsMainView() {
         const src = hasClaude ? 'claude' : hasOpenAI ? 'openai' : hasGrok ? 'grok' : 'claude';
         const cls = src === 'claude' ? 'claude-model-badge' : src === 'openai' ? 'openai-model-badge' : 'grok-model-badge';
         const icon = src === 'claude' ? '🧠' : src === 'grok' ? '⚡' : '🤖';
-        const name = src === 'claude' ? 'Claude' : src === 'openai' ? 'GPT-4o' : 'Grok';
+        const name = src === 'claude' ? 'Claude' : src === 'openai' ? 'Gemini' : 'Grok';
         aiSourceBadge = `<div class="${cls}"><span class="model-icon">${icon}</span><span class="model-name">${name}</span></div>`;
       }
     }
@@ -7085,7 +7087,7 @@ function renderAiPredictions() {
         <span class="prediction-direction ${pred.direction.toLowerCase()}">${pred.direction}</span>
         <div class="prediction-ais">
           ${pred.aiSources.includes('claude') ? '<span class="prediction-ai claude">🧠</span>' : ''}
-          ${pred.aiSources.includes('openai') ? '<span class="prediction-ai openai">🤖</span>' : ''}
+          ${pred.aiSources.includes('openai') ? '<span class="prediction-ai openai">💎</span>' : ''}
           ${pred.aiSources.includes('grok') ? '<span class="prediction-ai grok">⚡</span>' : ''}
         </div>
         <span class="prediction-result ${statusClass}">${resultText}</span>
@@ -7142,6 +7144,46 @@ function loadAiSignalLog() {
       };
     }
   } catch (e) { /* ignore parse errors */ }
+  // Also load from server (async, merges with local)
+  loadAiSignalLogFromServer();
+}
+
+async function loadAiSignalLogFromServer() {
+  try {
+    const response = await fetch('/api/ai-stats');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!data.success || !data.signalLog) return;
+
+    let merged = false;
+    for (const source of ['claude', 'openai', 'grok', 'consensus']) {
+      const serverSigs = data.signalLog[source] || [];
+      if (serverSigs.length === 0) continue;
+
+      const localSigs = state.aiSignalLog[source] || [];
+      // Create set of existing keys for dedup (timestamp + symbol)
+      const localKeys = new Set(localSigs.map(s => `${s.timestamp}-${s.symbol}`));
+
+      for (const sig of serverSigs) {
+        const key = `${sig.timestamp}-${sig.symbol}`;
+        if (!localKeys.has(key)) {
+          localSigs.push(sig);
+          merged = true;
+        }
+      }
+
+      // Sort newest first, keep max 100
+      state.aiSignalLog[source] = localSigs.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
+    }
+
+    if (merged) {
+      saveAiSignalLog();
+      renderAiDetailView();
+      console.log('📝 AI signal log merged from server');
+    }
+  } catch (e) {
+    console.error('Failed to load AI signal log from server:', e);
+  }
 }
 
 // Check shadow P&L for all pending individual AI signals
@@ -7389,7 +7431,7 @@ function renderConsensusPanel() {
           </div>
         </div>
         <div class="ai-log-sources">
-          ${sig.aiSources.map(s => `<span class="ai-log-source-chip ${s}">${s === 'claude' ? 'Claude' : s === 'openai' ? 'GPT' : 'Grok'}</span>`).join('')}
+          ${sig.aiSources.map(s => `<span class="ai-log-source-chip ${s}">${s === 'claude' ? 'Claude' : s === 'openai' ? 'Gemini' : 'Grok'}</span>`).join('')}
           ${sig.marketRegime ? `<span style="font-size:10px;color:var(--t4);margin-left:6px">${sig.marketRegime}</span>` : ''}
         </div>
         ${sig.reasoning ? `<div class="ai-log-reasoning" style="margin-top:6px">${sig.reasoning.length > 200 ? sig.reasoning.slice(0, 200) + '...' : sig.reasoning}</div>` : ''}
@@ -7923,7 +7965,7 @@ function exportToCSV() {
   rows.push(['Win Rate', ((stats.winningTrades / stats.totalTrades) * 100 || 0).toFixed(1) + '%']);
   rows.push(['Total PnL', '$' + stats.totalPnL.toFixed(2)]);
   rows.push(['Claude Signals', stats.claudeSignals]);
-  rows.push(['OpenAI Signals', stats.openaiSignals]);
+  rows.push(['Gemini Signals', stats.openaiSignals]);
   rows.push(['Grok Signals', stats.grokSignals]);
   rows.push(['Gold Consensus', stats.goldConsensusSignals]);
   rows.push(['Silver Consensus', stats.silverConsensusSignals]);
@@ -8148,7 +8190,7 @@ function renderAlertBar() {
       ${s.isConsensus ? '<span class="ai-indicator consensus">🎯 Both AIs</span>' :
         s.aiSources?.includes('claude') && s.aiSources?.includes('openai') ? '<span class="ai-indicator consensus">🎯 Both AIs</span>' :
         s.aiSources?.includes('claude') ? '<span class="ai-indicator claude">Claude</span>' :
-        s.aiSources?.includes('openai') ? '<span class="ai-indicator openai">ChatGPT</span>' :
+        s.aiSources?.includes('openai') ? '<span class="ai-indicator openai">Gemini</span>' :
         s.isAiGenerated ? '<span class="ai-indicator">AI Pick</span>' : ''}
     </div>
   `).join('');
@@ -8819,7 +8861,7 @@ function openSettingsModal() {
 
   // Load current values into inputs
   document.getElementById('claudeApiKey').value = CONFIG.CLAUDE_API_KEY || '';
-  document.getElementById('openaiApiKey').value = CONFIG.OPENAI_API_KEY || '';
+  document.getElementById('openaiApiKey').value = CONFIG.GEMINI_API_KEY || '';
   document.getElementById('grokApiKey').value = CONFIG.GROK_API_KEY || '';
   document.getElementById('lunarcrushApiKey').value = CONFIG.LUNARCRUSH_API_KEY || '';
   document.getElementById('coinglassApiKey').value = CONFIG.COINGLASS_API_KEY || '';
@@ -8894,7 +8936,7 @@ function updateSettingsApiStatus() {
   const validCount = [claudeValid, openaiValid, grokValid].filter(Boolean).length;
   const validNames = [];
   if (claudeValid) validNames.push('Claude');
-  if (openaiValid) validNames.push('GPT-4o');
+  if (openaiValid) validNames.push('Gemini');
   if (grokValid) validNames.push('Grok');
 
   // Update status indicator
@@ -8935,18 +8977,18 @@ function saveSettings() {
     localStorage.removeItem('claude_api_key');
   }
 
-  // Validate and save OpenAI API key
+  // Validate and save Gemini API key
   if (openaiKey) {
-    if (openaiKey.startsWith('sk-')) {
-      CONFIG.OPENAI_API_KEY = openaiKey;
-      localStorage.setItem('openai_api_key', openaiKey);
-      console.log('✅ OpenAI API key saved');
+    if (openaiKey.length > 10) {
+      CONFIG.GEMINI_API_KEY = openaiKey;
+      localStorage.setItem('gemini_api_key', openaiKey);
+      console.log('✅ Gemini API key saved');
     } else if (openaiKey.length > 0) {
-      console.warn('⚠️ Invalid OpenAI API key format');
+      console.warn('⚠️ Invalid Gemini API key format');
     }
   } else {
-    CONFIG.OPENAI_API_KEY = '';
-    localStorage.removeItem('openai_api_key');
+    CONFIG.GEMINI_API_KEY = '';
+    localStorage.removeItem('gemini_api_key');
   }
 
   // Validate and save Grok API key
@@ -9214,7 +9256,7 @@ async function init() {
 
   // Load API keys from localStorage
   const keysLoaded = loadApiKeys();
-  console.log('🔑 API Keys loaded:', keysLoaded.claude ? 'Claude ✓' : 'Claude ✗', keysLoaded.openai ? 'OpenAI ✓' : 'OpenAI ✗');
+  console.log('🔑 API Keys loaded:', keysLoaded.claude ? 'Claude ✓' : 'Claude ✗', keysLoaded.openai ? 'Gemini ✓' : 'Gemini ✗');
 
   // Prompt for missing API keys after UI loads
   if (!keysLoaded.claude || !keysLoaded.openai) {
@@ -9242,7 +9284,7 @@ async function init() {
     console.log('');
     console.log('   AI Performance:');
     console.log(`   Claude: ${getAIPerformance('claude')}% win rate`);
-    console.log(`   ChatGPT: ${getAIPerformance('openai')}% win rate`);
+    console.log(`   Gemini: ${getAIPerformance('openai')}% win rate`);
     console.log(`   Consensus: ${getAIPerformance('consensus')}% win rate`);
   };
   window.toggleSound = () => { state.soundEnabled = !state.soundEnabled; console.log('🔊 Sound:', state.soundEnabled ? 'ON' : 'OFF'); };
@@ -9297,6 +9339,7 @@ async function init() {
   setInterval(renderMarkets, 2000);
   setInterval(updateShadowPnL, 5000); // Check shadow P&L for AI signal log every 5s
   setInterval(renderAiDetailView, 30000); // Refresh AI detail view every 30s
+  setInterval(loadAiSignalLogFromServer, 120000); // Sync AI signal log from server every 2 min
   setInterval(loadOptimizerStatus, 600000); // Refresh optimizer status every 10 min
 
   // Initialize AI scanning with 10-minute interval
