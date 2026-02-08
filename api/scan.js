@@ -1335,7 +1335,7 @@ async function analyzeWithClaude(prompt) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-opus-4-6',
         max_tokens: 2048,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -1366,7 +1366,7 @@ async function analyzeWithOpenAI(prompt) {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: 'gpt-5.1',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048
       })
@@ -1402,7 +1402,7 @@ async function analyzeWithGrok(prompt) {
         'Authorization': `Bearer ${process.env.GROK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-3-fast',
+        model: 'grok-4-1-fast-reasoning',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048
       })
