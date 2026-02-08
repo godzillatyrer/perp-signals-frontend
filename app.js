@@ -8038,7 +8038,7 @@ function initEventListeners() {
     });
   });
 
-  // Mobile navigation
+  // Mobile navigation — uses same view system as desktop nav
   document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const view = btn.dataset.view;
@@ -8047,57 +8047,44 @@ function initEventListeners() {
       document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
-      // Handle different views
       const sidebarRight = document.querySelector('.sidebar-right');
-      const mainContent = document.querySelector('.main-content');
 
-      switch(view) {
-        case 'chart':
-          sidebarRight?.classList.remove('mobile-active');
-          mainContent.style.display = 'flex';
-          // Resize chart when returning to chart view
-          setTimeout(() => {
-            if (state.chart) state.chart.resize(
-              document.getElementById('chart')?.clientWidth || window.innerWidth,
-              document.getElementById('chart')?.clientHeight || 400
-            );
-          }, 100);
-          break;
+      // Handle settings separately (opens modal)
+      if (view === 'settings') {
+        openSettingsModal();
+        return;
+      }
 
-        case 'signals':
-          sidebarRight?.classList.add('mobile-active');
-          mainContent.style.display = 'none';
-          // Activate signals tab
-          document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
-          document.querySelector('.tab-btn[data-tab="signals"]')?.classList.add('active');
-          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
-          document.getElementById('signalsView')?.classList.add('active');
-          break;
+      // Handle watchlist — show sidebar as mobile sheet
+      if (view === 'watchlist') {
+        sidebarRight?.classList.toggle('mobile-active');
+        document.querySelector('.main-content').style.display =
+          sidebarRight?.classList.contains('mobile-active') ? 'none' : 'flex';
+        return;
+      }
 
-        case 'data':
-          sidebarRight?.classList.add('mobile-active');
-          mainContent.style.display = 'none';
-          // Activate data tab
-          document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
-          document.querySelector('.tab-btn[data-tab="data"]')?.classList.add('active');
-          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
-          document.getElementById('dataView')?.classList.add('active');
-          break;
+      // Hide sidebar for all main views
+      sidebarRight?.classList.remove('mobile-active');
+      document.querySelector('.main-content').style.display = 'flex';
 
-        case 'portfolio':
-          sidebarRight?.classList.add('mobile-active');
-          mainContent.style.display = 'none';
-          // Activate stats tab
-          document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
-          document.querySelector('.tab-btn[data-tab="stats"]')?.classList.add('active');
-          document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
-          document.getElementById('statsView')?.classList.add('active');
-          break;
+      // Switch main view (same as desktop nav)
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      const viewEl = document.getElementById(`view-${view}`);
+      if (viewEl) viewEl.classList.add('active');
 
-        case 'settings':
-          // Open settings modal properly (loads saved values)
-          openSettingsModal();
-          break;
+      // Also sync desktop nav active state
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.nav-btn[data-view="${view}"]`)?.classList.add('active');
+
+      // View-specific actions
+      if (view === 'signals') renderSignalsMainView();
+      if (view === 'chart') {
+        setTimeout(() => {
+          if (state.chart) {
+            const c = document.getElementById('tradingChart');
+            if (c) state.chart.resize(c.clientWidth, c.clientHeight);
+          }
+        }, 100);
       }
     });
   });
