@@ -7025,16 +7025,19 @@ function renderSentimentData() {
 function renderStatsView() {
   const stats = state.performanceStats;
 
-  // Calculate win rates for each AI
-  const claudeWinRate = stats.claudeSignals > 0
-    ? Math.round((stats.claudeWins / (stats.claudeWins + stats.claudeLosses)) * 100) || 0
-    : 0;
-  const openaiWinRate = stats.openaiSignals > 0
-    ? Math.round((stats.openaiWins / (stats.openaiWins + stats.openaiLosses)) * 100) || 0
-    : 0;
-  const grokWinRate = stats.grokSignals > 0
-    ? Math.round((stats.grokWins / (stats.grokWins + stats.grokLosses)) * 100) || 0
-    : 0;
+  // Calculate win rates for each AI (based on actual trades, not signal picks)
+  const claudeTrades = (stats.claudeWins || 0) + (stats.claudeLosses || 0);
+  const claudeWinRate = claudeTrades > 0
+    ? Math.round((stats.claudeWins / claudeTrades) * 100)
+    : null;
+  const openaiTrades = (stats.openaiWins || 0) + (stats.openaiLosses || 0);
+  const openaiWinRate = openaiTrades > 0
+    ? Math.round((stats.openaiWins / openaiTrades) * 100)
+    : null;
+  const grokTrades = (stats.grokWins || 0) + (stats.grokLosses || 0);
+  const grokWinRate = grokTrades > 0
+    ? Math.round((stats.grokWins / grokTrades) * 100)
+    : null;
 
   // Calculate average confidence
   const claudeAvgConf = stats.claudeSignals > 0
@@ -7047,13 +7050,15 @@ function renderStatsView() {
     ? Math.round(stats.grokTotalConf / stats.grokSignals)
     : 0;
 
-  // Calculate consensus win rates
-  const goldWinRate = stats.goldConsensusSignals > 0
-    ? Math.round((stats.goldConsensusWins / (stats.goldConsensusWins + stats.goldConsensusLosses)) * 100) || 0
-    : 0;
-  const silverWinRate = stats.silverConsensusSignals > 0
-    ? Math.round((stats.silverConsensusWins / (stats.silverConsensusWins + stats.silverConsensusLosses)) * 100) || 0
-    : 0;
+  // Calculate consensus win rates (based on actual trades, not signal count)
+  const goldTrades = (stats.goldConsensusWins || 0) + (stats.goldConsensusLosses || 0);
+  const goldWinRate = goldTrades > 0
+    ? Math.round((stats.goldConsensusWins / goldTrades) * 100)
+    : null;
+  const silverTrades = (stats.silverConsensusWins || 0) + (stats.silverConsensusLosses || 0);
+  const silverWinRate = silverTrades > 0
+    ? Math.round((stats.silverConsensusWins / silverTrades) * 100)
+    : null;
 
   // Update UI elements
   const updateEl = (id, value) => {
@@ -7061,26 +7066,28 @@ function renderStatsView() {
     if (el) el.textContent = value;
   };
 
-  updateEl('claudeWinRate', claudeWinRate + '%');
-  updateEl('claudeTotalTrades', stats.claudeSignals);
+  updateEl('claudeWinRate', claudeWinRate !== null ? claudeWinRate + '%' : '--%');
+  updateEl('claudeTradeRecord', (stats.claudeWins || 0) + 'W ' + (stats.claudeLosses || 0) + 'L');
+  updateEl('claudeTotalTrades', stats.claudeSignals || 0);
   updateEl('claudeAvgConf', claudeAvgConf + '%');
-  updateEl('claudePerfBar', null);
-  document.getElementById('claudePerfBar')?.style.setProperty('width', claudeWinRate + '%');
+  document.getElementById('claudePerfBar')?.style.setProperty('width', (claudeWinRate || 0) + '%');
 
-  updateEl('openaiWinRate', openaiWinRate + '%');
-  updateEl('openaiTotalTrades', stats.openaiSignals);
+  updateEl('openaiWinRate', openaiWinRate !== null ? openaiWinRate + '%' : '--%');
+  updateEl('openaiTradeRecord', (stats.openaiWins || 0) + 'W ' + (stats.openaiLosses || 0) + 'L');
+  updateEl('openaiTotalTrades', stats.openaiSignals || 0);
   updateEl('openaiAvgConf', openaiAvgConf + '%');
-  document.getElementById('openaiPerfBar')?.style.setProperty('width', openaiWinRate + '%');
+  document.getElementById('openaiPerfBar')?.style.setProperty('width', (openaiWinRate || 0) + '%');
 
-  updateEl('grokWinRate', grokWinRate + '%');
-  updateEl('grokTotalTrades', stats.grokSignals);
+  updateEl('grokWinRate', grokWinRate !== null ? grokWinRate + '%' : '--%');
+  updateEl('grokTradeRecord', (stats.grokWins || 0) + 'W ' + (stats.grokLosses || 0) + 'L');
+  updateEl('grokTotalTrades', stats.grokSignals || 0);
   updateEl('grokAvgConf', grokAvgConf + '%');
-  document.getElementById('grokPerfBar')?.style.setProperty('width', grokWinRate + '%');
+  document.getElementById('grokPerfBar')?.style.setProperty('width', (grokWinRate || 0) + '%');
 
-  updateEl('goldConsensusRate', goldWinRate + '%');
-  updateEl('goldConsensusCount', stats.goldConsensusSignals + ' signals');
-  updateEl('silverConsensusRate', silverWinRate + '%');
-  updateEl('silverConsensusCount', stats.silverConsensusSignals + ' signals');
+  updateEl('goldConsensusRate', goldWinRate !== null ? goldWinRate + '%' : '--%');
+  updateEl('goldConsensusCount', goldTrades + ' trades / ' + (stats.goldConsensusSignals || 0) + ' signals');
+  updateEl('silverConsensusRate', silverWinRate !== null ? silverWinRate + '%' : '--%');
+  updateEl('silverConsensusCount', silverTrades + ' trades / ' + (stats.silverConsensusSignals || 0) + ' signals');
 
   // Render recent predictions
   renderAiPredictions();
