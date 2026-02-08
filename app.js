@@ -712,7 +712,7 @@ async function parseAndPreviewCall() {
   const saveBtn = document.getElementById('saveDiscordCallBtn');
 
   if (!message.trim()) {
-    preview.innerHTML = '<span style="color: #ff6b6b;">Please enter a call message</span>';
+    preview.innerHTML = '<span style="color: var(--short);">Please enter a call message</span>';
     preview.style.display = 'block';
     saveBtn.disabled = true;
     return;
@@ -730,7 +730,7 @@ async function parseAndPreviewCall() {
       parsedCallData = data.call;
       const call = data.call;
       preview.innerHTML = `
-        <div style="color: #4ade80;">Parsed successfully!</div>
+        <div style="color: var(--long);">Parsed successfully!</div>
         <div style="margin-top: 8px;">
           <strong>${call.direction === 'LONG' ? '🚀' : '🔴'} ${call.symbol} ${call.direction}</strong><br>
           ${call.entry ? `Entry: $${call.entry.toLocaleString()}<br>` : ''}
@@ -742,12 +742,12 @@ async function parseAndPreviewCall() {
       saveBtn.disabled = false;
     } else {
       parsedCallData = null;
-      preview.innerHTML = '<span style="color: #ff6b6b;">Could not parse call. Make sure it includes a symbol (BTC, ETH, etc.) and direction (LONG/SHORT).</span>';
+      preview.innerHTML = '<span style="color: var(--short);">Could not parse call. Make sure it includes a symbol (BTC, ETH, etc.) and direction (LONG/SHORT).</span>';
       saveBtn.disabled = true;
     }
     preview.style.display = 'block';
   } catch (e) {
-    preview.innerHTML = `<span style="color: #ff6b6b;">Error: ${e.message}</span>`;
+    preview.innerHTML = `<span style="color: var(--short);">Error: ${e.message}</span>`;
     preview.style.display = 'block';
     saveBtn.disabled = true;
   }
@@ -4579,19 +4579,19 @@ async function loadCooldownStatus() {
 
     if (cooldowns.length === 0) {
       cooldownInfo.innerHTML = `
-        <div style="color: #4ade80;">✅ No active cooldowns</div>
+        <div style="color: var(--long);">✅ No active cooldowns</div>
         <div style="color: #888; font-size: 11px; margin-top: 4px;">All coins can receive signals</div>
       `;
     } else {
       const list = cooldowns.map(c =>
         `<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
-          <span style="color: #f59e0b;">${c.symbol}</span>
+          <span style="color: var(--warn);">${c.symbol}</span>
           <span style="color: #888;">${c.hoursRemaining}h remaining</span>
         </div>`
       ).join('');
 
       cooldownInfo.innerHTML = `
-        <div style="color: #f59e0b; margin-bottom: 8px;">⏳ ${cooldowns.length} coin(s) on cooldown:</div>
+        <div style="color: var(--warn); margin-bottom: 8px;">⏳ ${cooldowns.length} coin(s) on cooldown:</div>
         ${list}
       `;
     }
@@ -5397,12 +5397,12 @@ function initDualPortfolioEquityCharts() {
     const container = document.getElementById(`equityChart${suffix}`);
     if (!container || typeof LightweightCharts === 'undefined') continue;
 
-    const chartColor = portfolioType === 'gold' ? '#ffd700' : '#8b9dc3';
+    const chartColor = portfolioType === 'gold' ? '#fcd34d' : '#cbd5e1';
 
     dualPortfolioState[`equityChart${suffix}`] = LightweightCharts.createChart(container, {
       width: container.clientWidth,
       height: 200,
-      layout: { background: { type: 'solid', color: '#111820' }, textColor: '#8b949e' },
+      layout: { background: { type: 'solid', color: '#0a0a12' }, textColor: '#a8a8be' },
       grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
       rightPriceScale: { visible: true, borderVisible: false },
       timeScale: { visible: true, borderVisible: false, timeVisible: true },
@@ -5462,10 +5462,10 @@ function updatePortfolioComparison() {
       bestEl.textContent = 'Tied';
     } else if (silverReturn > goldReturn) {
       bestEl.textContent = 'Silver (2/3)';
-      bestEl.style.color = '#8b9dc3';
+      bestEl.style.color = 'var(--silver)';
     } else {
       bestEl.textContent = 'Gold (3/3)';
-      bestEl.style.color = '#ffd700';
+      bestEl.style.color = 'var(--gold)';
     }
   }
   if (lastSyncEl && dualPortfolioState.lastSync) {
@@ -5750,41 +5750,41 @@ function initChart() {
     width: container.clientWidth,
     height: container.clientHeight,
     layout: {
-      background: { type: 'solid', color: '#111820' },
-      textColor: '#8b949e'
+      background: { type: 'solid', color: '#06060a' },
+      textColor: '#a8a8be'
     },
     grid: {
-      vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
-      horzLines: { color: 'rgba(255, 255, 255, 0.03)' }
+      vertLines: { color: 'rgba(139, 92, 246, 0.04)' },
+      horzLines: { color: 'rgba(139, 92, 246, 0.04)' }
     },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: 'rgba(124, 92, 255, 0.4)', width: 1, style: 2 },
-      horzLine: { color: 'rgba(124, 92, 255, 0.4)', width: 1, style: 2 }
+      vertLine: { color: 'rgba(139, 92, 246, 0.4)', width: 1, style: 2 },
+      horzLine: { color: 'rgba(139, 92, 246, 0.4)', width: 1, style: 2 }
     },
     rightPriceScale: {
-      borderColor: 'rgba(255, 255, 255, 0.1)',
+      borderColor: 'rgba(255, 255, 255, 0.06)',
       scaleMargins: { top: 0.1, bottom: 0.2 }
     },
     timeScale: {
-      borderColor: 'rgba(255, 255, 255, 0.1)',
+      borderColor: 'rgba(255, 255, 255, 0.06)',
       timeVisible: true,
       secondsVisible: false
     }
   });
 
   state.candleSeries = state.chart.addCandlestickSeries({
-    upColor: '#3fb950',
-    downColor: '#f85149',
-    borderUpColor: '#3fb950',
-    borderDownColor: '#f85149',
-    wickUpColor: '#3fb950',
-    wickDownColor: '#f85149'
+    upColor: '#34d399',
+    downColor: '#fb7185',
+    borderUpColor: '#34d399',
+    borderDownColor: '#fb7185',
+    wickUpColor: '#6ee7b7',
+    wickDownColor: '#fda4af'
   });
 
   // Add EMA lines (hidden by default, toggle with IND button)
   state.ema20Series = state.chart.addLineSeries({
-    color: '#58a6ff',
+    color: '#818cf8',
     lineWidth: 1,
     priceLineVisible: false,
     lastValueVisible: false,
@@ -5793,7 +5793,7 @@ function initChart() {
   });
 
   state.ema50Series = state.chart.addLineSeries({
-    color: '#d29922',
+    color: '#fbbf24',
     lineWidth: 1,
     priceLineVisible: false,
     lastValueVisible: false,
@@ -5802,7 +5802,7 @@ function initChart() {
   });
 
   state.ema200Series = state.chart.addLineSeries({
-    color: '#a371f7',
+    color: '#fb7185',
     lineWidth: 2,
     priceLineVisible: false,
     lastValueVisible: false,
@@ -5817,7 +5817,7 @@ function initChart() {
   }, 100);
 
   state.volumeSeries = state.chart.addHistogramSeries({
-    color: '#7c5cff',
+    color: '#8b5cf6',
     priceFormat: { type: 'volume' },
     priceScaleId: '',
     scaleMargins: { top: 0.85, bottom: 0 }
@@ -5939,13 +5939,13 @@ function addUserLine(price) {
 
   const line = state.candleSeries.createPriceLine({
     price: price,
-    color: '#d29922', // Yellow for user lines
+    color: '#fbbf24', // Yellow for user lines
     lineWidth: 2,
     lineStyle: LightweightCharts.LineStyle.Solid,
     axisLabelVisible: true,
     title: 'User',
     lineVisible: true,
-    axisLabelColor: '#d29922',
+    axisLabelColor: '#fbbf24',
     axisLabelTextColor: '#ffffff'
   });
 
@@ -6003,13 +6003,13 @@ function loadUserLines() {
       for (const price of prices) {
         const line = state.candleSeries.createPriceLine({
           price: price,
-          color: '#d29922',
+          color: '#fbbf24',
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Solid,
           axisLabelVisible: true,
           title: 'User',
           lineVisible: true,
-          axisLabelColor: '#d29922',
+          axisLabelColor: '#fbbf24',
           axisLabelTextColor: '#ffffff'
         });
         state.userLines.push(line);
@@ -6041,13 +6041,13 @@ function drawSupportResistanceLines(supports, resistances) {
   resistances.forEach((price, index) => {
     const line = state.candleSeries.createPriceLine({
       price: price,
-      color: '#f85149',
+      color: '#fb7185',
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
       title: `R${index + 1}`,
       lineVisible: true,
-      axisLabelColor: '#f85149',
+      axisLabelColor: '#fb7185',
       axisLabelTextColor: '#ffffff'
     });
     state.srLines.push(line);
@@ -6057,13 +6057,13 @@ function drawSupportResistanceLines(supports, resistances) {
   supports.forEach((price, index) => {
     const line = state.candleSeries.createPriceLine({
       price: price,
-      color: '#3fb950',
+      color: '#34d399',
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
       title: `S${index + 1}`,
       lineVisible: true,
-      axisLabelColor: '#3fb950',
+      axisLabelColor: '#34d399',
       axisLabelTextColor: '#ffffff'
     });
     state.srLines.push(line);
@@ -6087,15 +6087,15 @@ function initEquityChart() {
   state.equityChart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
     height: 120,
-    layout: { background: { type: 'solid', color: '#111820' }, textColor: '#8b949e' },
-    grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+    layout: { background: { type: 'solid', color: '#0a0a12' }, textColor: '#a8a8be' },
+    grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(139, 92, 246, 0.04)' } },
     rightPriceScale: { visible: false },
     timeScale: { visible: false },
     crosshair: { mode: LightweightCharts.CrosshairMode.Hidden }
   });
 
   state.equitySeries = state.equityChart.addAreaSeries({
-    lineColor: '#7c5cff',
+    lineColor: '#8b5cf6',
     topColor: 'rgba(124, 92, 255, 0.3)',
     bottomColor: 'rgba(124, 92, 255, 0.05)',
     lineWidth: 2
@@ -7275,7 +7275,7 @@ function updateAiBadges() {
   const badgesContainer = document.getElementById('aiActiveBadges');
   if (badgesContainer && !isAnyAiConfigured()) {
     badgesContainer.innerHTML = `
-      <div class="ai-badge" style="background: var(--bg-hover); opacity: 0.7;">
+      <div class="ai-badge" style="background: var(--hover); opacity: 0.7;">
         <span>⚠️</span>
         <span>No AI</span>
       </div>
@@ -7299,7 +7299,7 @@ function updateSRLinesFromAI(signal) {
   if (majorSupport && state.candleSeries) {
     const supportLine = state.candleSeries.createPriceLine({
       price: majorSupport,
-      color: '#3fb950',
+      color: '#34d399',
       lineWidth: 2,
       lineStyle: 0, // Solid
       axisLabelVisible: true,
@@ -7311,7 +7311,7 @@ function updateSRLinesFromAI(signal) {
   if (majorResistance && state.candleSeries) {
     const resistanceLine = state.candleSeries.createPriceLine({
       price: majorResistance,
-      color: '#f85149',
+      color: '#fb7185',
       lineWidth: 2,
       lineStyle: 0,
       axisLabelVisible: true,
@@ -7323,7 +7323,7 @@ function updateSRLinesFromAI(signal) {
   if (liquidationZone && state.candleSeries) {
     const liqLine = state.candleSeries.createPriceLine({
       price: liquidationZone,
-      color: '#d29922',
+      color: '#fbbf24',
       lineWidth: 1,
       lineStyle: 2, // Dashed
       axisLabelVisible: true,
@@ -7535,7 +7535,7 @@ function updateDataSource(name, isLive) {
   if (nameEl) nameEl.textContent = displayName;
   if (statusEl) {
     statusEl.textContent = isLive ? '● Live' : '● Offline';
-    statusEl.style.color = isLive ? 'var(--green)' : 'var(--red)';
+    statusEl.style.color = isLive ? 'var(--long)' : 'var(--short)';
   }
 }
 
@@ -7566,11 +7566,11 @@ function showNotification(signal) {
     <div class="notification-body">
       <div class="notification-signal">
         <span class="notification-conf">Confidence: ${signal.confidence}%</span>
-        ${isAutoTrade ? '<span style="color: var(--purple); margin-left: 8px;">Position Opened</span>' : ''}
+        ${isAutoTrade ? '<span style="color: var(--pri); margin-left: 8px;">Position Opened</span>' : ''}
       </div>
       <div class="notification-reason">${signal.reasons ? signal.reasons[0] : 'AI Analysis'}</div>
       ${isAutoTrade ? `
-        <div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">
+        <div style="margin-top: 8px; font-size: 11px; color: var(--t2);">
           Entry: $${formatPrice(signal.entry)} | TP: $${formatPrice(signal.tp)} | SL: $${formatPrice(signal.sl)}
         </div>
       ` : ''}
