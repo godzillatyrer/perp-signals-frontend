@@ -1691,6 +1691,178 @@ function createTradeKeyboard(signal) {
 }
 
 // ============================================
+// AUTO TRADE OPENING — Opens trades in Redis portfolio
+// ============================================
+// Same logic as client-side openDualPortfolioTrade() but server-side
+// Portfolio data is shared via Redis key 'dual_portfolio_data'
+
+const PORTFOLIO_KEY = 'dual_portfolio_data';
+
+const TRADE_CONFIG = {
+  silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8 },
+  gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5 }
+};
+
+function getDefaultPortfolio(type) {
+  return {
+    type,
+    balance: 5000,
+    startBalance: 5000,
+    trades: [],
+    equityHistory: [{ time: Date.now(), value: 5000 }],
+    stats: {
+      totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      totalPnL: 0,
+      maxDrawdown: 0,
+      peakEquity: 5000
+    },
+    lastUpdated: Date.now()
+  };
+}
+
+function getDefaultPortfolioData() {
+  return {
+    silver: getDefaultPortfolio('silver'),
+    gold: getDefaultPortfolio('gold'),
+    config: {
+      silverConfig: TRADE_CONFIG.silver,
+      goldConfig: TRADE_CONFIG.gold
+    },
+    lastUpdated: Date.now()
+  };
+}
+
+async function openTradeForSignal(signal) {
+  const r = getRedis();
+  if (!r) {
+    console.log('📦 Redis not configured - cannot open trade');
+    return { opened: false, reason: 'no_redis' };
+  }
+
+  try {
+    // Load current portfolio from Redis
+    let portfolioData;
+    try {
+      const data = await r.get(PORTFOLIO_KEY);
+      if (data) {
+        portfolioData = typeof data === 'string' ? JSON.parse(data) : data;
+        const defaults = getDefaultPortfolioData();
+        portfolioData = {
+          silver: { ...defaults.silver, ...portfolioData.silver },
+          gold: { ...defaults.gold, ...portfolioData.gold },
+          config: portfolioData.config || defaults.config,
+          lastUpdated: portfolioData.lastUpdated || Date.now()
+        };
+      } else {
+        portfolioData = getDefaultPortfolioData();
+      }
+    } catch (e) {
+      console.error('Redis portfolio read error:', e.message);
+      portfolioData = getDefaultPortfolioData();
+    }
+
+    const portfolioType = signal.isGoldConsensus ? 'gold' : 'silver';
+    const portfolio = portfolioData[portfolioType];
+    const config = TRADE_CONFIG[portfolioType];
+
+    // Use config from Redis if available (client may have customized it)
+    const redisConfig = portfolioData.config?.[portfolioType] ||
+                        portfolioData.config?.[`${portfolioType}Config`];
+    const leverage = redisConfig?.leverage || config.leverage;
+    const riskPercent = redisConfig?.riskPercent || config.riskPercent;
+    const maxOpenTrades = redisConfig?.maxOpenTrades || config.maxOpenTrades;
+
+    // Ensure trades array exists
+    if (!portfolio.trades) portfolio.trades = [];
+
+    // Check max open trades
+    const openTrades = portfolio.trades.filter(t => t.status === 'open');
+    if (openTrades.length >= maxOpenTrades) {
+      console.log(`📦 ${portfolioType.toUpperCase()}: Max ${maxOpenTrades} trades reached, skipping ${signal.symbol}`);
+      return { opened: false, reason: 'max_trades' };
+    }
+
+    // Check if already in this symbol
+    if (openTrades.some(t => t.symbol === signal.symbol)) {
+      console.log(`📦 ${portfolioType.toUpperCase()}: Already in ${signal.symbol}, skipping`);
+      return { opened: false, reason: 'duplicate' };
+    }
+
+    // Calculate position size
+    const riskAmount = portfolio.balance * (riskPercent / 100);
+    const positionSize = riskAmount * leverage;
+
+    const trade = {
+      id: Date.now(),
+      symbol: signal.symbol,
+      direction: signal.direction,
+      entry: signal.entry,
+      tp: signal.takeProfit,
+      sl: signal.stopLoss,
+      size: positionSize,
+      leverage: leverage,
+      timestamp: Date.now(),
+      status: 'open',
+      pnl: 0,
+      aiSources: signal.aiSources || [],
+      isGoldConsensus: signal.isGoldConsensus || false,
+      isSilverConsensus: signal.isSilverConsensus || false,
+      confidence: signal.confidence,
+      openedBy: 'backend-scan'
+    };
+
+    portfolio.trades.push(trade);
+    portfolio.lastUpdated = Date.now();
+    portfolioData.lastUpdated = Date.now();
+
+    // Save back to Redis
+    await r.set(PORTFOLIO_KEY, JSON.stringify(portfolioData));
+
+    const emoji = signal.isGoldConsensus ? '🥇' : '🥈';
+    console.log(`${emoji} ${portfolioType.toUpperCase()} TRADE OPENED: ${signal.direction} ${signal.symbol} @ $${signal.entry} | Size: $${positionSize.toFixed(2)} | Leverage: ${leverage}x`);
+
+    return {
+      opened: true,
+      portfolioType,
+      trade: {
+        symbol: trade.symbol,
+        direction: trade.direction,
+        entry: trade.entry,
+        size: trade.size,
+        leverage: trade.leverage
+      }
+    };
+  } catch (e) {
+    console.error('Error opening trade:', e.message);
+    return { opened: false, reason: 'error', error: e.message };
+  }
+}
+
+function formatTradeOpenMessage(signal, tradeResult) {
+  const emoji = signal.isGoldConsensus ? '🥇' : '🥈';
+  const portfolioType = tradeResult.portfolioType.toUpperCase();
+  const trade = tradeResult.trade;
+
+  const riskPercent = Math.abs((signal.stopLoss - signal.entry) / signal.entry * 100);
+  const rewardPercent = Math.abs((signal.takeProfit - signal.entry) / signal.entry * 100);
+
+  return `${emoji} <b>${portfolioType} PORTFOLIO — TRADE OPENED</b>
+
+📊 <b>${signal.direction} ${signal.symbol}</b>
+
+💰 Entry: $${signal.entry.toLocaleString()}
+🎯 Take Profit: $${signal.takeProfit.toLocaleString()} (+${rewardPercent.toFixed(1)}%)
+🛑 Stop Loss: $${signal.stopLoss.toLocaleString()} (-${riskPercent.toFixed(1)}%)
+
+📈 Position: $${trade.size.toFixed(2)} @ ${trade.leverage}x leverage
+
+🤖 Auto-opened by Backend Scanner
+⏰ ${new Date().toUTCString()}`;
+}
+
+// ============================================
 // MAIN HANDLER
 // ============================================
 
@@ -1800,23 +1972,23 @@ export default async function handler(request, response) {
       console.log(`🥇 After Gold consensus filter: ${alertSignals.length} signals`);
     }
 
-    // Filter by ADX >= 22 (moderate+ trend required)
+    // Filter by ADX >= 15 (relaxed from 22 — allow weaker trends)
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators || !indicators.adx) {
         console.log(`⚠️ ${signal.symbol}: No indicator data - allowing signal`);
         return true;
       }
-      if (indicators.adx.adx < 22) {
-        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < 22 (weak trend) - BLOCKED`);
+      if (indicators.adx.adx < 15) {
+        console.log(`⛔ ${signal.symbol}: ADX ${indicators.adx.adx} < 15 (very weak trend) - BLOCKED`);
         return false;
       }
-      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= 22 (${indicators.adx.trend}) - OK`);
+      console.log(`✅ ${signal.symbol}: ADX ${indicators.adx.adx} >= 15 (${indicators.adx.trend}) - OK`);
       return true;
     });
     console.log(`📊 After ADX filter: ${alertSignals.length} signals`);
 
-    // Filter by Supertrend direction confirmation
+    // Filter by Supertrend direction confirmation (Gold consensus overrides)
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators || !indicators.supertrend) {
@@ -1824,12 +1996,15 @@ export default async function handler(request, response) {
         return true;
       }
       const supertrendDir = indicators.supertrend.direction;
-      if (signal.direction === 'LONG' && supertrendDir !== 'UP') {
-        console.log(`⛔ ${signal.symbol}: LONG signal but Supertrend is ${supertrendDir} - BLOCKED`);
-        return false;
-      }
-      if (signal.direction === 'SHORT' && supertrendDir !== 'DOWN') {
-        console.log(`⛔ ${signal.symbol}: SHORT signal but Supertrend is ${supertrendDir} - BLOCKED`);
+      const mismatch = (signal.direction === 'LONG' && supertrendDir !== 'UP') ||
+                        (signal.direction === 'SHORT' && supertrendDir !== 'DOWN');
+      if (mismatch) {
+        // Gold consensus (3/3 AIs) overrides Supertrend mismatch
+        if (signal.isGoldConsensus) {
+          console.log(`⚠️ ${signal.symbol}: Supertrend mismatch but GOLD CONSENSUS overrides - ALLOWED`);
+          return true;
+        }
+        console.log(`⛔ ${signal.symbol}: ${signal.direction} signal but Supertrend is ${supertrendDir} - BLOCKED`);
         return false;
       }
       console.log(`✅ ${signal.symbol}: ${signal.direction} confirmed by Supertrend ${supertrendDir} - OK`);
@@ -1837,25 +2012,24 @@ export default async function handler(request, response) {
     });
     console.log(`🔄 After Supertrend filter: ${alertSignals.length} signals`);
 
-    // Filter by market regime, volume trend, and ATR threshold
+    // Filter by market regime (only block CHOPPY — volume/ATR are soft penalties, not hard blocks)
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators) return true;
-      if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) {
-        console.log(`⛔ ${signal.symbol}: ATR ${indicators.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - BLOCKED`);
+      if (indicators.marketRegime === 'CHOPPY') {
+        console.log(`⛔ ${signal.symbol}: Market regime CHOPPY - BLOCKED`);
         return false;
+      }
+      // Log soft warnings for volume/ATR but don't block
+      if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+        console.log(`⚠️ ${signal.symbol}: Low ATR ${indicators.atrPercent.toFixed(2)}% (soft warning)`);
       }
       if (indicators.volumeTrend === 'DECREASING') {
-        console.log(`⛔ ${signal.symbol}: Volume trend decreasing - BLOCKED`);
-        return false;
-      }
-      if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(indicators.marketRegime)) {
-        console.log(`⛔ ${signal.symbol}: Market regime ${indicators.marketRegime} - BLOCKED`);
-        return false;
+        console.log(`⚠️ ${signal.symbol}: Decreasing volume (soft warning)`);
       }
       return true;
     });
-    console.log(`📉 After regime/volume/ATR filter: ${alertSignals.length} signals`);
+    console.log(`📉 After regime filter: ${alertSignals.length} signals`);
 
     // Apply Redis-based cooldown filter (persistent across invocations)
     const cooldownChecks = await Promise.all(
@@ -1875,22 +2049,26 @@ export default async function handler(request, response) {
     // Adjust TP/SL based on volatility
     alertSignals = alertSignals.map(signal => adjustTPSLForVolatility(signal, marketData));
 
-    // Re-validate risk/reward after volatility adjustment
+    // Re-validate risk/reward after volatility adjustment (Gold gets relaxed 1.5 min)
     alertSignals = alertSignals.filter(signal => {
       const risk = Math.abs(signal.entry - signal.stopLoss);
       const reward = Math.abs(signal.takeProfit - signal.entry);
       const rr = reward / Math.max(risk, 1e-9);
-      if (rr < CONFIG.MIN_RISK_REWARD) {
-        console.log(`⛔ ${signal.symbol}: R/R ${rr.toFixed(2)} < ${CONFIG.MIN_RISK_REWARD} after volatility adjust - BLOCKED`);
+      const minRR = signal.isGoldConsensus ? 1.5 : CONFIG.MIN_RISK_REWARD;
+      if (rr < minRR) {
+        console.log(`⛔ ${signal.symbol}: R/R ${rr.toFixed(2)} < ${minRR} after volatility adjust - BLOCKED`);
         return false;
       }
       return true;
     });
     console.log(`✅ After R/R validation: ${alertSignals.length} signals`);
 
-    // Send Telegram alerts with inline keyboards
+    // Send Telegram alerts, open trades, and track pending signals
     let alertsSent = 0;
+    let tradesOpened = 0;
     let pendingSignalsAdded = 0;
+    const openedTrades = [];
+
     for (const signal of alertSignals) {
       const indicators = indicatorData[signal.symbol];
       const message = formatSignalForTelegram(signal, majorEvent, indicators);
@@ -1902,15 +2080,27 @@ export default async function handler(request, response) {
         await saveSignal(signal.symbol, signal.direction, signal.entry);
 
         // Store as pending signal for each AI source (for win ratio calculation)
-        // This tracks entry hit, TP/SL hit, and auto-closes after 48h
         const pendingResults = await storePendingSignals(signal);
         const addedCount = pendingResults.filter(r => r.added).length;
         pendingSignalsAdded += addedCount;
         console.log(`✅ Sent alert for ${signal.symbol} ${signal.direction} (${addedCount} pending signals added)`);
       }
+
+      // AUTO TRADE: Open trade in Redis portfolio (works even when browser is closed)
+      const tradeResult = await openTradeForSignal(signal);
+      if (tradeResult.opened) {
+        tradesOpened++;
+        openedTrades.push(tradeResult.trade);
+
+        // Send separate Telegram notification for trade opening
+        const tradeMsg = formatTradeOpenMessage(signal, tradeResult);
+        await sendTelegramMessage(tradeMsg);
+      } else {
+        console.log(`📦 Trade not opened for ${signal.symbol}: ${tradeResult.reason}`);
+      }
     }
 
-    console.log(`📤 Sent ${alertsSent} Telegram alerts, ${pendingSignalsAdded} pending signals added`);
+    console.log(`📤 Sent ${alertsSent} alerts, opened ${tradesOpened} trades, ${pendingSignalsAdded} pending signals added`);
 
     // Get pending signals summary for response
     const pendingSummary = await getPendingSignalsSummary();
@@ -1921,6 +2111,8 @@ export default async function handler(request, response) {
       aiResponses: analyses.length,
       consensusSignals: consensusSignals.length,
       alertsSent: alertsSent,
+      tradesOpened: tradesOpened,
+      openedTrades: openedTrades,
       pendingSignals: pendingSummary,
       evaluation: evalResults,
       signals: alertSignals.map(s => ({
