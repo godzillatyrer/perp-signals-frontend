@@ -4172,8 +4172,7 @@ async function runAiAnalysis() {
         // Find other picks that match this one (same direction, similar entry)
         const matches = picks.filter(p =>
           p.source !== pick.source &&
-          isEntryMatch(p.entry, pick.entry) &&
-          isTriggerMatch(p.entryTrigger, pick.entryTrigger)
+          isEntryMatch(p.entry, pick.entry)
         );
         if (matches.length > 0 && !matchingPicks.some(m => m.source === pick.source)) {
           matchingPicks.push(pick);
@@ -4197,9 +4196,9 @@ async function runAiAnalysis() {
 
         // HARD FILTER: ADX must be >= 22 (moderate+ trend required)
         const adxValue = marketInfo?.adx?.adx || 0;
-        if (adxValue < 25) {
-          console.log(`⛔ ${symbol}: ADX ${adxValue} < 25 - Skipping (weak trend)`);
-          recordFilterReason('ADX < 25');
+        if (adxValue < 22) {
+          console.log(`⛔ ${symbol}: ADX ${adxValue} < 22 - Skipping (weak trend)`);
+          recordFilterReason('ADX < 22');
           continue;
         }
 

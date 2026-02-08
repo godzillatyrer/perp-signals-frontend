@@ -35,8 +35,8 @@ const CONFIG = {
   MAX_ENTRY_WIGGLE_PERCENT: 4,
   MAX_SL_WIGGLE_PERCENT: 3,
   MAX_TP_WIGGLE_PERCENT: 5,
-  // GOLD CONSENSUS ONLY - require all 3 AIs to agree
-  REQUIRE_GOLD_CONSENSUS: true
+  // Allow both Silver (2/3) and Gold (3/3) consensus signals
+  REQUIRE_GOLD_CONSENSUS: false
 };
 
 const ENTRY_TRIGGERS = ['BREAKOUT', 'PULLBACK', 'REVERSAL', 'MOMENTUM'];
@@ -285,8 +285,8 @@ async function updateAISignalCounts(analyses, consensusSignals) {
     for (const analysis of analyses) {
       if (!analysis || !analysis.source) continue;
 
-      const signalCount = analysis.topPicks?.length || 0;
-      const totalConf = analysis.topPicks?.reduce((sum, p) => sum + (p.confidence || 0), 0) || 0;
+      const signalCount = analysis.signals?.length || 0;
+      const totalConf = analysis.signals?.reduce((sum, p) => sum + (p.confidence || 0), 0) || 0;
 
       if (analysis.source === 'claude') {
         stats.claudeSignals += signalCount;
@@ -1336,7 +1336,7 @@ async function analyzeWithClaude(prompt) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
+        max_tokens: 2048,
         messages: [{ role: 'user', content: prompt }]
       })
     });
@@ -1368,7 +1368,7 @@ async function analyzeWithOpenAI(prompt) {
       body: JSON.stringify({
         model: 'gpt-4o',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1024
+        max_tokens: 2048
       })
     });
 
@@ -1402,7 +1402,7 @@ async function analyzeWithGrok(prompt) {
         'Authorization': `Bearer ${process.env.GROK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-2-latest',
+        model: 'grok-3-fast',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048
       })
@@ -1422,7 +1422,7 @@ async function analyzeWithGrok(prompt) {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        console.log(`⚡ [GROK] Success - found ${parsed.topPicks?.length || 0} picks`);
+        console.log(`⚡ [GROK] Success - found ${parsed.signals?.length || 0} picks`);
         return { source: 'grok', ...parsed };
       } else {
         console.warn('⚡ [GROK] No JSON found in response');
@@ -1507,8 +1507,7 @@ function findConsensusSignals(analyses, indicatorData) {
       for (const signal of signals) {
         const matches = signals.filter(s =>
           s.aiSource !== signal.aiSource &&
-          isWithinPercent(s.entry, signal.entry, CONFIG.MAX_ENTRY_WIGGLE_PERCENT) &&
-          (!s.entryTrigger || !signal.entryTrigger || s.entryTrigger === signal.entryTrigger)
+          isWithinPercent(s.entry, signal.entry, CONFIG.MAX_ENTRY_WIGGLE_PERCENT)
         );
         if (matches.length > 0 && !matchingSignals.some(m => m.aiSource === signal.aiSource)) {
           matchingSignals.push(signal);
