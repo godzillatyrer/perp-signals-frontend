@@ -17,6 +17,10 @@
     {
       "path": "/api/monitor-positions",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/evaluate-positions",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
