@@ -36,63 +36,88 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
 }
 
 async function getCurrentPrices(symbols) {
-  // Try Binance Futures first
+  // Source 1: Binance Spot API (more reliable from Vercel than Futures)
   try {
-    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 6000);
-    const data = await response.json();
-    if (Array.isArray(data)) {
-      const prices = {};
-      for (const item of data) {
-        if (symbols.includes(item.symbol)) {
-          prices[item.symbol] = parseFloat(item.price);
+    const response = await fetchWithTimeout('https://api.binance.com/api/v3/ticker/price', {}, 5000);
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        const prices = {};
+        for (const item of data) {
+          if (symbols.includes(item.symbol)) prices[item.symbol] = parseFloat(item.price);
         }
+        if (Object.keys(prices).length > 0) return prices;
       }
-      if (Object.keys(prices).length > 0) return prices;
     }
   } catch (error) {
-    console.log('Binance prices failed:', error.message, '— trying Bybit...');
+    console.log('Binance Spot prices failed:', error.message);
   }
 
-  // Bybit fallback
+  // Source 2: Bybit
   try {
-    const response = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 6000);
-    const data = await response.json();
-    if (data?.result?.list) {
-      const prices = {};
-      for (const item of data.result.list) {
-        if (symbols.includes(item.symbol)) {
-          prices[item.symbol] = parseFloat(item.lastPrice);
+    const response = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 5000);
+    if (response.ok) {
+      const data = await response.json();
+      if (data?.result?.list) {
+        const prices = {};
+        for (const item of data.result.list) {
+          if (symbols.includes(item.symbol)) prices[item.symbol] = parseFloat(item.lastPrice);
         }
+        if (Object.keys(prices).length > 0) return prices;
+      }
+    }
+  } catch (error) {
+    console.log('Bybit prices failed:', error.message);
+  }
+
+  // Source 3: CoinGecko
+  try {
+    const cgIds = symbols.map(s => {
+      const base = s.replace('USDT', '').toLowerCase();
+      const idMap = { btc: 'bitcoin', eth: 'ethereum', sol: 'solana', bnb: 'binancecoin', xrp: 'ripple', doge: 'dogecoin', ada: 'cardano', avax: 'avalanche-2', link: 'chainlink', dot: 'polkadot' };
+      return idMap[base] || base;
+    });
+    const response = await fetchWithTimeout(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${cgIds.join(',')}&vs_currencies=usd`, {}, 5000
+    );
+    if (response.ok) {
+      const data = await response.json();
+      const prices = {};
+      const reverseMap = { bitcoin: 'BTCUSDT', ethereum: 'ETHUSDT', solana: 'SOLUSDT', binancecoin: 'BNBUSDT', ripple: 'XRPUSDT', dogecoin: 'DOGEUSDT', cardano: 'ADAUSDT', 'avalanche-2': 'AVAXUSDT', chainlink: 'LINKUSDT', polkadot: 'DOTUSDT' };
+      for (const [cgId, priceData] of Object.entries(data)) {
+        const symbol = reverseMap[cgId];
+        if (symbol && symbols.includes(symbol) && priceData.usd) prices[symbol] = priceData.usd;
       }
       if (Object.keys(prices).length > 0) return prices;
     }
   } catch (error) {
-    console.error('Bybit prices also failed:', error.message);
+    console.log('CoinGecko prices failed:', error.message);
   }
-  // Original error path
-  console.error('Failed to fetch prices from all sources');
-    return null;
-  }
+
+  console.error('All price sources failed for:', symbols);
+  return null;
 }
 
 async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
-  // Try Binance Futures first
+  // Source 1: Binance Spot API (more reliable from Vercel than Futures)
   try {
-    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const response = await fetchWithTimeout(url, {}, 6000);
-    const data = await response.json();
-    if (Array.isArray(data) && data.length > 0) {
-      return data.map(k => ({
-        time: k[0],
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
-      }));
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const response = await fetchWithTimeout(url, {}, 5000);
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map(k => ({
+          time: k[0],
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+          volume: parseFloat(k[5])
+        }));
+      }
     }
   } catch (e) {
-    console.log(`Binance candles failed for ${symbol}: ${e.message}, trying Bybit...`);
+    console.log(`Binance Spot candles failed for ${symbol}: ${e.message}, trying Bybit...`);
   }
 
   // Bybit fallback

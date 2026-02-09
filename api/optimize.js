@@ -485,13 +485,62 @@ async function sendTelegramReport(report) {
 // ============================================
 
 export default async function handler(request, response) {
-  console.log('🧠 Self-Learning Optimizer starting...');
-  const startTime = Date.now();
+  // CORS headers
+  response.setHeader('Access-Control-Allow-Origin', '*');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+  if (request.method === 'OPTIONS') {
+    return response.status(200).end();
+  }
+
+  const startTime = Date.now();
   const redis = getRedis();
   if (!redis) {
     return response.status(500).json({ error: 'Redis not configured' });
   }
+
+  // For GET requests from the client: just return saved config (no re-optimization)
+  // Cron jobs trigger the actual optimization via the x-vercel-cron header or ?run=1
+  const isCron = request.headers['x-vercel-cron'] || request.query?.run === '1';
+
+  if (!isCron) {
+    // Read-only: return saved optimization config
+    try {
+      const saved = await redis.get(OPTIMIZATION_KEY);
+      const config = saved ? (typeof saved === 'string' ? JSON.parse(saved) : saved) : getDefaultOptConfig();
+      return response.status(200).json({
+        success: true,
+        elapsed: (Date.now() - startTime) + 'ms',
+        cycle: config.cycleCount || 0,
+        tradesAnalyzed: config.totalTradesAnalyzed || 0,
+        changes: config.lastChanges || [],
+        config: {
+          alertConfidence: config.alertConfidence,
+          minRiskReward: config.minRiskReward,
+          minRiskRewardGold: config.minRiskRewardGold,
+          minADX: config.minADX,
+          aiWeights: config.aiWeights,
+          symbolBlacklist: config.symbolBlacklist || [],
+          blockedRegimes: config.blockedRegimes || ['CHOPPY'],
+          consecutiveLosses: config.consecutiveLosses || 0,
+          pauseUntil: config.pauseUntil,
+          cooldownHours: config.cooldownHours || 12
+        },
+        report: config.lastReport || 'Waiting for first optimization cycle.'
+      });
+    } catch (e) {
+      console.error('Failed to read optimization config:', e.message);
+      return response.status(200).json({
+        success: true,
+        config: getDefaultOptConfig(),
+        report: 'Config not available yet.'
+      });
+    }
+  }
+
+  // Cron path: run full optimization
+  console.log('🧠 Self-Learning Optimizer starting (cron)...');
 
   try {
     const { config, report } = await runOptimization(redis);

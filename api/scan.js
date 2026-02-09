@@ -949,43 +949,45 @@ function calculateIchimoku(candles) {
 // ============================================
 
 async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
-  // Try Binance Futures first, fall back to Bybit if blocked
+  // Source 1: Binance Spot API (more reliable from Vercel than Futures)
   try {
-    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const response = await fetchWithTimeout(url, {}, 6000);
-    const data = await response.json();
-
-    if (Array.isArray(data) && data.length > 0) {
-      return data.map(k => ({
-        time: k[0],
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
-      }));
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const response = await fetchWithTimeout(url, {}, 5000);
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map(k => ({
+          time: k[0],
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+          volume: parseFloat(k[5])
+        }));
+      }
     }
   } catch (e) {
-    console.log(`Binance candles failed for ${symbol} ${interval}: ${e.message}, trying Bybit...`);
+    console.log(`Binance Spot candles failed for ${symbol} ${interval}: ${e.message}`);
   }
 
-  // Bybit fallback
+  // Source 2: Bybit
   try {
     const intervalMap = { '1h': '60', '4h': '240', '1d': 'D', '15m': '15', '5m': '5' };
     const bybitInterval = intervalMap[interval] || '60';
     const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
-    const response = await fetchWithTimeout(url, {}, 6000);
-    const data = await response.json();
-
-    if (data?.result?.list?.length > 0) {
-      return data.result.list.reverse().map(k => ({
-        time: parseInt(k[0]),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
-      }));
+    const response = await fetchWithTimeout(url, {}, 5000);
+    if (response.ok) {
+      const data = await response.json();
+      if (data?.result?.list?.length > 0) {
+        return data.result.list.reverse().map(k => ({
+          time: parseInt(k[0]),
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+          volume: parseFloat(k[5])
+        }));
+      }
     }
   } catch (e) {
     console.log(`Bybit candles also failed for ${symbol} ${interval}: ${e.message}`);
@@ -1229,6 +1231,7 @@ async function fetchMarketData() {
     try {
       console.log('Trying Binance Spot API...');
       const pricesRes = await fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr', {}, 8000);
+      if (!pricesRes.ok) throw new Error(`Binance Spot HTTP ${pricesRes.status}`);
       const pricesData = await pricesRes.json();
 
       if (Array.isArray(pricesData)) {
@@ -1257,6 +1260,7 @@ async function fetchMarketData() {
     try {
       console.log('Trying Binance Futures API...');
       const pricesRes = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/24hr', {}, 8000);
+      if (!pricesRes.ok) throw new Error(`Binance Futures HTTP ${pricesRes.status}`);
       const pricesData = await pricesRes.json();
 
       if (Array.isArray(pricesData)) {
@@ -1847,6 +1851,8 @@ function findConsensusSignals(analyses, indicatorData) {
         const entryTriggers = matchingSignals.map(s => s.entryTrigger).filter(Boolean);
         const entryConditions = matchingSignals.map(s => s.entryCondition).filter(Boolean);
 
+        const indicators = indicatorData?.[matchingSignals[0].symbol];
+
         const candidate = {
           symbol: matchingSignals[0].symbol,
           direction: matchingSignals[0].direction,
@@ -1862,8 +1868,6 @@ function findConsensusSignals(analyses, indicatorData) {
           entryCondition: entryConditions[0] || null,
           marketRegime: indicators?.marketRegime || null
         };
-
-        const indicators = indicatorData?.[candidate.symbol];
         if (validateSignalWithIndicators(candidate, indicators)) {
           consensusSignals.push(candidate);
         } else {
