@@ -1022,6 +1022,51 @@ async function calculateIndicators(symbol) {
   else if (currentPrice < ema20 && ema20 < ema50) trend = 'STRONG DOWNTREND';
   else if (currentPrice < ema20) trend = 'WEAK DOWNTREND';
 
+  // Higher Timeframe: 4H indicators
+  let htf4h = null;
+  try {
+    const candles4h = await fetchCandlesticks(symbol, '4h', 100);
+    if (candles4h.length >= 50) {
+      const closes4h = candles4h.map(c => c.close);
+      const ema20_4h = calculateEMA(closes4h, 20);
+      const ema50_4h = calculateEMA(closes4h, 50);
+      const adx4h = calculateADX(candles4h);
+      const supertrend4h = calculateSupertrend(candles4h);
+      const rsi4h = calculateRSI(closes4h);
+      htf4h = {
+        trend: ema20_4h > ema50_4h ? 'BULLISH' : 'BEARISH',
+        adx: adx4h?.adx?.toFixed(1),
+        supertrend: supertrend4h?.direction,
+        rsi: Math.round(rsi4h * 10) / 10
+      };
+    }
+  } catch (e) { console.log(`4H fetch failed for ${symbol}`); }
+
+  // Higher Timeframe: 1D indicators
+  let htfDaily = null;
+  try {
+    const candlesD = await fetchCandlesticks(symbol, '1d', 100);
+    if (candlesD.length >= 50) {
+      const closesD = candlesD.map(c => c.close);
+      const ema20D = calculateEMA(closesD, 20);
+      const ema50D = calculateEMA(closesD, 50);
+      const ema200D = calculateEMA(closesD, 200);
+      const adxD = calculateADX(candlesD);
+      const supertrendD = calculateSupertrend(candlesD);
+      const rsiD = calculateRSI(closesD);
+      const priceD = closesD[closesD.length - 1];
+      htfDaily = {
+        trend: ema20D > ema50D && ema50D > ema200D ? 'STRONG UPTREND' :
+               ema20D < ema50D && ema50D < ema200D ? 'STRONG DOWNTREND' :
+               ema20D > ema50D ? 'WEAK UPTREND' : 'WEAK DOWNTREND',
+        adx: adxD?.adx?.toFixed(1),
+        supertrend: supertrendD?.direction,
+        rsi: Math.round(rsiD * 10) / 10,
+        priceVsEma200: ((priceD - ema200D) / ema200D * 100).toFixed(1)
+      };
+    }
+  } catch (e) { console.log(`Daily fetch failed for ${symbol}`); }
+
   return {
     symbol,
     price: currentPrice,
@@ -1041,7 +1086,9 @@ async function calculateIndicators(symbol) {
     ichimoku,
     trend,
     volumeTrend,
-    marketRegime: classifyMarketRegime({ trend, adx, atrPercent })
+    marketRegime: classifyMarketRegime({ trend, adx, atrPercent }),
+    htf4h,
+    htfDaily
   };
 }
 
@@ -1309,15 +1356,50 @@ async function fetchMarketData() {
 // ============================================
 
 async function buildAnalysisPrompt(marketData, indicatorData) {
-  let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data with TECHNICAL INDICATORS and identify the BEST trading opportunities.
+  // Build per-AI outcome feedback from Redis signal log
+  let outcomeContext = '';
+  try {
+    const { Redis } = await import('@upstash/redis');
+    const redis = new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN });
+    const signalLog = await redis.get('ai_signal_log');
+    if (signalLog) {
+      const sources = ['claude', 'openai', 'grok'];
+      for (const src of sources) {
+        const signals = signalLog[src] || [];
+        const resolved = signals.filter(s => s.shadowStatus === 'win' || s.shadowStatus === 'loss');
+        if (resolved.length > 0) {
+          const bySymbol = {};
+          for (const s of resolved) {
+            if (!bySymbol[s.symbol]) bySymbol[s.symbol] = { wins: 0, losses: 0 };
+            if (s.shadowStatus === 'win') bySymbol[s.symbol].wins++;
+            else bySymbol[s.symbol].losses++;
+          }
+          const records = Object.entries(bySymbol).slice(0, 6).map(([sym, r]) => `${sym}:${r.wins}W/${r.losses}L`).join(', ');
+          const wr = Math.round(resolved.filter(s => s.shadowStatus === 'win').length / resolved.length * 100);
+          outcomeContext += `${src.toUpperCase()} track record: ${wr}% WR (${resolved.length} trades) — ${records}\n`;
+        }
+      }
+    }
+  } catch (e) { console.log('Could not load signal log for prompt:', e.message); }
 
-CRITICAL REQUIREMENTS:
-- ADX must be >= 22 (moderate+ trend required) - DO NOT signal weak trend coins
-- Supertrend must confirm direction (UP = longs only, DOWN = shorts only)
-- Stochastic RSI should support entry timing (OVERSOLD for longs, OVERBOUGHT for shorts)
-- Price position relative to VWAP and EMAs must align with trade direction
-- Volume trend must be STABLE or INCREASING
-- Risk/Reward must be >= 2.0
+  let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data with MULTI-TIMEFRAME TECHNICAL INDICATORS and DERIVATIVES DATA to identify the BEST trading opportunities.
+
+${outcomeContext ? `=== AI TRACK RECORD (learn from past mistakes) ===\n${outcomeContext}If you keep losing on a symbol, skip it or reverse your bias. Double down on symbols where you've been accurate.\n` : ''}
+MULTI-TIMEFRAME RULES (CRITICAL):
+- **DAILY TREND is the #1 filter** — ONLY trade in the direction of the Daily trend
+- If Daily = STRONG UPTREND + 4H = BULLISH → HIGH conviction LONG
+- If Daily = STRONG DOWNTREND + 4H = BEARISH → HIGH conviction SHORT
+- If 1H + 4H + Daily all agree → MAXIMUM conviction (add 10 to confidence)
+- NEVER signal against the Daily trend unless extreme reversal conditions (Daily RSI <25 or >75)
+- Daily Supertrend direction overrides 1H signals
+
+DERIVATIVES INTELLIGENCE:
+- **Funding Rate >+0.03%**: Crowded longs, favor shorts or avoid new longs
+- **Funding Rate <-0.03%**: Crowded shorts, favor longs
+- **OI Rising + Price Rising**: New money entering, trend continues. OI Rising + Price Falling: Shorts being added, more downside.
+- **OI Falling + Price Rising**: Short covering (weak rally). OI Falling + Price Falling: Longs capitulating (near bottom).
+- **L/S Ratio > 1.3**: Crowd long-biased, contrarian short at resistance. L/S < 0.7: Crowd short-biased, contrarian long at support.
+- **Heavy liquidations on one side**: Potential exhaustion/reversal zone.
 
 `;
 
@@ -1380,28 +1462,38 @@ CRITICAL REQUIREMENTS:
       if (indicators.fibonacci) {
         prompt += `\n  Fibonacci: Near ${indicators.fibonacci.nearestLevel}${indicators.fibonacci.atKeyLevel ? ' ⚠️ AT KEY LEVEL' : ''} | Trend: ${indicators.fibonacci.isUptrend ? 'UP' : 'DOWN'}`;
       }
+      // Higher Timeframe context
+      if (indicators.htf4h) {
+        prompt += `\n  --- 4H TIMEFRAME ---`;
+        prompt += `\n  4H Trend: ${indicators.htf4h.trend} | 4H ADX: ${indicators.htf4h.adx} | 4H Supertrend: ${indicators.htf4h.supertrend} | 4H RSI: ${indicators.htf4h.rsi}`;
+      }
+      if (indicators.htfDaily) {
+        prompt += `\n  --- DAILY TIMEFRAME ---`;
+        prompt += `\n  Daily Trend: ${indicators.htfDaily.trend} | Daily ADX: ${indicators.htfDaily.adx} | Daily Supertrend: ${indicators.htfDaily.supertrend} | Daily RSI: ${indicators.htfDaily.rsi}`;
+        prompt += `\n  Price vs Daily 200 EMA: ${indicators.htfDaily.priceVsEma200}%`;
+      }
     }
   }
 
   prompt += `
 
 ANALYSIS RULES (ranked by importance):
-1. **ADX >= 15 required** - Higher ADX = stronger trend. Prefer >= 20, but 15+ is acceptable
-2. **SUPERTREND should confirm** - Supertrend UP = prefer LONG, Supertrend DOWN = prefer SHORT
-3. **CONFLUENCE preferred** - More aligned indicators = higher confidence score:
-   - For LONG: RSI < 50, MACD bullish, price above VWAP, Supertrend UP
-   - For SHORT: RSI > 50, MACD bearish, price below VWAP, Supertrend DOWN
-4. **ENTRY TIMING** - Use StochRSI: OVERSOLD for long entries, OVERBOUGHT for short entries
-5. **TREND ALIGNMENT** - EMAs confirming direction adds confidence
-6. **REGIME & VOLUME** - TRENDING regime and INCREASING volume add confidence
-7. **RISK/REWARD** - Must be >= 2.0 based on Entry/Stop/Target
+1. **DAILY TREND ALIGNMENT is #1** — Only signal in the direction of the Daily trend. If Daily = UPTREND, only LONG. If Daily = DOWNTREND, only SHORT.
+2. **ADX >= 15 required** - Higher ADX = stronger trend. Prefer >= 20, but 15+ is acceptable
+3. **SUPERTREND on both 4H and Daily should confirm** — Both agreeing = high conviction
+4. **MULTI-TIMEFRAME CONFLUENCE** - 1H + 4H + Daily all agreeing = maximum confidence (+10 points)
+5. **DERIVATIVES CONFIRMATION** - Funding rate, OI direction, and L/S ratio should support the trade direction
+6. **ENTRY TIMING** - Use 1H StochRSI for entry timing. OVERSOLD for long entries, OVERBOUGHT for short entries
+7. **TREND ALIGNMENT** - EMAs confirming direction across timeframes adds confidence
+8. **REGIME & VOLUME** - TRENDING regime and INCREASING volume add confidence
+9. **RISK/REWARD** - Must be >= 2.0 based on Entry/Stop/Target
 
-IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15. Use lower confidence (60-70) for weaker setups rather than returning empty signals.
+IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 AND Daily trend alignment. Use lower confidence (60-70) for weaker setups rather than returning empty signals.
 
 TASK: Identify 1-3 highest conviction trade setups. For each, provide:
 1. Symbol, Direction (LONG/SHORT), Confidence (0-100%)
 2. Entry price, Stop Loss (use ATR for sizing), Take Profit
-3. Key indicator reasons (cite specific values)
+3. Key indicator reasons — MUST cite the Daily trend, 4H confirmation, and any derivatives data used
 
 Respond in this exact JSON format:
 {
