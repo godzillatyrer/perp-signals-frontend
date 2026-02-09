@@ -18,11 +18,11 @@ const CONFIG = {
   // Claude API
   CLAUDE_API: 'https://api.anthropic.com/v1/messages',
   CLAUDE_API_KEY: '', // Will be loaded from localStorage or prompted
-  CLAUDE_MODEL: 'claude-opus-4-6', // Claude Opus 4.6 (flagship)
+  CLAUDE_MODEL: 'claude-sonnet-4-5-20250929', // Claude Sonnet 4.5 (cost-efficient)
   // Gemini API (Google) — uses OpenAI-compatible endpoint
   GEMINI_API: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   GEMINI_API_KEY: '', // Will be loaded from localStorage or prompted
-  GEMINI_MODEL: 'gemini-2.5-flash', // Gemini 2.5 Flash (fast reasoning)
+  GEMINI_MODEL: 'gemini-2.0-flash', // Gemini 2.0 Flash (fast, no thinking overhead)
   // Grok API (xAI)
   GROK_API: 'https://api.x.ai/v1/chat/completions',
   GROK_API_KEY: '', // Will be loaded from localStorage or prompted
@@ -3605,9 +3605,24 @@ async function callGeminiAPI(prompt) {
     }
 
     const data = await response.json();
-    if (DEBUG_MODE) console.log(`💎 [GEMINI] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
+
+    // Validate response structure
+    if (data.error) {
+      console.error(`💎 [GEMINI] API returned error:`, data.error.message || JSON.stringify(data.error));
+      updateAiDebugStatus('openai', 'error', data.error.message || 'API error');
+      return null;
+    }
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      console.error(`💎 [GEMINI] Empty or malformed response:`, JSON.stringify(data).slice(0, 500));
+      updateAiDebugStatus('openai', 'error', 'Empty response');
+      return null;
+    }
+
+    if (DEBUG_MODE) console.log(`💎 [GEMINI] Success in ${elapsed}ms - Response length: ${content.length} chars`);
     updateAiDebugStatus('openai', 'success', `${elapsed}ms`);
-    return data.choices[0].message.content;
+    return content;
   } catch (error) {
     console.error('💎 [GEMINI] API call failed:', error.message);
     updateAiDebugStatus('openai', 'error', error.message);
