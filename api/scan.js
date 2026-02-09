@@ -1435,7 +1435,7 @@ async function analyzeWithClaude(prompt) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-6',
+        model: 'claude-sonnet-4-5-20250929',
         max_tokens: 2048,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -1468,22 +1468,35 @@ async function analyzeWithGemini(prompt) {
         'Authorization': `Bearer ${process.env.GEMINI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.0-flash',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2048
+        max_tokens: 4096
       })
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`💎 [GEMINI] HTTP ${response.status}: ${errorText.slice(0, 300)}`);
+      return null;
+    }
+
     const data = await response.json();
-    if (data.choices && data.choices[0]) {
+    if (data.error) {
+      console.error('💎 [GEMINI] API error:', data.error.message || JSON.stringify(data.error));
+      return null;
+    }
+
+    if (data.choices && data.choices[0]?.message?.content) {
       const text = data.choices[0].message.content;
       console.log(`💎 [GEMINI] Response: ${text.length} chars`);
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         return { source: 'openai', ...JSON.parse(jsonMatch[0]) };
+      } else {
+        console.error('💎 [GEMINI] No JSON found in response:', text.slice(0, 300));
       }
-    } else if (data.error) {
-      console.error('💎 [GEMINI] API error:', data.error.message || JSON.stringify(data.error));
+    } else {
+      console.error('💎 [GEMINI] Unexpected response format:', JSON.stringify(data).slice(0, 300));
     }
   } catch (error) {
     console.error('Gemini analysis error:', error);
