@@ -2029,6 +2029,26 @@ const TRADE_CONFIG = {
   gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5 }
 };
 
+// === ANTI-MARTINGALE: Progressive risk on winning streaks ===
+// +50% per consecutive win, capped at 3x base risk. Resets on any loss.
+function calculateWinStreak(trades) {
+  const closed = (trades || [])
+    .filter(t => t.status === 'closed' && t.pnl !== undefined)
+    .sort((a, b) => (b.closeTimestamp || b.timestamp || 0) - (a.closeTimestamp || a.timestamp || 0));
+
+  let streak = 0;
+  for (const trade of closed) {
+    if (trade.pnl > 0) streak++;
+    else break;
+  }
+  return streak;
+}
+
+function getStreakMultiplier(streak) {
+  // 0 wins = 1.0x, 1 win = 1.5x, 2 wins = 2.0x, 3 wins = 2.5x, 4+ = 3.0x cap
+  return Math.min(1 + streak * 0.5, 3.0);
+}
+
 function getDefaultPortfolio(type) {
   return {
     type,
@@ -2193,8 +2213,17 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'session_filter' };
     }
 
-    // Calculate position size
-    const riskAmount = portfolio.balance * (riskPercent / 100);
+    // === ANTI-MARTINGALE: Increase risk on winning streaks ===
+    const winStreak = calculateWinStreak(portfolio.trades);
+    const streakMultiplier = getStreakMultiplier(winStreak);
+    const adjustedRisk = riskPercent * streakMultiplier;
+
+    if (streakMultiplier > 1) {
+      console.log(`🔥 ${portfolioType.toUpperCase()}: Win streak ${winStreak} → ${streakMultiplier}x risk (${riskPercent}% → ${adjustedRisk.toFixed(1)}%)`);
+    }
+
+    // Calculate position size with streak-adjusted risk
+    const riskAmount = portfolio.balance * (adjustedRisk / 100);
     const positionSize = riskAmount * leverage;
 
     // Volatility-adjusted targets — widen TP/SL in high ATR, tighten in low
@@ -2240,6 +2269,8 @@ async function openTradeForSignal(signal) {
       confidence: signal.confidence,
       marketRegime: signal.marketRegime || null,
       atrPercent: signal.atrPercent || null,
+      streakAtOpen: winStreak,
+      riskMultiplier: streakMultiplier,
       openedBy: 'backend-scan'
     };
 
@@ -2251,7 +2282,8 @@ async function openTradeForSignal(signal) {
     await r.set(PORTFOLIO_KEY, JSON.stringify(portfolioData));
 
     const emoji = signal.isGoldConsensus ? '🥇' : '🥈';
-    console.log(`${emoji} ${portfolioType.toUpperCase()} TRADE OPENED: ${signal.direction} ${signal.symbol} @ $${signal.entry} | Size: $${positionSize.toFixed(2)} | Leverage: ${leverage}x`);
+    const streakInfo = streakMultiplier > 1 ? ` | 🔥 Streak ${winStreak} (${streakMultiplier}x risk)` : '';
+    console.log(`${emoji} ${portfolioType.toUpperCase()} TRADE OPENED: ${signal.direction} ${signal.symbol} @ $${signal.entry} | Size: $${positionSize.toFixed(2)} | Leverage: ${leverage}x${streakInfo}`);
 
     return {
       opened: true,
@@ -2261,7 +2293,9 @@ async function openTradeForSignal(signal) {
         direction: trade.direction,
         entry: trade.entry,
         size: trade.size,
-        leverage: trade.leverage
+        leverage: trade.leverage,
+        streakAtOpen: winStreak,
+        riskMultiplier: streakMultiplier
       }
     };
   } catch (e) {
@@ -2283,6 +2317,10 @@ function formatTradeOpenMessage(signal, tradeResult) {
   const tp1Price = signal.direction === 'LONG' ? signal.entry + tpDist * 0.5 : signal.entry - tpDist * 0.5;
   const tp2Price = signal.direction === 'LONG' ? signal.entry + tpDist * 0.75 : signal.entry - tpDist * 0.75;
 
+  const streakLine = trade.riskMultiplier > 1
+    ? `\n🔥 <b>Win Streak: ${trade.streakAtOpen}</b> → Risk ${trade.riskMultiplier}x (Anti-Martingale)`
+    : '';
+
   return `${emoji} <b>${portfolioType} PORTFOLIO — TRADE OPENED</b>
 
 📊 <b>${signal.direction} ${signal.symbol}</b>
@@ -2293,7 +2331,7 @@ function formatTradeOpenMessage(signal, tradeResult) {
 🎯 TP3 (30%): $${signal.takeProfit.toLocaleString()} (+${rewardPercent.toFixed(1)}%)
 🛑 Stop Loss: $${signal.stopLoss.toLocaleString()} (-${riskPercent.toFixed(1)}%)
 
-📈 Position: $${trade.size.toFixed(2)} @ ${trade.leverage}x leverage
+📈 Position: $${trade.size.toFixed(2)} @ ${trade.leverage}x leverage${streakLine}
 
 🤖 Auto-opened by Backend Scanner
 ⏰ ${new Date().toUTCString()}`;

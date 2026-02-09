@@ -5409,8 +5409,13 @@ function openDualPortfolioTrade(signal) {
     return;
   }
 
-  // Calculate position size based on aggressive config
-  const riskAmount = portfolio.balance * (config.riskPercent / 100);
+  // Anti-Martingale: Progressive risk on winning streaks
+  const winStreak = calculatePortfolioWinStreak(portfolio.trades);
+  const streakMultiplier = Math.min(1 + winStreak * 0.5, 3.0);
+  const adjustedRisk = config.riskPercent * streakMultiplier;
+
+  // Calculate position size with streak-adjusted risk
+  const riskAmount = portfolio.balance * (adjustedRisk / 100);
   const positionSize = riskAmount * config.leverage;
 
   const trade = {
@@ -5428,7 +5433,9 @@ function openDualPortfolioTrade(signal) {
     aiSources: signal.aiSources || [],
     isGoldConsensus: signal.isGoldConsensus || false,
     isSilverConsensus: signal.isSilverConsensus || false,
-    confidence: signal.confidence
+    confidence: signal.confidence,
+    streakAtOpen: winStreak,
+    riskMultiplier: streakMultiplier
   };
 
   portfolio.trades.push(trade);
@@ -5436,10 +5443,24 @@ function openDualPortfolioTrade(signal) {
   renderDualPortfolioPositions(portfolioType);
   updateDualPortfolioStats(portfolioType);
 
-  console.log(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)}`);
+  const streakInfo = streakMultiplier > 1 ? ` | 🔥 Streak ${winStreak} (${streakMultiplier}x)` : '';
+  console.log(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)}${streakInfo}`);
 
   // Sync to backend
   syncDualPortfolioToBackend();
+}
+
+// Calculate consecutive win streak from most recent closed trades
+function calculatePortfolioWinStreak(trades) {
+  const closed = (trades || [])
+    .filter(t => t.status === 'closed' && t.pnl !== undefined)
+    .sort((a, b) => (b.closeTimestamp || b.timestamp || 0) - (a.closeTimestamp || a.timestamp || 0));
+  let streak = 0;
+  for (const trade of closed) {
+    if (trade.pnl > 0) streak++;
+    else break;
+  }
+  return streak;
 }
 
 // Update open positions for dual portfolio
@@ -7719,6 +7740,23 @@ function renderConsensusPanel() {
 
 function renderInsightsPanel() {
   const updateEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+  // --- Anti-Martingale Streak Display ---
+  for (const pt of ['silver', 'gold']) {
+    const trades = dualPortfolioState[pt]?.trades || [];
+    const streak = calculatePortfolioWinStreak(trades);
+    const multiplier = Math.min(1 + streak * 0.5, 3.0);
+    const prefix = pt === 'silver' ? 'Silver' : 'Gold';
+
+    updateEl(`ins${prefix}Streak`, streak > 0 ? `${streak} wins` : '0');
+    updateEl(`ins${prefix}Risk`, `${multiplier.toFixed(1)}x`);
+
+    const streakEl = document.getElementById(`ins${prefix}Streak`);
+    if (streakEl) streakEl.className = 'ai-stat-value ' + (streak >= 3 ? 'positive' : streak >= 1 ? '' : '');
+
+    const riskEl = document.getElementById(`ins${prefix}Risk`);
+    if (riskEl) riskEl.className = 'ai-stat-value ' + (multiplier >= 2 ? 'positive' : multiplier > 1 ? '' : '');
+  }
 
   // --- Enhanced Portfolio Stats ---
   const stats = state.performanceStats;
