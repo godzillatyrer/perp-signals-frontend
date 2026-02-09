@@ -949,25 +949,49 @@ function calculateIchimoku(candles) {
 // ============================================
 
 async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
+  // Try Binance Futures first, fall back to Bybit if blocked
   try {
     const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const response = await fetchWithTimeout(url, {}, 8000);
+    const response = await fetchWithTimeout(url, {}, 6000);
     const data = await response.json();
 
-    if (!Array.isArray(data)) return [];
-
-    return data.map(k => ({
-      time: k[0],
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5])
-    }));
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map(k => ({
+        time: k[0],
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
   } catch (e) {
-    console.log(`Failed to fetch candles for ${symbol}:`, e.message);
-    return [];
+    console.log(`Binance candles failed for ${symbol} ${interval}: ${e.message}, trying Bybit...`);
   }
+
+  // Bybit fallback
+  try {
+    const intervalMap = { '1h': '60', '4h': '240', '1d': 'D', '15m': '15', '5m': '5' };
+    const bybitInterval = intervalMap[interval] || '60';
+    const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+    const response = await fetchWithTimeout(url, {}, 6000);
+    const data = await response.json();
+
+    if (data?.result?.list?.length > 0) {
+      return data.result.list.reverse().map(k => ({
+        time: parseInt(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
+  } catch (e) {
+    console.log(`Bybit candles also failed for ${symbol} ${interval}: ${e.message}`);
+  }
+
+  return [];
 }
 
 function getVolumeTrend(candles) {
@@ -990,7 +1014,12 @@ function classifyMarketRegime(indicators) {
 
 // Calculate all indicators for a symbol
 async function calculateIndicators(symbol) {
-  const candles = await fetchCandlesticks(symbol, '1h', 200);
+  // Fetch all timeframes in parallel to avoid sequential timeout
+  const [candles, candles4hRaw, candlesDRaw] = await Promise.all([
+    fetchCandlesticks(symbol, '1h', 200),
+    fetchCandlesticks(symbol, '4h', 100),
+    fetchCandlesticks(symbol, '1d', 100)
+  ]);
   if (candles.length < 50) {
     console.log(`Insufficient candles for ${symbol}: ${candles.length}`);
     return null;
@@ -1022,10 +1051,10 @@ async function calculateIndicators(symbol) {
   else if (currentPrice < ema20 && ema20 < ema50) trend = 'STRONG DOWNTREND';
   else if (currentPrice < ema20) trend = 'WEAK DOWNTREND';
 
-  // Higher Timeframe: 4H indicators
+  // Higher Timeframe: 4H indicators (already fetched in parallel above)
   let htf4h = null;
   try {
-    const candles4h = await fetchCandlesticks(symbol, '4h', 100);
+    const candles4h = candles4hRaw;
     if (candles4h.length >= 50) {
       const closes4h = candles4h.map(c => c.close);
       const ema20_4h = calculateEMA(closes4h, 20);
@@ -1042,10 +1071,10 @@ async function calculateIndicators(symbol) {
     }
   } catch (e) { console.log(`4H fetch failed for ${symbol}`); }
 
-  // Higher Timeframe: 1D indicators
+  // Higher Timeframe: 1D indicators (already fetched in parallel above)
   let htfDaily = null;
   try {
-    const candlesD = await fetchCandlesticks(symbol, '1d', 100);
+    const candlesD = candlesDRaw;
     if (candlesD.length >= 50) {
       const closesD = candlesD.map(c => c.close);
       const ema20D = calculateEMA(closesD, 20);
@@ -1233,7 +1262,34 @@ async function fetchMarketData() {
     }
   }
 
-  // Source 3: Try CoinGecko as fallback (no API key needed)
+  // Source 3: Try Bybit
+  if (!pricesLoaded) {
+    try {
+      console.log('Trying Bybit API...');
+      const bybitRes = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 6000);
+      const bybitData = await bybitRes.json();
+      if (bybitData?.result?.list) {
+        for (const coin of CONFIG.TOP_COINS) {
+          const ticker = bybitData.result.list.find(t => t.symbol === coin);
+          if (ticker) {
+            data.prices[coin] = {
+              price: parseFloat(ticker.lastPrice),
+              change24h: parseFloat(ticker.price24hPcnt) * 100,
+              high24h: parseFloat(ticker.highPrice24h),
+              low24h: parseFloat(ticker.lowPrice24h),
+              volume: parseFloat(ticker.turnover24h)
+            };
+          }
+        }
+        pricesLoaded = Object.keys(data.prices).length > 0;
+        console.log(`Bybit: loaded ${Object.keys(data.prices).length} prices`);
+      }
+    } catch (e) {
+      console.log('Bybit failed:', e.message);
+    }
+  }
+
+  // Source 4: Try CoinGecko as fallback (no API key needed)
   if (!pricesLoaded) {
     try {
       console.log('Trying CoinGecko API...');
@@ -1359,9 +1415,8 @@ async function buildAnalysisPrompt(marketData, indicatorData) {
   // Build per-AI outcome feedback from Redis signal log
   let outcomeContext = '';
   try {
-    const { Redis } = await import('@upstash/redis');
-    const redis = new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN });
-    const signalLog = await redis.get('ai_signal_log');
+    const r = getRedis();
+    const signalLog = r ? await r.get('ai_signal_log') : null;
     if (signalLog) {
       const sources = ['claude', 'openai', 'grok'];
       for (const src of sources) {

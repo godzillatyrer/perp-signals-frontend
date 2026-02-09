@@ -48,23 +48,43 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
   }
 }
 
-// Get current prices from Binance Futures
+// Get current prices — Binance Futures with Bybit fallback
 async function getCurrentPrices(symbols) {
+  // Try Binance Futures first
   try {
-    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 8000);
+    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 6000);
     const data = await response.json();
-
-    const prices = {};
-    for (const item of data) {
-      if (symbols.includes(item.symbol)) {
-        prices[item.symbol] = parseFloat(item.price);
+    if (Array.isArray(data)) {
+      const prices = {};
+      for (const item of data) {
+        if (symbols.includes(item.symbol)) {
+          prices[item.symbol] = parseFloat(item.price);
+        }
       }
+      if (Object.keys(prices).length > 0) return prices;
     }
-    return prices;
   } catch (error) {
-    console.error('Failed to fetch Binance prices:', error.message);
-    return null;
+    console.log('Binance prices failed:', error.message, '— trying Bybit...');
   }
+
+  // Bybit fallback
+  try {
+    const response = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 6000);
+    const data = await response.json();
+    if (data?.result?.list) {
+      const prices = {};
+      for (const item of data.result.list) {
+        if (symbols.includes(item.symbol)) {
+          prices[item.symbol] = parseFloat(item.lastPrice);
+        }
+      }
+      if (Object.keys(prices).length > 0) return prices;
+    }
+  } catch (error) {
+    console.error('Bybit prices also failed:', error.message);
+  }
+
+  return null;
 }
 
 // Send Telegram notification

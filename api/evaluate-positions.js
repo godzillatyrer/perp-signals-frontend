@@ -36,40 +36,87 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
 }
 
 async function getCurrentPrices(symbols) {
+  // Try Binance Futures first
   try {
-    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 8000);
+    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 6000);
     const data = await response.json();
-    const prices = {};
-    for (const item of data) {
-      if (symbols.includes(item.symbol)) {
-        prices[item.symbol] = parseFloat(item.price);
+    if (Array.isArray(data)) {
+      const prices = {};
+      for (const item of data) {
+        if (symbols.includes(item.symbol)) {
+          prices[item.symbol] = parseFloat(item.price);
+        }
       }
+      if (Object.keys(prices).length > 0) return prices;
     }
-    return prices;
   } catch (error) {
-    console.error('Failed to fetch prices:', error.message);
+    console.log('Binance prices failed:', error.message, '— trying Bybit...');
+  }
+
+  // Bybit fallback
+  try {
+    const response = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 6000);
+    const data = await response.json();
+    if (data?.result?.list) {
+      const prices = {};
+      for (const item of data.result.list) {
+        if (symbols.includes(item.symbol)) {
+          prices[item.symbol] = parseFloat(item.lastPrice);
+        }
+      }
+      if (Object.keys(prices).length > 0) return prices;
+    }
+  } catch (error) {
+    console.error('Bybit prices also failed:', error.message);
+  }
+  // Original error path
+  console.error('Failed to fetch prices from all sources');
     return null;
   }
 }
 
 async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
+  // Try Binance Futures first
   try {
     const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const response = await fetchWithTimeout(url, {}, 8000);
+    const response = await fetchWithTimeout(url, {}, 6000);
     const data = await response.json();
-    if (!Array.isArray(data)) return [];
-    return data.map(k => ({
-      time: k[0],
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5])
-    }));
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map(k => ({
+        time: k[0],
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
   } catch (e) {
-    console.log(`Failed to fetch candles for ${symbol}:`, e.message);
-    return [];
+    console.log(`Binance candles failed for ${symbol}: ${e.message}, trying Bybit...`);
   }
+
+  // Bybit fallback
+  try {
+    const intervalMap = { '1h': '60', '4h': '240', '1d': 'D', '15m': '15' };
+    const bybitInterval = intervalMap[interval] || '60';
+    const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+    const response = await fetchWithTimeout(url, {}, 6000);
+    const data = await response.json();
+    if (data?.result?.list?.length > 0) {
+      return data.result.list.reverse().map(k => ({
+        time: parseInt(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
+  } catch (e) {
+    console.log(`Bybit candles also failed for ${symbol}: ${e.message}`);
+  }
+
+  return [];
 }
 
 function calculateRSI(closes, period = 14) {
