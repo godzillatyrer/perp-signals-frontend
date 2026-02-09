@@ -543,6 +543,10 @@
               <span class="ai-tab-name">Consensus</span>
               <span class="ai-tab-count" id="consensusTabCount">0</span>
             </button>
+            <button class="ai-detail-tab" data-ai-tab="insights">
+              <span class="ai-tab-icon insights-icon">&#x25C8;</span>
+              <span class="ai-tab-name">Insights</span>
+            </button>
           </div>
 
           <!-- Claude Tab -->
@@ -711,6 +715,64 @@
 
             <div class="ai-signal-log" id="consensusSignalLog">
               <div class="empty-state">No consensus trades yet</div>
+            </div>
+          </div>
+
+          <!-- Insights Tab -->
+          <div class="ai-tab-panel" id="ai-panel-insights">
+            <!-- Enhanced Portfolio Stats -->
+            <div class="insights-section">
+              <div class="insights-section-title">Portfolio Performance</div>
+              <div class="ai-panel-stats">
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Sharpe Ratio</span>
+                  <span class="ai-stat-value" id="insSharpe">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Profit Factor</span>
+                  <span class="ai-stat-value" id="insProfitFactor">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Expectancy</span>
+                  <span class="ai-stat-value" id="insExpectancy">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Max Drawdown</span>
+                  <span class="ai-stat-value" id="insMaxDrawdown">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Avg Win</span>
+                  <span class="ai-stat-value positive" id="insAvgWin">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Avg Loss</span>
+                  <span class="ai-stat-value negative" id="insAvgLoss">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Max Consec Wins</span>
+                  <span class="ai-stat-value" id="insMaxWStreak">--</span>
+                </div>
+                <div class="ai-stat-box">
+                  <span class="ai-stat-label">Max Consec Losses</span>
+                  <span class="ai-stat-value" id="insMaxLStreak">--</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Confidence Calibration -->
+            <div class="insights-section">
+              <div class="insights-section-title">Confidence Calibration</div>
+              <div class="confidence-calibration" id="insConfCalibration">
+                <div class="empty-state">Collecting data... Calibration appears after closed trades.</div>
+              </div>
+            </div>
+
+            <!-- Trade Lessons -->
+            <div class="insights-section">
+              <div class="insights-section-title">AI Trade Lessons</div>
+              <div class="ai-signal-log" id="insLessonsLog">
+                <div class="empty-state">No lessons yet. AI generates lessons after trades close.</div>
+              </div>
             </div>
           </div>
         </div>

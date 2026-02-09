@@ -127,6 +127,20 @@ export default async function handler(request, response) {
         console.error('Failed to load signal log:', e.message);
       }
 
+      // Include trade lessons and confidence tracking
+      try {
+        const lessons = await r.get('trade_lessons');
+        if (lessons) {
+          result.tradeLessons = typeof lessons === 'string' ? JSON.parse(lessons) : lessons;
+        }
+        const confTracking = await r.get('confidence_tracking');
+        if (confTracking) {
+          result.confidenceTracking = typeof confTracking === 'string' ? JSON.parse(confTracking) : confTracking;
+        }
+      } catch (e) {
+        console.error('Failed to load lessons/confidence:', e.message);
+      }
+
       return response.status(200).json(result);
     }
 

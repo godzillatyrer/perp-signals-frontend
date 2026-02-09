@@ -949,25 +949,49 @@ function calculateIchimoku(candles) {
 // ============================================
 
 async function fetchCandlesticks(symbol, interval = '1h', limit = 100) {
+  // Try Binance Futures first, fall back to Bybit if blocked
   try {
     const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const response = await fetchWithTimeout(url, {}, 8000);
+    const response = await fetchWithTimeout(url, {}, 6000);
     const data = await response.json();
 
-    if (!Array.isArray(data)) return [];
-
-    return data.map(k => ({
-      time: k[0],
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5])
-    }));
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map(k => ({
+        time: k[0],
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
   } catch (e) {
-    console.log(`Failed to fetch candles for ${symbol}:`, e.message);
-    return [];
+    console.log(`Binance candles failed for ${symbol} ${interval}: ${e.message}, trying Bybit...`);
   }
+
+  // Bybit fallback
+  try {
+    const intervalMap = { '1h': '60', '4h': '240', '1d': 'D', '15m': '15', '5m': '5' };
+    const bybitInterval = intervalMap[interval] || '60';
+    const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+    const response = await fetchWithTimeout(url, {}, 6000);
+    const data = await response.json();
+
+    if (data?.result?.list?.length > 0) {
+      return data.result.list.reverse().map(k => ({
+        time: parseInt(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+    }
+  } catch (e) {
+    console.log(`Bybit candles also failed for ${symbol} ${interval}: ${e.message}`);
+  }
+
+  return [];
 }
 
 function getVolumeTrend(candles) {
@@ -990,7 +1014,12 @@ function classifyMarketRegime(indicators) {
 
 // Calculate all indicators for a symbol
 async function calculateIndicators(symbol) {
-  const candles = await fetchCandlesticks(symbol, '1h', 200);
+  // Fetch all timeframes in parallel to avoid sequential timeout
+  const [candles, candles4hRaw, candlesDRaw] = await Promise.all([
+    fetchCandlesticks(symbol, '1h', 200),
+    fetchCandlesticks(symbol, '4h', 100),
+    fetchCandlesticks(symbol, '1d', 100)
+  ]);
   if (candles.length < 50) {
     console.log(`Insufficient candles for ${symbol}: ${candles.length}`);
     return null;
@@ -1022,10 +1051,10 @@ async function calculateIndicators(symbol) {
   else if (currentPrice < ema20 && ema20 < ema50) trend = 'STRONG DOWNTREND';
   else if (currentPrice < ema20) trend = 'WEAK DOWNTREND';
 
-  // Higher Timeframe: 4H indicators
+  // Higher Timeframe: 4H indicators (already fetched in parallel above)
   let htf4h = null;
   try {
-    const candles4h = await fetchCandlesticks(symbol, '4h', 100);
+    const candles4h = candles4hRaw;
     if (candles4h.length >= 50) {
       const closes4h = candles4h.map(c => c.close);
       const ema20_4h = calculateEMA(closes4h, 20);
@@ -1042,10 +1071,10 @@ async function calculateIndicators(symbol) {
     }
   } catch (e) { console.log(`4H fetch failed for ${symbol}`); }
 
-  // Higher Timeframe: 1D indicators
+  // Higher Timeframe: 1D indicators (already fetched in parallel above)
   let htfDaily = null;
   try {
-    const candlesD = await fetchCandlesticks(symbol, '1d', 100);
+    const candlesD = candlesDRaw;
     if (candlesD.length >= 50) {
       const closesD = candlesD.map(c => c.close);
       const ema20D = calculateEMA(closesD, 20);
@@ -1165,13 +1194,31 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
   }
 }
 
+// BTC Dominance macro filter
+async function fetchBtcDominance() {
+  try {
+    const response = await fetchWithTimeout('https://api.coingecko.com/api/v3/global', {}, 6000);
+    const data = await response.json();
+    if (data?.data?.market_cap_percentage?.btc) {
+      return {
+        current: data.data.market_cap_percentage.btc,
+        timestamp: Date.now()
+      };
+    }
+  } catch (e) {
+    console.log('BTC dominance fetch failed:', e.message);
+  }
+  return null;
+}
+
 async function fetchMarketData() {
   const data = {
     prices: {},
     fundingRates: {},
     openInterest: {},
     liquidations: {},
-    longShortRatio: {}
+    longShortRatio: {},
+    btcDominance: null
   };
 
   // Try multiple data sources for prices
@@ -1233,7 +1280,34 @@ async function fetchMarketData() {
     }
   }
 
-  // Source 3: Try CoinGecko as fallback (no API key needed)
+  // Source 3: Try Bybit
+  if (!pricesLoaded) {
+    try {
+      console.log('Trying Bybit API...');
+      const bybitRes = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 6000);
+      const bybitData = await bybitRes.json();
+      if (bybitData?.result?.list) {
+        for (const coin of CONFIG.TOP_COINS) {
+          const ticker = bybitData.result.list.find(t => t.symbol === coin);
+          if (ticker) {
+            data.prices[coin] = {
+              price: parseFloat(ticker.lastPrice),
+              change24h: parseFloat(ticker.price24hPcnt) * 100,
+              high24h: parseFloat(ticker.highPrice24h),
+              low24h: parseFloat(ticker.lowPrice24h),
+              volume: parseFloat(ticker.turnover24h)
+            };
+          }
+        }
+        pricesLoaded = Object.keys(data.prices).length > 0;
+        console.log(`Bybit: loaded ${Object.keys(data.prices).length} prices`);
+      }
+    } catch (e) {
+      console.log('Bybit failed:', e.message);
+    }
+  }
+
+  // Source 4: Try CoinGecko as fallback (no API key needed)
   if (!pricesLoaded) {
     try {
       console.log('Trying CoinGecko API...');
@@ -1348,6 +1422,11 @@ async function fetchMarketData() {
       }
     }
 
+  // Fetch BTC dominance for macro filter
+  data.btcDominance = await fetchBtcDominance();
+  _btcDominance = data.btcDominance;
+  _btcPrice24hChange = data.prices?.BTCUSDT?.change24h || 0;
+
   return data;
 }
 
@@ -1359,9 +1438,8 @@ async function buildAnalysisPrompt(marketData, indicatorData) {
   // Build per-AI outcome feedback from Redis signal log
   let outcomeContext = '';
   try {
-    const { Redis } = await import('@upstash/redis');
-    const redis = new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN });
-    const signalLog = await redis.get('ai_signal_log');
+    const r = getRedis();
+    const signalLog = r ? await r.get('ai_signal_log') : null;
     if (signalLog) {
       const sources = ['claude', 'openai', 'grok'];
       for (const src of sources) {
@@ -1382,9 +1460,28 @@ async function buildAnalysisPrompt(marketData, indicatorData) {
     }
   } catch (e) { console.log('Could not load signal log for prompt:', e.message); }
 
+  // Load trade lessons from Redis
+  let lessonsContext = '';
+  try {
+    const r = getRedis();
+    if (r) {
+      let lessons = await r.get('trade_lessons');
+      if (lessons) {
+        if (typeof lessons === 'string') lessons = JSON.parse(lessons);
+        const recent = lessons.slice(-10);
+        if (recent.length > 0) {
+          lessonsContext = '=== LESSONS FROM RECENT TRADES ===\n' +
+            recent.map(l => `- ${l.symbol} ${l.direction} (${l.outcome}): "${l.lesson}"`).join('\n') +
+            '\nAPPLY these lessons to avoid repeating mistakes.\n';
+        }
+      }
+    }
+  } catch (e) { console.log('Could not load trade lessons:', e.message); }
+
   let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data with MULTI-TIMEFRAME TECHNICAL INDICATORS and DERIVATIVES DATA to identify the BEST trading opportunities.
 
 ${outcomeContext ? `=== AI TRACK RECORD (learn from past mistakes) ===\n${outcomeContext}If you keep losing on a symbol, skip it or reverse your bias. Double down on symbols where you've been accurate.\n` : ''}
+${lessonsContext}
 MULTI-TIMEFRAME RULES (CRITICAL):
 - **DAILY TREND is the #1 filter** — ONLY trade in the direction of the Daily trend
 - If Daily = STRONG UPTREND + 4H = BULLISH → HIGH conviction LONG
@@ -1919,6 +2016,10 @@ function createTradeKeyboard(signal) {
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
 
+// Module-level cache for BTC dominance (set during fetchMarketData, read in openTradeForSignal)
+let _btcDominance = null;
+let _btcPrice24hChange = null;
+
 const TRADE_CONFIG = {
   silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8 },
   gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5 }
@@ -2025,6 +2126,58 @@ async function openTradeForSignal(signal) {
     if (totalExposure >= maxExposure) {
       console.log(`🛡️ ${portfolioType.toUpperCase()}: Exposure $${totalExposure.toFixed(0)} >= 60% of balance ($${maxExposure.toFixed(0)}), skipping`);
       return { opened: false, reason: 'max_exposure' };
+    }
+
+    // === CIRCUIT BREAKER: Daily & Weekly Loss Limits ===
+    const DAILY_LOSS_LIMIT = 0.05;  // 5% of balance
+    const WEEKLY_LOSS_LIMIT = 0.15; // 15% of balance
+    const now = Date.now();
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+    const closedTrades = (portfolio.trades || []).filter(t => t.status === 'closed');
+    const dailyLosses = closedTrades
+      .filter(t => t.closeTimestamp && t.closeTimestamp > oneDayAgo && t.pnl < 0)
+      .reduce((sum, t) => sum + Math.abs(t.pnl), 0);
+    const weeklyLosses = closedTrades
+      .filter(t => t.closeTimestamp && t.closeTimestamp > oneWeekAgo && t.pnl < 0)
+      .reduce((sum, t) => sum + Math.abs(t.pnl), 0);
+
+    const dailyLimit = portfolio.balance * DAILY_LOSS_LIMIT;
+    const weeklyLimit = portfolio.balance * WEEKLY_LOSS_LIMIT;
+
+    if (dailyLosses >= dailyLimit) {
+      console.log(`🚨 CIRCUIT BREAKER: ${portfolioType.toUpperCase()} daily losses $${dailyLosses.toFixed(0)} >= 5% limit $${dailyLimit.toFixed(0)}`);
+      // Send Telegram alert (once per trigger)
+      if (!portfolio._dailyBreaker || portfolio._dailyBreaker < oneDayAgo) {
+        portfolio._dailyBreaker = now;
+        await sendTelegramMessage(`🚨 <b>CIRCUIT BREAKER TRIGGERED</b>\n\n${portfolioType.toUpperCase()} portfolio daily losses: $${dailyLosses.toFixed(2)}\nLimit: $${dailyLimit.toFixed(2)} (5% of balance)\n\n⛔ No new trades until losses reset.`);
+      }
+      return { opened: false, reason: 'daily_loss_limit' };
+    }
+
+    if (weeklyLosses >= weeklyLimit) {
+      console.log(`🚨 CIRCUIT BREAKER: ${portfolioType.toUpperCase()} weekly losses $${weeklyLosses.toFixed(0)} >= 15% limit $${weeklyLimit.toFixed(0)}`);
+      if (!portfolio._weeklyBreaker || portfolio._weeklyBreaker < oneWeekAgo) {
+        portfolio._weeklyBreaker = now;
+        await sendTelegramMessage(`🚨 <b>WEEKLY CIRCUIT BREAKER</b>\n\n${portfolioType.toUpperCase()} portfolio weekly losses: $${weeklyLosses.toFixed(2)}\nLimit: $${weeklyLimit.toFixed(2)} (15% of balance)\n\n⛔ No new trades until weekly losses reset.`);
+      }
+      return { opened: false, reason: 'weekly_loss_limit' };
+    }
+
+    // === BTC DOMINANCE MACRO FILTER ===
+    // If BTC dominance rising + BTC price rising → alts get drained, block alt LONGs
+    // If BTC dominance falling + BTC stable → alt season, allow alt trades
+    const isAlt = signal.symbol !== 'BTCUSDT' && signal.symbol !== 'ETHUSDT';
+    if (isAlt && _btcDominance && _btcPrice24hChange !== null) {
+      const btcDom = _btcDominance.current;
+      const btcUp = _btcPrice24hChange > 1; // BTC rose >1% today
+      const highDominance = btcDom > 55; // BTC dominance above 55%
+
+      if (highDominance && btcUp && signal.direction === 'LONG') {
+        console.log(`📊 BTC DOM FILTER: BTC.D=${btcDom.toFixed(1)}% + BTC +${_btcPrice24hChange.toFixed(1)}% → blocking alt LONG on ${signal.symbol}`);
+        return { opened: false, reason: 'btc_dominance_filter' };
+      }
     }
 
     // Session-aware filter — prefer US/EU overlap (13:00-21:00 UTC) for higher quality

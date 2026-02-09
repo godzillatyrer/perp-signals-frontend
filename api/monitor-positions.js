@@ -48,23 +48,43 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
   }
 }
 
-// Get current prices from Binance Futures
+// Get current prices — Binance Futures with Bybit fallback
 async function getCurrentPrices(symbols) {
+  // Try Binance Futures first
   try {
-    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 8000);
+    const response = await fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/price', {}, 6000);
     const data = await response.json();
-
-    const prices = {};
-    for (const item of data) {
-      if (symbols.includes(item.symbol)) {
-        prices[item.symbol] = parseFloat(item.price);
+    if (Array.isArray(data)) {
+      const prices = {};
+      for (const item of data) {
+        if (symbols.includes(item.symbol)) {
+          prices[item.symbol] = parseFloat(item.price);
+        }
       }
+      if (Object.keys(prices).length > 0) return prices;
     }
-    return prices;
   } catch (error) {
-    console.error('Failed to fetch Binance prices:', error.message);
-    return null;
+    console.log('Binance prices failed:', error.message, '— trying Bybit...');
   }
+
+  // Bybit fallback
+  try {
+    const response = await fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear', {}, 6000);
+    const data = await response.json();
+    if (data?.result?.list) {
+      const prices = {};
+      for (const item of data.result.list) {
+        if (symbols.includes(item.symbol)) {
+          prices[item.symbol] = parseFloat(item.lastPrice);
+        }
+      }
+      if (Object.keys(prices).length > 0) return prices;
+    }
+  } catch (error) {
+    console.error('Bybit prices also failed:', error.message);
+  }
+
+  return null;
 }
 
 // Send Telegram notification
@@ -121,6 +141,163 @@ ${resultEmoji} <b>${trade.symbol}</b> ${trade.direction}
 
 ⏰ Closed by: Backend Monitor
 🤖 Auto-managed 24/7`;
+}
+
+// === POST-TRADE ANALYSIS: AI-generated lessons from closed trades ===
+async function generateTradeLesson(trade, exitPrice, pnl) {
+  if (!process.env.CLAUDE_API_KEY) return null;
+
+  try {
+    const outcome = pnl > 0 ? 'WIN' : 'LOSS';
+    const holdTime = trade.closeTimestamp ? ((trade.closeTimestamp - trade.timestamp) / 3600000).toFixed(1) : 'unknown';
+    const prompt = `A crypto perpetual futures trade just closed. Analyze what happened and provide a 1-line lesson.
+
+Trade: ${trade.symbol} ${trade.direction}
+Entry: $${trade.entry} | Exit: $${exitPrice} | PnL: ${pnl > 0 ? '+' : ''}$${pnl.toFixed(2)} (${outcome})
+Confidence: ${trade.confidence || 'N/A'}% | Hold time: ${holdTime}h
+Consensus: ${trade.isGoldConsensus ? 'Gold (3/3)' : 'Silver (2/3)'}
+Partial TPs: ${trade.tp1Hit ? 'TP1✅' : 'TP1❌'} ${trade.tp2Hit ? 'TP2✅' : 'TP2❌'} ${trade.tp3Hit ? 'TP3✅' : 'TP3❌'}
+SL was trailing: ${trade.isTrailing ? 'Yes' : 'No'}
+
+Respond with ONLY a JSON object: {"lesson": "one sentence lesson", "category": "ENTRY_TIMING|EXIT_TIMING|TREND_WRONG|STOP_TOO_TIGHT|STOP_TOO_WIDE|GOOD_TRADE|LUCKY_TRADE"}`;
+
+    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }, 15000);
+
+    const data = await response.json();
+    if (data.content?.[0]?.text) {
+      const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          symbol: trade.symbol,
+          direction: trade.direction,
+          outcome,
+          pnl: pnl.toFixed(2),
+          confidence: trade.confidence || null,
+          lesson: parsed.lesson,
+          category: parsed.category,
+          timestamp: Date.now()
+        };
+      }
+    }
+  } catch (e) {
+    console.log('Trade lesson generation failed:', e.message);
+  }
+  return null;
+}
+
+async function saveTradeLesson(r, lesson) {
+  if (!r || !lesson) return;
+  try {
+    let lessons = await r.get('trade_lessons') || [];
+    if (typeof lessons === 'string') lessons = JSON.parse(lessons);
+    lessons.push(lesson);
+    // Keep last 50 lessons
+    if (lessons.length > 50) lessons = lessons.slice(-50);
+    await r.set('trade_lessons', JSON.stringify(lessons));
+    console.log(`📝 Trade lesson saved: ${lesson.lesson}`);
+  } catch (e) {
+    console.log('Failed to save trade lesson:', e.message);
+  }
+}
+
+// === CONFIDENCE vs OUTCOME TRACKING (#3) ===
+async function trackConfidenceOutcome(r, trade, pnl) {
+  if (!r || !trade.confidence) return;
+  try {
+    let tracking = await r.get('confidence_tracking') || [];
+    if (typeof tracking === 'string') tracking = JSON.parse(tracking);
+    tracking.push({
+      symbol: trade.symbol,
+      direction: trade.direction,
+      confidence: trade.confidence,
+      outcome: pnl > 0 ? 'win' : 'loss',
+      pnl: parseFloat(pnl.toFixed(2)),
+      isGold: trade.isGoldConsensus || false,
+      timestamp: Date.now()
+    });
+    // Keep last 200 entries
+    if (tracking.length > 200) tracking = tracking.slice(-200);
+    await r.set('confidence_tracking', JSON.stringify(tracking));
+  } catch (e) {
+    console.log('Failed to track confidence:', e.message);
+  }
+}
+
+// === ENHANCED STATS: Sharpe ratio, profit factor, expectancy (#12) ===
+function calculateEnhancedStats(portfolio) {
+  const closedTrades = portfolio.trades.filter(t => t.status === 'closed');
+  const wins = closedTrades.filter(t => t.pnl > 0);
+  const losses = closedTrades.filter(t => t.pnl <= 0);
+
+  // Basic stats
+  let peak = portfolio.equityHistory[0]?.value || portfolio.startBalance;
+  let maxDd = 0;
+  for (const point of portfolio.equityHistory) {
+    if (point.value > peak) peak = point.value;
+    const dd = (peak - point.value) / peak * 100;
+    if (dd > maxDd) maxDd = dd;
+  }
+  const totalPnL = closedTrades.reduce((sum, t) => sum + t.pnl, 0);
+
+  // Profit Factor = gross wins / gross losses
+  const grossWins = wins.reduce((sum, t) => sum + t.pnl, 0);
+  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + t.pnl, 0));
+  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? Infinity : 0;
+
+  // Average Win / Average Loss
+  const avgWin = wins.length > 0 ? grossWins / wins.length : 0;
+  const avgLoss = losses.length > 0 ? grossLosses / losses.length : 0;
+
+  // Expectancy = (WinRate × AvgWin) - (LossRate × AvgLoss)
+  const winRate = closedTrades.length > 0 ? wins.length / closedTrades.length : 0;
+  const expectancy = (winRate * avgWin) - ((1 - winRate) * avgLoss);
+
+  // Sharpe Ratio (simplified: mean return / std dev of returns)
+  let sharpeRatio = 0;
+  if (closedTrades.length >= 5) {
+    const returns = closedTrades.map(t => t.pnl);
+    const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((sum, r) => sum + Math.pow(r - meanReturn, 2), 0) / returns.length;
+    const stdDev = Math.sqrt(variance);
+    sharpeRatio = stdDev > 0 ? (meanReturn / stdDev) * Math.sqrt(252) : 0; // Annualized
+  }
+
+  // Consecutive wins/losses
+  let maxConsecWins = 0, maxConsecLosses = 0, curWins = 0, curLosses = 0;
+  for (const t of closedTrades) {
+    if (t.pnl > 0) { curWins++; curLosses = 0; maxConsecWins = Math.max(maxConsecWins, curWins); }
+    else { curLosses++; curWins = 0; maxConsecLosses = Math.max(maxConsecLosses, curLosses); }
+  }
+
+  return {
+    totalTrades: closedTrades.length,
+    winningTrades: wins.length,
+    losingTrades: losses.length,
+    totalPnL,
+    maxDrawdown: maxDd,
+    peakEquity: peak,
+    winRate: closedTrades.length > 0 ? (wins.length / closedTrades.length * 100) : 0,
+    profitFactor: Math.round(profitFactor * 100) / 100,
+    avgWin: Math.round(avgWin * 100) / 100,
+    avgLoss: Math.round(avgLoss * 100) / 100,
+    expectancy: Math.round(expectancy * 100) / 100,
+    sharpeRatio: Math.round(sharpeRatio * 100) / 100,
+    maxConsecWins,
+    maxConsecLosses
+  };
 }
 
 // Get default portfolio structure
@@ -462,9 +639,9 @@ export default async function handler(request, response) {
 
     // 5. Save updated portfolio data if trades were closed OR stop-losses adjusted
     if (closedTrades.length > 0 || slAdjusted) {
-      // Recalculate stats
-      portfolioData.silver.stats = calculateStats(portfolioData.silver);
-      portfolioData.gold.stats = calculateStats(portfolioData.gold);
+      // Recalculate stats with enhanced metrics (Sharpe, profit factor, expectancy)
+      portfolioData.silver.stats = calculateEnhancedStats(portfolioData.silver);
+      portfolioData.gold.stats = calculateEnhancedStats(portfolioData.gold);
       portfolioData.lastUpdated = Date.now();
 
       // Keep equity history bounded
@@ -480,10 +657,21 @@ export default async function handler(request, response) {
       await r.set(PORTFOLIO_KEY, JSON.stringify(portfolioData));
       console.log('💾 Saved updated portfolio to Redis');
 
-      // 6. Send Telegram notifications for each closed trade
+      // 6. Send Telegram notifications + post-trade analysis for each closed trade
       for (const { trade, portfolioType, exitPrice, pnl, isTP } of closedTrades) {
         const message = formatTradeCloseMessage(trade, portfolioType, exitPrice, pnl, isTP);
         await sendTelegramMessage(message);
+
+        // Track confidence vs outcome (#3)
+        await trackConfidenceOutcome(r, trade, pnl);
+
+        // Generate AI lesson for this trade (#8)
+        const lesson = await generateTradeLesson(trade, exitPrice, pnl);
+        if (lesson) {
+          await saveTradeLesson(r, lesson);
+          // Include lesson in Telegram notification
+          await sendTelegramMessage(`📝 <b>Trade Lesson</b> — ${trade.symbol} ${trade.direction}\n\n💡 ${lesson.lesson}\n📂 Category: ${lesson.category}`);
+        }
       }
     }
 
