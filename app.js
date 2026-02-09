@@ -1779,26 +1779,48 @@ async function fetchFromCoinglassCoinList(symbol) {
       }
     }
 
-    // Fetch fresh data
-    const url = getCoinglassUrl('/futures/liquidation/coin-list');
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS] Fetching coin-list...`);
+    // Fetch via server-side proxy (bypasses CORS and forwards API key from env)
+    // Falls back to direct CORS proxy if server proxy fails
+    let data = null;
 
-    const response = await fetch(url, {
-      headers: {
-        'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
-        'accept': 'application/json'
+    // Method 1: Server-side proxy (uses COINGLASS_API_KEY from Vercel env)
+    try {
+      const proxyUrl = '/api/coinglass?endpoint=/futures/liquidation/coin-list';
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS] Fetching via server proxy...`);
+      const response = await fetch(proxyUrl);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          data = result;
+        } else if (result.success === false) {
+          console.log(`💧 [COINGLASS] Server proxy: ${result.error}`);
+        }
       }
-    });
-
-    if (!response.ok) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS] HTTP ${response.status}`);
-      return null;
+    } catch (e) {
+      console.log(`💧 [COINGLASS] Server proxy failed: ${e.message}`);
     }
 
-    const data = await response.json();
+    // Method 2: Direct with CORS proxy (fallback if server proxy unavailable)
+    if (!data && CONFIG.COINGLASS_API_KEY) {
+      try {
+        const url = getCoinglassUrl('/futures/liquidation/coin-list');
+        if (DEBUG_MODE) console.log(`💧 [COINGLASS] Trying CORS proxy fallback...`);
+        const response = await fetch(url, {
+          headers: {
+            'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
+            'accept': 'application/json'
+          }
+        });
+        if (response.ok) {
+          data = await response.json();
+        }
+      } catch (e) {
+        console.log(`💧 [COINGLASS] CORS proxy also failed: ${e.message}`);
+      }
+    }
 
     if (!data || (data.code !== '0' && data.code !== 0) || !data.data) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS] Invalid response:`, data?.msg || data);
+      if (DEBUG_MODE) console.log(`💧 [COINGLASS] No valid data from any source`);
       return null;
     }
 
@@ -1806,7 +1828,7 @@ async function fetchFromCoinglassCoinList(symbol) {
     coinglassCoinListCache = Array.isArray(data.data) ? data.data : [];
     coinglassCoinListCacheTime = now;
 
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS] ✅ Loaded ${coinglassCoinListCache.length} coins from API`);
+    if (DEBUG_MODE) console.log(`💧 [COINGLASS] ✅ Loaded ${coinglassCoinListCache.length} coins`);
 
     // Find our symbol
     const coinData = coinglassCoinListCache.find(d =>
@@ -7133,6 +7155,404 @@ function renderDataView() {
   renderSentimentData();
 }
 
+// ============================================
+// SYSTEM HEALTH DASHBOARD
+// ============================================
+
+let healthCache = null;
+
+async function loadSystemHealth() {
+  try {
+    const response = await fetch('/api/health');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.success) {
+      healthCache = data;
+      renderHealthDashboard(data);
+    }
+  } catch (e) {
+    console.log('Health check failed:', e.message);
+  }
+}
+
+function renderHealthDashboard(data) {
+  const container = document.getElementById('healthContent');
+  if (!container) return;
+
+  const ago = (ts) => {
+    if (!ts) return 'Never';
+    const ms = Date.now() - ts;
+    if (ms < 60000) return '<1m ago';
+    if (ms < 3600000) return Math.round(ms / 60000) + 'm ago';
+    if (ms < 86400000) return Math.round(ms / 3600000) + 'h ago';
+    return Math.round(ms / 86400000) + 'd ago';
+  };
+
+  const dot = (ok) => `<span class="health-dot ${ok ? 'ok' : 'err'}"></span>`;
+
+  // --- API Connections ---
+  let html = '<div class="health-section"><div class="health-section-title">API Connections</div>';
+  if (data.apis) {
+    for (const [key, api] of Object.entries(data.apis)) {
+      const latency = api.latency > 0 ? `${api.latency}ms` : '';
+      html += `<div class="health-row">${dot(api.ok)}<span class="health-label">${api.name || key}</span><span class="health-value">${api.ok ? latency : (api.error || 'Failed')}</span></div>`;
+    }
+  }
+  html += '</div>';
+
+  // --- API Keys ---
+  html += '<div class="health-section"><div class="health-section-title">API Keys (Server)</div>';
+  if (data.config) {
+    const keyNames = { claude: 'Claude', gemini: 'Gemini', grok: 'Grok', coinglass: 'Coinglass', telegram: 'Telegram', redis: 'Redis' };
+    for (const [key, configured] of Object.entries(data.config)) {
+      html += `<div class="health-row">${dot(configured)}<span class="health-label">${keyNames[key] || key}</span><span class="health-value">${configured ? 'Configured' : 'Missing'}</span></div>`;
+    }
+  }
+  html += '</div>';
+
+  // --- Trading Status ---
+  const p = data.processes?.portfolio;
+  const opt = data.processes?.optimizer;
+  html += '<div class="health-section"><div class="health-section-title">Trading Engine</div>';
+  if (p) {
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Open Trades</span><span class="health-value">${(p.silverOpen || 0) + (p.goldOpen || 0)} (${p.silverOpen || 0}S / ${p.goldOpen || 0}G)</span></div>`;
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Closed Trades</span><span class="health-value">${(p.silverClosed || 0) + (p.goldClosed || 0)}</span></div>`;
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Silver Balance</span><span class="health-value">$${(p.silverBalance || 0).toFixed(2)}</span></div>`;
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Gold Balance</span><span class="health-value">$${(p.goldBalance || 0).toFixed(2)}</span></div>`;
+    if (p.winStreak > 0) {
+      html += `<div class="health-row"><span class="health-dot streak"></span><span class="health-label">Win Streak</span><span class="health-value streak-val">${p.winStreak} (${p.riskMultiplier}x risk)</span></div>`;
+    }
+    html += `<div class="health-row">${dot(!!p.lastTradeTime)}<span class="health-label">Last Trade</span><span class="health-value">${p.lastTradeSymbol || '--'} ${ago(p.lastTradeTime)}</span></div>`;
+    html += `<div class="health-row">${dot(!!p.lastUpdated)}<span class="health-label">Portfolio Updated</span><span class="health-value">${ago(p.lastUpdated)}</span></div>`;
+  } else {
+    html += `<div class="health-row">${dot(false)}<span class="health-label">Portfolio</span><span class="health-value">No data</span></div>`;
+  }
+  html += '</div>';
+
+  // --- Optimizer ---
+  html += '<div class="health-section"><div class="health-section-title">Self-Learning Optimizer</div>';
+  if (opt?.active) {
+    const pausedStatus = opt.paused ? `<span style="color:var(--short)">PAUSED (${opt.consecutiveLosses} losses)</span>` : '<span style="color:var(--long)">Active</span>';
+    html += `<div class="health-row">${dot(!opt.paused)}<span class="health-label">Status</span><span class="health-value">${pausedStatus}</span></div>`;
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Cycle</span><span class="health-value">#${opt.cycle} (${opt.tradesAnalyzed} trades)</span></div>`;
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Min Confidence</span><span class="health-value">${opt.alertConfidence}%</span></div>`;
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Min R:R</span><span class="health-value">${opt.minRiskReward}</span></div>`;
+    if (opt.aiWeights) {
+      html += `<div class="health-row">${dot(true)}<span class="health-label">AI Weights</span><span class="health-value">C:${opt.aiWeights.claude?.toFixed(1)} G:${opt.aiWeights.openai?.toFixed(1)} X:${opt.aiWeights.grok?.toFixed(1)}</span></div>`;
+    }
+    if (opt.symbolBlacklist?.length > 0) {
+      html += `<div class="health-row">${dot(false)}<span class="health-label">Blacklisted</span><span class="health-value">${opt.symbolBlacklist.join(', ')}</span></div>`;
+    }
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Last Optimized</span><span class="health-value">${ago(opt.lastOptimized)}</span></div>`;
+  } else {
+    html += `<div class="health-row">${dot(false)}<span class="health-label">Status</span><span class="health-value">Not run yet</span></div>`;
+  }
+  html += '</div>';
+
+  // --- AI Learning Data ---
+  html += '<div class="health-section"><div class="health-section-title">AI Learning Pipeline</div>';
+  const lessons = data.data?.tradeLessons;
+  const conf = data.data?.confidenceTracking;
+  const sigs = data.data?.signalLog;
+  html += `<div class="health-row">${dot((lessons?.count || 0) > 0)}<span class="health-label">Trade Lessons</span><span class="health-value">${lessons?.count || 0} stored</span></div>`;
+  html += `<div class="health-row">${dot((conf?.count || 0) > 0)}<span class="health-label">Confidence Tracking</span><span class="health-value">${conf?.count || 0} data points</span></div>`;
+  if (sigs) {
+    html += `<div class="health-row">${dot(true)}<span class="health-label">Signal Log</span><span class="health-value">C:${sigs.claude} G:${sigs.gemini} X:${sigs.grok} Con:${sigs.consensus}</span></div>`;
+  }
+
+  // Show latest lessons
+  if (lessons?.latest?.length > 0) {
+    html += '<div class="health-lessons-title">Latest AI Lessons:</div>';
+    for (const lesson of lessons.latest) {
+      const icon = lesson.outcome === 'WIN' ? '&#x2705;' : '&#x274C;';
+      html += `<div class="health-lesson">${icon} <b>${(lesson.symbol || '').replace('USDT', '')} ${lesson.direction || ''}</b>: ${lesson.lesson || 'No lesson'} <span class="health-lesson-cat">${lesson.category || ''}</span></div>`;
+    }
+  }
+  html += '</div>';
+
+  // --- Cron Schedules ---
+  html += '<div class="health-section"><div class="health-section-title">Cron Jobs (Vercel)</div>';
+  html += `<div class="health-row">${dot(true)}<span class="health-label">/api/scan</span><span class="health-value">Every 10 min</span></div>`;
+  html += `<div class="health-row">${dot(true)}<span class="health-label">/api/monitor-positions</span><span class="health-value">Every 2 min</span></div>`;
+  html += `<div class="health-row">${dot(true)}<span class="health-label">/api/evaluate-positions</span><span class="health-value">Every 30 min</span></div>`;
+  html += `<div class="health-row">${dot(true)}<span class="health-label">/api/optimize</span><span class="health-value">Every 6 hours</span></div>`;
+  html += '</div>';
+
+  // --- Cooldowns ---
+  const cooldowns = data.data?.cooldowns;
+  if (cooldowns?.length > 0) {
+    html += '<div class="health-section"><div class="health-section-title">Signal Cooldowns</div>';
+    for (const cd of cooldowns) {
+      html += `<div class="health-row">${dot(true)}<span class="health-label">${cd.symbol.replace('USDT', '')} ${cd.direction || ''}</span><span class="health-value">${ago(cd.timestamp)}</span></div>`;
+    }
+    html += '</div>';
+  }
+
+  html += `<div class="health-footer">Checked in ${data.duration || 0}ms</div>`;
+  container.innerHTML = html;
+}
+
+// ============================================
+// AI CONTEXT VIEWER — Shows what AIs see, learn, and how strategy adapts
+// ============================================
+
+let aiContextCache = null;
+
+async function loadAiContext() {
+  try {
+    const response = await fetch('/api/ai-context');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.success) {
+      aiContextCache = data;
+      renderAiContext(data);
+    }
+  } catch (e) {
+    console.log('AI context load failed:', e.message);
+  }
+}
+
+function renderAiContext(data) {
+  const container = document.getElementById('aiContextContent');
+  if (!container) return;
+
+  const ago = (ts) => {
+    if (!ts) return 'Never';
+    const ms = Date.now() - ts;
+    if (ms < 60000) return '<1m ago';
+    if (ms < 3600000) return Math.round(ms / 60000) + 'm ago';
+    if (ms < 86400000) return Math.round(ms / 3600000) + 'h ago';
+    return Math.round(ms / 86400000) + 'd ago';
+  };
+
+  let html = '';
+
+  // --- Section 1: Current Strategy Parameters ---
+  const opt = data.optimizer;
+  html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Active Strategy Parameters</div>';
+  if (opt) {
+    html += '<div class="ai-ctx-card">';
+    html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Min Confidence</span><span class="ai-ctx-field-value">${opt.alertConfidence || 75}%</span></div>`;
+    html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Min R:R (Silver)</span><span class="ai-ctx-field-value">${opt.minRiskReward || 2.0}</span></div>`;
+    html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Min R:R (Gold)</span><span class="ai-ctx-field-value">${opt.minRiskRewardGold || 1.5}</span></div>`;
+    html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Min ADX</span><span class="ai-ctx-field-value">${opt.minADX || 15}</span></div>`;
+    html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Cooldown</span><span class="ai-ctx-field-value">${opt.cooldownHours || 12}h</span></div>`;
+    if (opt.paused) {
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label" style="color:var(--short)">PAUSED</span><span class="ai-ctx-field-value" style="color:var(--short)">${opt.consecutiveLosses} losses</span></div>`;
+    }
+    html += '</div>';
+
+    // AI Weights
+    if (opt.aiWeights) {
+      html += '<div class="ai-ctx-card"><div class="ai-ctx-card-title">AI Trust Weights</div>';
+      const weights = opt.aiWeights;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Claude</span><span class="ai-ctx-field-value">${(weights.claude || 1.0).toFixed(2)}</span></div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Gemini</span><span class="ai-ctx-field-value">${(weights.openai || 1.0).toFixed(2)}</span></div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Grok</span><span class="ai-ctx-field-value">${(weights.grok || 1.0).toFixed(2)}</span></div>`;
+      html += '</div>';
+    }
+
+    // Blocked items
+    if ((opt.symbolBlacklist?.length > 0) || (opt.blockedRegimes?.length > 0)) {
+      html += '<div class="ai-ctx-card"><div class="ai-ctx-card-title">Blocked by Optimizer</div>';
+      if (opt.symbolBlacklist?.length > 0) {
+        html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Symbols</span><span class="ai-ctx-field-value" style="color:var(--short)">${opt.symbolBlacklist.join(', ')}</span></div>`;
+      }
+      if (opt.blockedRegimes?.length > 0) {
+        html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Regimes</span><span class="ai-ctx-field-value" style="color:var(--short)">${opt.blockedRegimes.join(', ')}</span></div>`;
+      }
+      html += '</div>';
+    }
+  } else {
+    html += '<div class="ai-ctx-empty">Optimizer has not run yet</div>';
+  }
+  html += '</div>';
+
+  // --- Section 2: AI Track Records (what AIs see about each other) ---
+  html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">AI Track Records (Fed to Prompts)</div>';
+  if (data.trackRecords && Object.keys(data.trackRecords).length > 0) {
+    for (const [ai, record] of Object.entries(data.trackRecords)) {
+      const name = ai.charAt(0).toUpperCase() + ai.slice(1);
+      const wrColor = record.winRate >= 55 ? 'var(--long)' : record.winRate <= 45 ? 'var(--short)' : 'var(--t2)';
+      html += '<div class="ai-ctx-card">';
+      html += `<div class="ai-ctx-card-title">${name}</div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Win Rate</span><span class="ai-ctx-field-value" style="color:${wrColor}">${record.winRate}% (${record.total} trades)</span></div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">W / L</span><span class="ai-ctx-field-value">${record.wins}W / ${record.losses}L</span></div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Pending</span><span class="ai-ctx-field-value">${record.pendingSignals} signals</span></div>`;
+
+      // Top symbol breakdown
+      const symbols = Object.entries(record.symbolBreakdown || {})
+        .sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses))
+        .slice(0, 5);
+      if (symbols.length > 0) {
+        const symStr = symbols.map(([s, d]) => `${s.replace('USDT', '')}:${d.wins}W/${d.losses}L`).join(' ');
+        html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Top Symbols</span><span class="ai-ctx-field-value" style="font-size:9px">${symStr}</span></div>`;
+      }
+      html += '</div>';
+    }
+  } else {
+    html += '<div class="ai-ctx-empty">No AI signal data yet</div>';
+  }
+  html += '</div>';
+
+  // --- Section 3: Win Streak & Risk Multiplier ---
+  const streak = data.winStreak;
+  if (streak && (streak.silver > 0 || streak.gold > 0 || streak.combined > 0)) {
+    html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Anti-Martingale Risk Scaling</div>';
+    html += '<div class="ai-ctx-card">';
+    const combinedMult = Math.min(1 + streak.combined * 0.5, 3.0);
+    html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Combined Streak</span><span class="ai-ctx-field-value" style="color:var(--gold)">${streak.combined} wins (${combinedMult.toFixed(1)}x)</span></div>`;
+    if (streak.silver > 0) {
+      const silverRisk = (5 * Math.min(1 + streak.silver * 0.5, 3.0)).toFixed(1);
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Silver Risk</span><span class="ai-ctx-field-value">${silverRisk}% (base 5%)</span></div>`;
+    }
+    if (streak.gold > 0) {
+      const goldRisk = (8 * Math.min(1 + streak.gold * 0.5, 3.0)).toFixed(1);
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Gold Risk</span><span class="ai-ctx-field-value">${goldRisk}% (base 8%)</span></div>`;
+    }
+    html += '</div></div>';
+  }
+
+  // --- Section 4: Strategy Changes Over Time ---
+  html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Strategy Changes (Optimizer History)</div>';
+  const optHistory = data.optimizationHistory || [];
+  if (optHistory.length > 0) {
+    for (const cycle of [...optHistory].reverse().slice(0, 5)) {
+      html += '<div class="ai-ctx-card">';
+      html += `<div class="ai-ctx-card-title">Cycle #${cycle.cycle} <span style="font-weight:400;color:var(--t4);font-size:9px">${ago(cycle.timestamp)}</span></div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">Win Rate</span><span class="ai-ctx-field-value">${cycle.winRate}%</span></div>`;
+      html += `<div class="ai-ctx-field"><span class="ai-ctx-field-label">PnL</span><span class="ai-ctx-field-value" style="color:${(cycle.pnl || 0) >= 0 ? 'var(--long)' : 'var(--short)'}">$${(cycle.pnl || 0).toFixed(2)}</span></div>`;
+      if (cycle.changes?.length > 0) {
+        for (const change of cycle.changes) {
+          // Parse "Param: old → new" format
+          const parts = change.match(/^(.+?):\s*(.+?)\s*→\s*(.+)$/);
+          if (parts) {
+            html += `<div class="ai-ctx-change"><span class="ai-ctx-change-param">${parts[1]}</span><span class="ai-ctx-change-old">${parts[2]}</span><span class="ai-ctx-change-arrow">→</span><span class="ai-ctx-change-new">${parts[3]}</span></div>`;
+          } else {
+            html += `<div class="ai-ctx-change"><span class="ai-ctx-change-param">${change}</span></div>`;
+          }
+        }
+      }
+      html += '</div>';
+    }
+  } else {
+    html += '<div class="ai-ctx-empty">No optimization cycles yet</div>';
+  }
+  html += '</div>';
+
+  // --- Section 5: Trade Lessons (what AIs learn from) ---
+  html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Trade Lessons (Fed to AI Prompts)</div>';
+  const lessons = data.promptLessons || [];
+  if (lessons.length > 0) {
+    html += `<div style="font-size:10px;color:var(--t4);margin-bottom:8px">Last ${lessons.length} lessons are included in every AI prompt</div>`;
+    for (const lesson of [...lessons].reverse()) {
+      const icon = lesson.outcome === 'WIN' ? '&#x2705;' : '&#x274C;';
+      const pnlColor = (lesson.pnl || 0) >= 0 ? 'var(--long)' : 'var(--short)';
+      html += '<div class="ai-ctx-lesson">';
+      html += `<div class="lesson-header">${icon} ${(lesson.symbol || '').replace('USDT', '')} ${lesson.direction || ''} <span style="color:${pnlColor};font-size:10px;font-weight:400">$${(lesson.pnl || 0).toFixed(2)}</span></div>`;
+      html += `<div class="lesson-text">${lesson.lesson || 'No lesson generated'}</div>`;
+      html += `<div class="lesson-meta">${lesson.category || ''} &middot; Conf: ${lesson.confidence || '--'}% &middot; ${ago(lesson.timestamp)}</div>`;
+      html += '</div>';
+    }
+  } else {
+    html += '<div class="ai-ctx-empty">No trade lessons yet — lessons are generated when trades close</div>';
+  }
+  html += '</div>';
+
+  // --- Section 6: Confidence Calibration ---
+  html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Confidence vs Reality</div>';
+  const calib = data.confidenceCalibration || {};
+  const calibEntries = Object.entries(calib).sort((a, b) => a[0].localeCompare(b[0]));
+  if (calibEntries.length > 0) {
+    html += '<div style="font-size:10px;color:var(--t4);margin-bottom:8px">How accurate are AI confidence scores?</div>';
+    for (const [range, stats] of calibEntries) {
+      const wr = stats.total > 0 ? ((stats.wins / stats.total) * 100).toFixed(0) : 0;
+      const barWidth = Math.min(Number(wr), 100);
+      const barColor = Number(wr) >= 55 ? 'rgba(38,166,154,0.5)' : Number(wr) <= 45 ? 'rgba(239,83,80,0.5)' : 'rgba(255,255,255,0.15)';
+      html += '<div class="ai-ctx-card" style="padding:6px 10px;margin-bottom:4px">';
+      html += `<div style="display:flex;align-items:center;gap:8px;font-size:11px">`;
+      html += `<span style="width:50px;color:var(--t3);font-family:var(--mono);font-size:10px">${range}%</span>`;
+      html += `<div style="flex:1;height:14px;background:var(--edge);border-radius:3px;overflow:hidden"><div style="height:100%;width:${barWidth}%;background:${barColor};border-radius:3px"></div></div>`;
+      html += `<span style="width:60px;text-align:right;color:var(--t2);font-family:var(--mono);font-size:10px">${wr}% (${stats.total})</span>`;
+      html += '</div></div>';
+    }
+  } else {
+    html += '<div class="ai-ctx-empty">No confidence data yet</div>';
+  }
+  html += '</div>';
+
+  // --- Section 7: Recent Consensus Signals ---
+  html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Recent Consensus Signals</div>';
+  const consensus = data.recentSignals?.consensus || [];
+  if (consensus.length > 0) {
+    for (const sig of [...consensus].reverse().slice(0, 8)) {
+      const dirClass = sig.direction === 'LONG' ? 'var(--long)' : 'var(--short)';
+      const tier = sig.isGold ? '<span style="color:var(--gold);font-weight:700">GOLD</span>' : '<span style="color:var(--silver);font-weight:700">SILVER</span>';
+      let resultHtml = '';
+      if (sig.tradeResult) {
+        const pnlColor = (sig.tradeResult.pnl || 0) >= 0 ? 'var(--long)' : 'var(--short)';
+        resultHtml = `<span style="color:${pnlColor};font-size:10px"> → $${(sig.tradeResult.pnl || 0).toFixed(2)}</span>`;
+      }
+      html += '<div class="ai-ctx-card" style="padding:8px 10px;margin-bottom:4px">';
+      html += `<div style="display:flex;align-items:center;gap:6px;font-size:11px">`;
+      html += `<span style="color:${dirClass};font-weight:700">${sig.direction}</span>`;
+      html += `<span style="color:var(--tw);font-weight:600">${(sig.symbol || '').replace('USDT', '')}</span>`;
+      html += `${tier}`;
+      html += `<span style="color:var(--t3)">${sig.confidence}%</span>`;
+      html += `${resultHtml}`;
+      html += `<span style="color:var(--t4);font-size:9px;margin-left:auto">${ago(sig.timestamp)}</span>`;
+      html += '</div>';
+      if (sig.reasons?.length > 0) {
+        html += `<div style="font-size:10px;color:var(--t4);margin-top:3px">${sig.reasons.slice(0, 3).join(' • ')}</div>`;
+      }
+      html += '</div>';
+    }
+  } else {
+    html += '<div class="ai-ctx-empty">No consensus signals yet</div>';
+  }
+  html += '</div>';
+
+  // --- Section 8: Symbol & Regime Performance ---
+  if (opt?.symbolStats && Object.keys(opt.symbolStats).length > 0) {
+    html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Symbol Performance (Optimizer Data)</div>';
+    const sorted = Object.entries(opt.symbolStats)
+      .sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses))
+      .slice(0, 10);
+    for (const [symbol, stats] of sorted) {
+      const total = stats.wins + stats.losses;
+      const wr = total > 0 ? ((stats.wins / total) * 100).toFixed(0) : 0;
+      const pnlColor = (stats.totalPnl || 0) >= 0 ? 'var(--long)' : 'var(--short)';
+      const blocked = (opt.symbolBlacklist || []).includes(symbol);
+      html += '<div class="ai-ctx-card" style="padding:6px 10px;margin-bottom:4px">';
+      html += `<div style="display:flex;align-items:center;gap:8px;font-size:11px">`;
+      html += `<span style="color:var(--tw);font-weight:600;width:55px">${symbol.replace('USDT', '')}</span>`;
+      html += `<span style="color:var(--t3);font-family:var(--mono);font-size:10px">${wr}% (${stats.wins}W/${stats.losses}L)</span>`;
+      html += `<span style="color:${pnlColor};font-family:var(--mono);font-size:10px;margin-left:auto">$${(stats.totalPnl || 0).toFixed(2)}</span>`;
+      if (blocked) html += `<span style="color:var(--short);font-size:9px;font-weight:700">BLOCKED</span>`;
+      html += '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  if (opt?.regimeStats && Object.keys(opt.regimeStats).length > 0) {
+    html += '<div class="ai-ctx-section"><div class="ai-ctx-section-title">Market Regime Performance</div>';
+    for (const [regime, stats] of Object.entries(opt.regimeStats)) {
+      const total = stats.wins + stats.losses;
+      const wr = total > 0 ? ((stats.wins / total) * 100).toFixed(0) : 0;
+      const blocked = (opt.blockedRegimes || []).includes(regime);
+      html += '<div class="ai-ctx-card" style="padding:6px 10px;margin-bottom:4px">';
+      html += `<div style="display:flex;align-items:center;gap:8px;font-size:11px">`;
+      html += `<span style="color:var(--tw);width:100px">${regime.replace(/_/g, ' ')}</span>`;
+      html += `<span style="color:var(--t3);font-family:var(--mono);font-size:10px">${wr}% (${stats.wins}W/${stats.losses}L)</span>`;
+      if (blocked) html += `<span style="color:var(--short);font-size:9px;font-weight:700;margin-left:auto">BLOCKED</span>`;
+      html += '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
 function renderLiquidationData() {
   const container = document.getElementById('liquidationList');
   if (!container) return;
@@ -8971,6 +9391,12 @@ function initEventListeners() {
             document.getElementById('newsView')?.classList.add('active');
           } else if (tab === 'stats') {
             document.getElementById('statsView')?.classList.add('active');
+          } else if (tab === 'health') {
+            document.getElementById('healthView')?.classList.add('active');
+            loadSystemHealth();
+          } else if (tab === 'ai-context') {
+            document.getElementById('aiContextView')?.classList.add('active');
+            loadAiContext();
           }
         }
       }
@@ -9179,11 +9605,7 @@ function initEventListeners() {
 
       // Handle sidebar view switching
       // Hide all views first
-      document.getElementById('signalsView')?.classList.remove('active');
-      document.getElementById('dataView')?.classList.remove('active');
-      document.getElementById('newsView')?.classList.remove('active');
-      document.getElementById('calendarView')?.classList.remove('active');
-      document.getElementById('statsView')?.classList.remove('active');
+      document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
 
       if (tabType === 'data') {
         document.getElementById('dataView')?.classList.add('active');
@@ -9197,6 +9619,12 @@ function initEventListeners() {
       } else if (tabType === 'stats') {
         document.getElementById('statsView')?.classList.add('active');
         renderStatsView();
+      } else if (tabType === 'health') {
+        document.getElementById('healthView')?.classList.add('active');
+        loadSystemHealth();
+      } else if (tabType === 'ai-context') {
+        document.getElementById('aiContextView')?.classList.add('active');
+        loadAiContext();
       } else {
         document.getElementById('signalsView')?.classList.add('active');
         state.signalTab = tabType;
@@ -9204,6 +9632,12 @@ function initEventListeners() {
       }
     });
   });
+
+  // Health refresh button
+  document.getElementById('refreshHealthBtn')?.addEventListener('click', () => loadSystemHealth());
+
+  // AI Context refresh button
+  document.getElementById('refreshAiContextBtn')?.addEventListener('click', () => loadAiContext());
 
   // Signal filters (sidebar)
   document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {

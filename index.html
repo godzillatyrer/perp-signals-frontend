@@ -893,6 +893,14 @@
           <svg width="12" height="12"><use href="#icon-stats"/></svg>
           <span>Stats</span>
         </button>
+        <button class="signal-tab" data-signal-tab="health">
+          <svg width="12" height="12"><use href="#icon-activity"/></svg>
+          <span>Health</span>
+        </button>
+        <button class="signal-tab" data-signal-tab="ai-context">
+          <svg width="12" height="12"><use href="#icon-brain"/></svg>
+          <span>AI</span>
+        </button>
       </div>
 
       <!-- Signals View -->
@@ -1158,6 +1166,36 @@
             <div class="calendar-list" id="pastEvents">
               <div class="empty-state">No recent events</div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Health View -->
+      <div class="sidebar-view" id="healthView">
+        <div class="data-section">
+          <div class="data-header">
+            <div class="data-title-wrap">
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-activity"/></svg>System Health</span>
+            </div>
+            <button class="refresh-health-btn" id="refreshHealthBtn" title="Refresh">&#x21BB;</button>
+          </div>
+          <div id="healthContent">
+            <div class="empty-state">Loading system health...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Context View -->
+      <div class="sidebar-view" id="aiContextView">
+        <div class="data-section">
+          <div class="data-header">
+            <div class="data-title-wrap">
+              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-brain"/></svg>AI Strategy &amp; Learning</span>
+            </div>
+            <button class="refresh-ai-ctx-btn" id="refreshAiContextBtn" title="Refresh">&#x21BB;</button>
+          </div>
+          <div id="aiContextContent">
+            <div class="empty-state">Loading AI context...</div>
           </div>
         </div>
       </div>
