@@ -1235,3 +1235,179 @@
   margin-top: 8px;
   line-height: 1.4;
 }
+
+/* ===== SYSTEM HEALTH DASHBOARD ===== */
+.health-section {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--edge);
+}
+.health-section:last-child { border-bottom: none; }
+.health-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.health-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--t4);
+}
+.health-dot.ok { background: var(--long); box-shadow: 0 0 4px rgba(38,166,154,0.4); }
+.health-dot.err { background: var(--short); box-shadow: 0 0 4px rgba(239,83,80,0.4); }
+.health-dot.streak { background: var(--gold); box-shadow: 0 0 4px rgba(255,213,79,0.4); }
+.health-label {
+  color: var(--t2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-value {
+  color: var(--t3);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.streak-val { color: var(--gold); font-weight: 700; }
+.health-lessons-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--t3);
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+.health-lesson {
+  font-size: 11px;
+  color: var(--t3);
+  padding: 4px 0;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--edge);
+}
+.health-lesson:last-child { border-bottom: none; }
+.health-lesson b { color: var(--tw); }
+.health-lesson-cat {
+  font-size: 9px;
+  color: var(--pri);
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.health-footer {
+  font-size: 10px;
+  color: var(--t4);
+  text-align: center;
+  padding: 8px 14px;
+}
+.refresh-health-btn,
+.refresh-ai-ctx-btn {
+  background: none;
+  border: 1px solid var(--edge);
+  color: var(--t3);
+  border-radius: var(--r-sm);
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all var(--quick);
+}
+.refresh-health-btn:hover,
+.refresh-ai-ctx-btn:hover {
+  border-color: var(--pri);
+  color: var(--tw);
+}
+
+/* ===== AI CONTEXT VIEWER ===== */
+.ai-ctx-section {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--edge);
+}
+.ai-ctx-section:last-child { border-bottom: none; }
+.ai-ctx-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.ai-ctx-card {
+  background: var(--tv-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.ai-ctx-card:last-child { margin-bottom: 0; }
+.ai-ctx-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tw);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-ctx-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+  font-size: 11px;
+}
+.ai-ctx-field-label { color: var(--t3); }
+.ai-ctx-field-value { color: var(--t2); font-family: var(--mono); font-size: 10px; }
+.ai-ctx-lesson {
+  background: var(--tv-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.ai-ctx-lesson .lesson-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-weight: 700;
+  color: var(--tw);
+}
+.ai-ctx-lesson .lesson-text { color: var(--t3); }
+.ai-ctx-lesson .lesson-meta {
+  font-size: 9px;
+  color: var(--t4);
+  margin-top: 4px;
+}
+.ai-ctx-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 11px;
+  border-bottom: 1px solid var(--edge);
+}
+.ai-ctx-change:last-child { border-bottom: none; }
+.ai-ctx-change-param { color: var(--t2); flex: 1; }
+.ai-ctx-change-old { color: var(--short); font-family: var(--mono); font-size: 10px; }
+.ai-ctx-change-arrow { color: var(--t4); font-size: 10px; }
+.ai-ctx-change-new { color: var(--long); font-family: var(--mono); font-size: 10px; }
+.ai-ctx-empty {
+  font-size: 11px;
+  color: var(--t4);
+  text-align: center;
+  padding: 20px 14px;
+}
