@@ -987,6 +987,8 @@ const state = {
   openInterest: {}, // Symbol -> OI data
   socialSentiment: {}, // Symbol -> LunarCrush data
   liquidationData: {}, // Symbol -> Coinglass liquidation data
+  tradeLessons: [], // AI-generated post-trade lessons
+  confidenceTracking: [], // Confidence vs outcome correlation data
   performanceStats: {
     totalTrades: 0,
     winningTrades: 0,
@@ -1016,7 +1018,15 @@ const state = {
     largestLoss: 0,
     currentStreak: 0,
     maxDrawdown: 0,
-    peakBalance: 2000
+    peakBalance: 2000,
+    // Enhanced stats from server
+    sharpeRatio: 0,
+    profitFactor: 0,
+    avgWin: 0,
+    avgLoss: 0,
+    expectancy: 0,
+    maxConsecWins: 0,
+    maxConsecLosses: 0
   },
   aiPredictions: [], // Track individual AI predictions for stats view
   aiSignalLog: {
@@ -3785,11 +3795,22 @@ const AI_RESPONSE_FORMAT = `
   "marketCondition": "Brief market condition description"
 }`;
 
+// Build trade lessons context from stored lessons
+function buildTradeLessonsContext() {
+  const lessons = state.tradeLessons || [];
+  if (lessons.length === 0) return '';
+  const recent = lessons.slice(-10);
+  return '\n=== LESSONS FROM RECENT TRADES ===\n' +
+    recent.map(l => `- ${l.symbol} ${l.direction} (${l.outcome}): "${l.lesson}"`).join('\n') +
+    '\nAPPLY these lessons to avoid repeating mistakes.\n';
+}
+
 // CLAUDE - Risk Manager (focuses on stop loss, traps, position sizing)
 function buildClaudePrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('claude');
   const rejectionSummary = summarizeRejections();
+  const tradeLessons = buildTradeLessonsContext();
   return `You are CLAUDE, a RISK MANAGEMENT specialist for crypto perpetual futures trading. Your expertise:
 - Optimal stop loss placement using market structure
 - Identifying bull traps and bear traps
@@ -3799,7 +3820,7 @@ function buildClaudePrompt(marketData) {
 
 ${performance}
 ${rejectionSummary}
-
+${tradeLessons}
 MARKET DATA:
 ${dataStr}
 
@@ -3849,6 +3870,7 @@ function buildOpenAIPrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('openai');
   const rejectionSummary = summarizeRejections();
+  const tradeLessons = buildTradeLessonsContext();
   return `You are Gemini, a TECHNICAL ANALYSIS specialist for crypto perpetual futures trading. Your expertise:
 - Chart pattern recognition (head & shoulders, triangles, wedges)
 - Support/resistance level identification
@@ -3858,7 +3880,7 @@ function buildOpenAIPrompt(marketData) {
 
 ${performance}
 ${rejectionSummary}
-
+${tradeLessons}
 MARKET DATA:
 ${dataStr}
 
@@ -3912,6 +3934,7 @@ function buildGrokPrompt(marketData) {
   const dataStr = formatMarketDataForAI(marketData);
   const performance = buildAiPerformanceContext('grok');
   const rejectionSummary = summarizeRejections();
+  const tradeLessons = buildTradeLessonsContext();
   return `You are GROK, a MOMENTUM TRADING specialist for crypto perpetual futures trading. Your expertise:
 - Identifying trend strength and acceleration
 - Catching breakouts early
@@ -3921,7 +3944,7 @@ function buildGrokPrompt(marketData) {
 
 ${performance}
 ${rejectionSummary}
-
+${tradeLessons}
 MARKET DATA:
 ${dataStr}
 
@@ -5899,6 +5922,15 @@ async function loadDualPortfolioFromBackend() {
       dualPortfolioState.lastSync = Date.now();
       saveDualPortfolio();
 
+      // Merge enhanced stats into performanceStats for Insights panel
+      const goldStats = result.data.gold?.stats || {};
+      const silverStats = result.data.silver?.stats || {};
+      // Use gold portfolio stats as primary (or merge both)
+      const combined = goldStats.totalTrades >= silverStats.totalTrades ? goldStats : silverStats;
+      if (combined.sharpeRatio !== undefined) {
+        state.performanceStats = { ...state.performanceStats, ...combined };
+      }
+
       // Update all UI
       for (const pt of ['silver', 'gold']) {
         renderDualPortfolioPositions(pt);
@@ -5907,6 +5939,7 @@ async function loadDualPortfolioFromBackend() {
         updateDualPortfolioEquityChart(pt);
       }
       updatePortfolioComparison();
+      renderInsightsPanel();
 
       console.log('✅ Dual portfolio loaded from backend');
     }
@@ -7386,6 +7419,22 @@ async function loadAiSignalLogFromServer() {
       renderAiDetailView();
       console.log('📝 AI signal log merged from server');
     }
+
+    // Load trade lessons and confidence tracking from server
+    if (data.tradeLessons && Array.isArray(data.tradeLessons)) {
+      state.tradeLessons = data.tradeLessons;
+    }
+    if (data.confidenceTracking && Array.isArray(data.confidenceTracking)) {
+      state.confidenceTracking = data.confidenceTracking;
+    }
+
+    // Load enhanced stats if available
+    if (data.stats) {
+      const s = data.stats;
+      state.performanceStats = { ...state.performanceStats, ...s };
+    }
+
+    renderInsightsPanel();
   } catch (e) {
     console.error('Failed to load AI signal log from server:', e);
   }
@@ -7446,6 +7495,7 @@ function renderAiDetailView() {
   renderAiDetailPanel('openai');
   renderAiDetailPanel('grok');
   renderConsensusPanel();
+  renderInsightsPanel();
 }
 
 function renderAiDetailPanel(source) {
@@ -7661,6 +7711,106 @@ function renderConsensusPanel() {
       </div>
     `;
   }).join('');
+}
+
+// ============================================
+// INSIGHTS PANEL - Confidence Calibration, Enhanced Stats, Lessons
+// ============================================
+
+function renderInsightsPanel() {
+  const updateEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+  // --- Enhanced Portfolio Stats ---
+  const stats = state.performanceStats;
+  if (stats.sharpeRatio !== undefined) {
+    const sharpe = parseFloat(stats.sharpeRatio) || 0;
+    updateEl('insSharpe', sharpe.toFixed(2));
+    const sharpeEl = document.getElementById('insSharpe');
+    if (sharpeEl) sharpeEl.className = 'ai-stat-value ' + (sharpe >= 1 ? 'positive' : sharpe >= 0 ? '' : 'negative');
+  }
+  if (stats.profitFactor !== undefined) {
+    const pf = parseFloat(stats.profitFactor) || 0;
+    updateEl('insProfitFactor', pf === Infinity ? 'Inf' : pf.toFixed(2));
+    const pfEl = document.getElementById('insProfitFactor');
+    if (pfEl) pfEl.className = 'ai-stat-value ' + (pf >= 1.5 ? 'positive' : pf >= 1 ? '' : 'negative');
+  }
+  if (stats.expectancy !== undefined) {
+    const exp = parseFloat(stats.expectancy) || 0;
+    updateEl('insExpectancy', (exp >= 0 ? '+' : '') + exp.toFixed(2) + '%');
+    const expEl = document.getElementById('insExpectancy');
+    if (expEl) expEl.className = 'ai-stat-value ' + (exp >= 0 ? 'positive' : 'negative');
+  }
+  if (stats.maxDrawdown !== undefined) {
+    const dd = parseFloat(stats.maxDrawdown) || 0;
+    updateEl('insMaxDrawdown', dd.toFixed(1) + '%');
+    const ddEl = document.getElementById('insMaxDrawdown');
+    if (ddEl) ddEl.className = 'ai-stat-value ' + (dd > 20 ? 'negative' : dd > 10 ? '' : 'positive');
+  }
+  if (stats.avgWin !== undefined) updateEl('insAvgWin', '+' + (parseFloat(stats.avgWin) || 0).toFixed(2) + '%');
+  if (stats.avgLoss !== undefined) updateEl('insAvgLoss', (parseFloat(stats.avgLoss) || 0).toFixed(2) + '%');
+  if (stats.maxConsecWins !== undefined) updateEl('insMaxWStreak', stats.maxConsecWins);
+  if (stats.maxConsecLosses !== undefined) updateEl('insMaxLStreak', stats.maxConsecLosses);
+
+  // --- Confidence Calibration ---
+  const confData = state.confidenceTracking || [];
+  const calibContainer = document.getElementById('insConfCalibration');
+  if (calibContainer && confData.length >= 3) {
+    // Group by confidence buckets: 60-69, 70-79, 80-89, 90-100
+    const buckets = { '60-69': { wins: 0, total: 0 }, '70-79': { wins: 0, total: 0 }, '80-89': { wins: 0, total: 0 }, '90-100': { wins: 0, total: 0 } };
+    for (const item of confData) {
+      const conf = item.confidence || 0;
+      const isWin = item.outcome === 'win';
+      let bucket;
+      if (conf < 70) bucket = '60-69';
+      else if (conf < 80) bucket = '70-79';
+      else if (conf < 90) bucket = '80-89';
+      else bucket = '90-100';
+      buckets[bucket].total++;
+      if (isWin) buckets[bucket].wins++;
+    }
+
+    let html = '<div class="conf-calib-grid">';
+    for (const [range, b] of Object.entries(buckets)) {
+      const wr = b.total > 0 ? Math.round(b.wins / b.total * 100) : 0;
+      const barWidth = b.total > 0 ? wr : 0;
+      const isCalibrated = b.total >= 3;
+      const calibClass = !isCalibrated ? '' : (wr >= parseInt(range) ? 'positive' : 'negative');
+      html += `
+        <div class="conf-calib-row">
+          <span class="conf-calib-label">${range}%</span>
+          <div class="conf-calib-bar-bg">
+            <div class="conf-calib-bar ${calibClass}" style="width:${barWidth}%"></div>
+          </div>
+          <span class="conf-calib-value ${calibClass}">${b.total > 0 ? wr + '% (' + b.total + ')' : 'No data'}</span>
+        </div>`;
+    }
+    html += '</div>';
+    html += `<div class="conf-calib-hint">Bars show actual win rate at each confidence level. Green = well-calibrated, Red = overconfident.</div>`;
+    calibContainer.innerHTML = html;
+  }
+
+  // --- Trade Lessons ---
+  const lessons = state.tradeLessons || [];
+  const lessonsContainer = document.getElementById('insLessonsLog');
+  if (lessonsContainer && lessons.length > 0) {
+    lessonsContainer.innerHTML = lessons.slice(0, 20).map(lesson => {
+      const isWin = lesson.outcome === 'win';
+      const timeStr = lesson.timestamp ? new Date(lesson.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      return `
+        <div class="ai-log-entry ${isWin ? 'shadow-win' : 'shadow-loss'}">
+          <div class="ai-log-header">
+            <div>
+              <span class="ai-log-symbol">${(lesson.symbol || '').replace('USDT', '')}</span>
+              <span class="ai-log-dir ${(lesson.direction || '').toLowerCase()}">${lesson.direction || ''}</span>
+              <span class="ai-log-shadow-result ${isWin ? 'win' : 'loss'}" style="margin-left:6px">${isWin ? 'WIN' : 'LOSS'}</span>
+            </div>
+            <span class="ai-log-time">${timeStr}</span>
+          </div>
+          <div class="ai-log-reasoning" style="margin-top:6px">${lesson.lesson || 'No lesson generated'}</div>
+          ${lesson.category ? `<div style="margin-top:4px"><span class="ai-log-conf" style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:10px">${lesson.category}</span></div>` : ''}
+        </div>`;
+    }).join('');
+  }
 }
 
 // AI Detail Tab Switching

@@ -1194,13 +1194,31 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
   }
 }
 
+// BTC Dominance macro filter
+async function fetchBtcDominance() {
+  try {
+    const response = await fetchWithTimeout('https://api.coingecko.com/api/v3/global', {}, 6000);
+    const data = await response.json();
+    if (data?.data?.market_cap_percentage?.btc) {
+      return {
+        current: data.data.market_cap_percentage.btc,
+        timestamp: Date.now()
+      };
+    }
+  } catch (e) {
+    console.log('BTC dominance fetch failed:', e.message);
+  }
+  return null;
+}
+
 async function fetchMarketData() {
   const data = {
     prices: {},
     fundingRates: {},
     openInterest: {},
     liquidations: {},
-    longShortRatio: {}
+    longShortRatio: {},
+    btcDominance: null
   };
 
   // Try multiple data sources for prices
@@ -1404,6 +1422,11 @@ async function fetchMarketData() {
       }
     }
 
+  // Fetch BTC dominance for macro filter
+  data.btcDominance = await fetchBtcDominance();
+  _btcDominance = data.btcDominance;
+  _btcPrice24hChange = data.prices?.BTCUSDT?.change24h || 0;
+
   return data;
 }
 
@@ -1437,9 +1460,28 @@ async function buildAnalysisPrompt(marketData, indicatorData) {
     }
   } catch (e) { console.log('Could not load signal log for prompt:', e.message); }
 
+  // Load trade lessons from Redis
+  let lessonsContext = '';
+  try {
+    const r = getRedis();
+    if (r) {
+      let lessons = await r.get('trade_lessons');
+      if (lessons) {
+        if (typeof lessons === 'string') lessons = JSON.parse(lessons);
+        const recent = lessons.slice(-10);
+        if (recent.length > 0) {
+          lessonsContext = '=== LESSONS FROM RECENT TRADES ===\n' +
+            recent.map(l => `- ${l.symbol} ${l.direction} (${l.outcome}): "${l.lesson}"`).join('\n') +
+            '\nAPPLY these lessons to avoid repeating mistakes.\n';
+        }
+      }
+    }
+  } catch (e) { console.log('Could not load trade lessons:', e.message); }
+
   let prompt = `You are an expert crypto perpetual futures trader. Analyze the following market data with MULTI-TIMEFRAME TECHNICAL INDICATORS and DERIVATIVES DATA to identify the BEST trading opportunities.
 
 ${outcomeContext ? `=== AI TRACK RECORD (learn from past mistakes) ===\n${outcomeContext}If you keep losing on a symbol, skip it or reverse your bias. Double down on symbols where you've been accurate.\n` : ''}
+${lessonsContext}
 MULTI-TIMEFRAME RULES (CRITICAL):
 - **DAILY TREND is the #1 filter** — ONLY trade in the direction of the Daily trend
 - If Daily = STRONG UPTREND + 4H = BULLISH → HIGH conviction LONG
@@ -1974,6 +2016,10 @@ function createTradeKeyboard(signal) {
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
 
+// Module-level cache for BTC dominance (set during fetchMarketData, read in openTradeForSignal)
+let _btcDominance = null;
+let _btcPrice24hChange = null;
+
 const TRADE_CONFIG = {
   silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8 },
   gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5 }
@@ -2080,6 +2126,58 @@ async function openTradeForSignal(signal) {
     if (totalExposure >= maxExposure) {
       console.log(`🛡️ ${portfolioType.toUpperCase()}: Exposure $${totalExposure.toFixed(0)} >= 60% of balance ($${maxExposure.toFixed(0)}), skipping`);
       return { opened: false, reason: 'max_exposure' };
+    }
+
+    // === CIRCUIT BREAKER: Daily & Weekly Loss Limits ===
+    const DAILY_LOSS_LIMIT = 0.05;  // 5% of balance
+    const WEEKLY_LOSS_LIMIT = 0.15; // 15% of balance
+    const now = Date.now();
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+    const closedTrades = (portfolio.trades || []).filter(t => t.status === 'closed');
+    const dailyLosses = closedTrades
+      .filter(t => t.closeTimestamp && t.closeTimestamp > oneDayAgo && t.pnl < 0)
+      .reduce((sum, t) => sum + Math.abs(t.pnl), 0);
+    const weeklyLosses = closedTrades
+      .filter(t => t.closeTimestamp && t.closeTimestamp > oneWeekAgo && t.pnl < 0)
+      .reduce((sum, t) => sum + Math.abs(t.pnl), 0);
+
+    const dailyLimit = portfolio.balance * DAILY_LOSS_LIMIT;
+    const weeklyLimit = portfolio.balance * WEEKLY_LOSS_LIMIT;
+
+    if (dailyLosses >= dailyLimit) {
+      console.log(`🚨 CIRCUIT BREAKER: ${portfolioType.toUpperCase()} daily losses $${dailyLosses.toFixed(0)} >= 5% limit $${dailyLimit.toFixed(0)}`);
+      // Send Telegram alert (once per trigger)
+      if (!portfolio._dailyBreaker || portfolio._dailyBreaker < oneDayAgo) {
+        portfolio._dailyBreaker = now;
+        await sendTelegramMessage(`🚨 <b>CIRCUIT BREAKER TRIGGERED</b>\n\n${portfolioType.toUpperCase()} portfolio daily losses: $${dailyLosses.toFixed(2)}\nLimit: $${dailyLimit.toFixed(2)} (5% of balance)\n\n⛔ No new trades until losses reset.`);
+      }
+      return { opened: false, reason: 'daily_loss_limit' };
+    }
+
+    if (weeklyLosses >= weeklyLimit) {
+      console.log(`🚨 CIRCUIT BREAKER: ${portfolioType.toUpperCase()} weekly losses $${weeklyLosses.toFixed(0)} >= 15% limit $${weeklyLimit.toFixed(0)}`);
+      if (!portfolio._weeklyBreaker || portfolio._weeklyBreaker < oneWeekAgo) {
+        portfolio._weeklyBreaker = now;
+        await sendTelegramMessage(`🚨 <b>WEEKLY CIRCUIT BREAKER</b>\n\n${portfolioType.toUpperCase()} portfolio weekly losses: $${weeklyLosses.toFixed(2)}\nLimit: $${weeklyLimit.toFixed(2)} (15% of balance)\n\n⛔ No new trades until weekly losses reset.`);
+      }
+      return { opened: false, reason: 'weekly_loss_limit' };
+    }
+
+    // === BTC DOMINANCE MACRO FILTER ===
+    // If BTC dominance rising + BTC price rising → alts get drained, block alt LONGs
+    // If BTC dominance falling + BTC stable → alt season, allow alt trades
+    const isAlt = signal.symbol !== 'BTCUSDT' && signal.symbol !== 'ETHUSDT';
+    if (isAlt && _btcDominance && _btcPrice24hChange !== null) {
+      const btcDom = _btcDominance.current;
+      const btcUp = _btcPrice24hChange > 1; // BTC rose >1% today
+      const highDominance = btcDom > 55; // BTC dominance above 55%
+
+      if (highDominance && btcUp && signal.direction === 'LONG') {
+        console.log(`📊 BTC DOM FILTER: BTC.D=${btcDom.toFixed(1)}% + BTC +${_btcPrice24hChange.toFixed(1)}% → blocking alt LONG on ${signal.symbol}`);
+        return { opened: false, reason: 'btc_dominance_filter' };
+      }
     }
 
     // Session-aware filter — prefer US/EU overlap (13:00-21:00 UTC) for higher quality
