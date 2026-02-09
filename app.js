@@ -1071,10 +1071,47 @@ const isAiEligible = (source) => {
 const buildAiPerformanceContext = (source) => {
   const sampleSize = getAiSampleSize(source);
   const winRate = Math.round(getAiWinRateForSource(source) * 100);
-  if (sampleSize === 0) {
-    return 'Performance: No tracked trades yet.';
+
+  // Build per-symbol track record from shadow P&L
+  const signals = state.aiSignalLog[source] || [];
+  const resolved = signals.filter(s => s.shadowStatus === 'win' || s.shadowStatus === 'loss');
+
+  if (resolved.length === 0) {
+    return 'Performance: No resolved trades yet. This is early data — be decisive but cautious.';
   }
-  return `Performance: ${winRate}% win rate over ${sampleSize} tracked trades.`;
+
+  // Group by symbol
+  const bySymbol = {};
+  for (const s of resolved) {
+    if (!bySymbol[s.symbol]) bySymbol[s.symbol] = { wins: 0, losses: 0 };
+    if (s.shadowStatus === 'win') bySymbol[s.symbol].wins++;
+    else bySymbol[s.symbol].losses++;
+  }
+
+  const symbolRecords = Object.entries(bySymbol)
+    .sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses))
+    .slice(0, 8)
+    .map(([sym, r]) => `${sym}: ${r.wins}W ${r.losses}L`)
+    .join(', ');
+
+  // Recent 10 signals accuracy
+  const recent10 = resolved.slice(-10);
+  const recentWR = Math.round(recent10.filter(s => s.shadowStatus === 'win').length / recent10.length * 100);
+
+  // Direction accuracy
+  const longSignals = resolved.filter(s => s.direction === 'LONG');
+  const shortSignals = resolved.filter(s => s.direction === 'SHORT');
+  const longWR = longSignals.length > 0 ? Math.round(longSignals.filter(s => s.shadowStatus === 'win').length / longSignals.length * 100) : null;
+  const shortWR = shortSignals.length > 0 ? Math.round(shortSignals.filter(s => s.shadowStatus === 'win').length / shortSignals.length * 100) : null;
+
+  let context = `Performance: ${winRate}% win rate over ${sampleSize} resolved trades.
+Per-symbol record: ${symbolRecords}
+Last 10 signals: ${recentWR}% accurate.`;
+  if (longWR !== null) context += `\nLONG accuracy: ${longWR}% (${longSignals.length} trades)`;
+  if (shortWR !== null) context += ` | SHORT accuracy: ${shortWR}% (${shortSignals.length} trades)`;
+  context += `\nLEARN FROM YOUR HISTORY: If you keep losing on a symbol, skip it or reverse your bias. Double down on symbols where you've been accurate.`;
+
+  return context;
 };
 
 const normalizeAiPick = (pick) => {
@@ -3710,7 +3747,12 @@ ${m.symbol}:
 - VWAP: ${m.vwap?.pricePosition || 'N/A'} (${m.vwap?.deviation?.toFixed(2) || 0}% dev)
 - ATR: ${m.atr?.toFixed(2) || 'N/A'} (${m.atrPercent?.toFixed(2) || 'N/A'}% of price)
 - Volume Trend: ${m.volumeTrend || 'N/A'}
-- Ichimoku: ${m.ichimoku?.signal || 'N/A'} (${m.ichimoku?.cloudColor || 'N/A'} cloud)`;
+- Ichimoku: ${m.ichimoku?.signal || 'N/A'} (${m.ichimoku?.cloudColor || 'N/A'} cloud)
+--- HIGHER TIMEFRAME CONTEXT (1D) ---
+- Daily Trend: ${m.htfDaily?.trend || 'N/A'} | Daily ADX: ${m.htfDaily?.adx?.toFixed(1) || 'N/A'} | Daily Supertrend: ${m.htfDaily?.supertrend || 'N/A'}
+- Daily RSI: ${m.htfDaily?.rsi || 'N/A'} | Price vs 200 EMA: ${m.htfDaily?.priceVsEma200 || 'N/A'}%
+- 1H Trend: ${m.htfHourly?.trend || 'N/A'} | 1H RSI: ${m.htfHourly?.rsi || 'N/A'} | 1H Supertrend: ${m.htfHourly?.supertrend || 'N/A'}
+- MTF Alignment: ${m.mtfAnalysis?.alignment || 'N/A'} (${m.mtfAnalysis?.confluence || 'N/A'})`;
   }).join('\n');
 
   return globalSentiment + coinData;
@@ -3769,17 +3811,32 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **FUNDING RATE TRAPS**: High positive funding with price stalling = longs paying heavy fees, potential short squeeze setup.
 6. **RISK/REWARD**: Only pick trades with at least 2:1 R/R ratio. Calculate: (TP - Entry) / (Entry - SL) >= 2
 
+DERIVATIVES INTELLIGENCE (use this data to refine entries):
+- **Funding Rate**: >+0.03% = crowded longs (short squeeze risk), <-0.03% = crowded shorts (long squeeze risk). Extreme funding = fade the crowd.
+- **OI Rising + Price Rising** = new money entering, trend likely continues. **OI Rising + Price Falling** = shorts being added, more downside likely.
+- **OI Falling + Price Rising** = short covering rally (weak, likely to reverse). **OI Falling + Price Falling** = longs capitulating (may be near bottom).
+- **Long/Short Ratio > 1.5** = too many longs, favor shorts. **L/S Ratio < 0.7** = too many shorts, favor longs.
+- **Liquidation Clusters**: Heavy liquidations on one side = that side just got flushed, potential reversal zone.
+
+HIGHER TIMEFRAME RULES (CRITICAL):
+- **ALWAYS trade in direction of the DAILY trend**. If Daily Trend = STRONG UPTREND, only take LONG signals. If Daily = STRONG DOWNTREND, only SHORT.
+- A 4H signal AGAINST the Daily trend needs 80%+ confluence to consider.
+- Daily Supertrend direction is the primary trend filter. 4H Supertrend confirms timing.
+- If 1H, 4H, and 1D all agree on direction = highest conviction trade.
+- Daily RSI > 70 = avoid new longs even if trend is up. Daily RSI < 30 = avoid new shorts.
+
 REQUIREMENTS (ranked by importance):
+- **DAILY TREND ALIGNMENT is #1 priority** — Never fight the daily trend without extreme confluence
 - **ADX should be >= 15** (Higher ADX = stronger trend, prefer >= 20 but 15+ is acceptable)
-- **SUPERTREND should confirm direction** (UP = longs, DOWN = shorts) — strong preference, not absolute
-- Prefer trading in direction of higher timeframe trend (check MTF Confluence)
+- **SUPERTREND should confirm on both 4H and Daily**
 - Prefer TRENDING regime (UP or DOWN) over VOLATILE or RANGING
 - Look for structure breaks (BULLISH_BOS for longs, BEARISH_BOS for shorts) or price at strong order block
 - Place SL behind the nearest swing high/low with ATR buffer
 - Entry should be at a favorable level (near support for longs, near resistance for shorts)
 - **Stochastic RSI timing**: For longs prefer OVERSOLD or rising from <30. For shorts prefer OVERBOUGHT or falling from >70
+- **Use funding rate + OI + L/S ratio as confirmation**, not primary signal
 
-IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 with reasonable setup. Do NOT return empty topPicks unless truly nothing qualifies. Lower confidence (60-70) is fine for weaker setups.
+IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 with reasonable setup AND daily trend alignment. Do NOT return empty topPicks unless truly nothing qualifies. Lower confidence (60-70) is fine for weaker setups.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3816,17 +3873,33 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **VWAP ANALYSIS**: Price above VWAP = bullish bias. Price below VWAP = bearish bias. Extended (>3% deviation) = mean reversion expected.
 6. **PIVOT POINTS**: Use daily pivots as targets. S1/S2 for support, R1/R2 for resistance.
 
+MULTI-TIMEFRAME CONFLUENCE (CRITICAL):
+- **Check 1H, 4H, and Daily trends** before signaling. All three aligning = highest conviction.
+- **Daily is the trend filter**: If Daily Trend = UPTREND, only look for LONG patterns. If Daily = DOWNTREND, only SHORT.
+- **4H is your signal timeframe**: Patterns and breakouts on 4H with Daily confirmation = best setups.
+- **1H is entry timing**: Use 1H RSI and Supertrend for precise entry timing within 4H setups.
+- If Daily RSI is overbought (>70), do NOT signal new longs even if 4H looks bullish.
+- **MTF Alignment = FULL_BULLISH or FULL_BEARISH** = add 10 points to confidence.
+
+DERIVATIVES DATA INTERPRETATION:
+- **Funding Rate >+0.03%**: Market overleveraged long — bearish signal, favor shorts or tighter stops on longs.
+- **Funding Rate <-0.03%**: Market overleveraged short — bullish signal, favor longs.
+- **OI increasing + price breakout** = genuine breakout with conviction. **OI flat + price breakout** = likely fake breakout.
+- **L/S Ratio > 1.3**: Crowd is long-biased — contrarian short opportunity if price at resistance.
+- **L/S Ratio < 0.8**: Crowd is short-biased — contrarian long if price at support.
+- **Heavy liquidations just occurred** = potential exhaustion/reversal zone.
+
 REQUIREMENTS (ranked by importance):
+- **DAILY TREND must align with your signal** — this is the #1 filter
 - **ADX should be >= 15** (Higher ADX = stronger signal. Prefer >= 20, but 15+ is acceptable)
-- **SUPERTREND should confirm direction** (UP = longs only, DOWN = shorts only) — strong preference
-- Prefer when multiple technical indicators align (RSI + MACD + EMA + Supertrend)
+- **SUPERTREND should confirm on both 4H and Daily**
+- Prefer when multiple technical indicators align (RSI + MACD + EMA + Supertrend + Daily trend)
 - Price should be at or near key levels (support/resistance)
 - INCREASING volume is preferred but not mandatory
-- MTF Confluence: PARTIAL or better alignment preferred
-- Ichimoku: support the direction is preferred
 - **Stochastic RSI**: Use for entry timing - OVERSOLD for longs, OVERBOUGHT for shorts
+- **Funding rate and OI confirm the move** — use as supporting evidence
 
-IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 with a reasonable chart setup. Do NOT return empty topPicks unless truly nothing qualifies. Use lower confidence (60-70) for weaker setups.
+IMPORTANT: You MUST return at least 1 signal if any coin has ADX >= 15 with a reasonable chart setup AND daily trend alignment. Do NOT return empty topPicks unless truly nothing qualifies. Use lower confidence (60-70) for weaker setups.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3865,16 +3938,33 @@ YOUR SPECIALIZED ANALYSIS FOCUS:
 5. **ORDER BLOCK MOMENTUM**: Price breaking through order block with momentum = strong continuation signal
 6. **ICHIMOKU MOMENTUM**: STRONG_BULLISH or STRONG_BEARISH signals with TK cross = high momentum
 
+MULTI-TIMEFRAME MOMENTUM (CRITICAL):
+- **Daily trend is your directional bias** — only ride momentum in the Daily trend direction.
+- **4H gives the setup** — look for 4H breakouts and momentum surges WITH Daily trend.
+- **1H confirms entry timing** — 1H Supertrend flip or RSI bounce = entry trigger.
+- **Best momentum trades**: Daily STRONG UPTREND + 4H pullback to EMA20 + 1H RSI bouncing from 40 = LONG.
+- If all timeframes (1H + 4H + Daily) agree on trend = maximum momentum confidence.
+- **NEVER chase momentum against Daily trend** — that's a mean reversion trade, not momentum.
+
+DERIVATIVES MOMENTUM SIGNALS:
+- **OI Rising + Price Rising + Funding Positive** = strong bullish momentum with leverage. Ride it but watch for overextension.
+- **OI Rising + Price Falling + Funding Negative** = strong bearish momentum. Join the shorts.
+- **Funding Rate > +0.05%** = extreme long crowding. Momentum could reverse fast — reduce position or tighten stops.
+- **Sudden OI spike + price spike** = breakout with genuine capital flow. High conviction entry.
+- **OI dropping rapidly** = positions being unwound. Momentum fading — take profits or skip.
+- **L/S Ratio extreme (>1.5 or <0.7)** = one side overloaded. Momentum could exhaust soon.
+
 REQUIREMENTS (ranked by importance):
+- **DAILY TREND is the primary momentum filter** — ONLY trade with the Daily trend
 - **ADX should be >= 15** (Higher = better momentum. Prefer >= 20, but 15+ is acceptable)
-- **SUPERTREND should confirm direction** (UP = longs only, DOWN = shorts only) — strong preference
-- Prefer trading with the trend (UPTREND for longs, DOWNTREND for shorts)
+- **SUPERTREND should confirm on both 4H and Daily**
 - INCREASING or STABLE volume preferred, avoid DECREASING volume
 - Prefer symbols with higher 24h change (existing momentum)
 - Entry should be on pullback to VWAP or EMA20 when possible
 - **Stochastic RSI**: K value in momentum zone (40-60) or just exiting oversold/overbought
+- **OI + Funding should confirm momentum direction** — use as supporting evidence
 
-IMPORTANT: You MUST return at least 1 signal if any coin shows momentum with ADX >= 15. Do NOT return empty topPicks unless truly nothing qualifies. Use lower confidence (60-70) for weaker setups.
+IMPORTANT: You MUST return at least 1 signal if any coin shows momentum with ADX >= 15 AND Daily trend alignment. Do NOT return empty topPicks unless truly nothing qualifies. Use lower confidence (60-70) for weaker setups.
 
 Respond ONLY with valid JSON in this exact format:
 ${AI_RESPONSE_FORMAT}
@@ -3972,7 +4062,59 @@ async function runAiAnalysis() {
                          price < bb.lower ? 'BELOW LOWER' :
                          price > bb.middle ? 'UPPER HALF' : 'LOWER HALF';
 
-      // Multi-timeframe analysis for top 5 coins only (expensive)
+      // Higher Timeframe (1D) trend context for ALL coins
+      let htfDaily = null;
+      try {
+        const dailyCandles = await fetchKlines(market.symbol, 'D', 100);
+        if (dailyCandles.length >= 50) {
+          const dailyCloses = dailyCandles.map(c => c.close);
+          const dailyEma20 = calculateEMA(dailyCloses, 20);
+          const dailyEma50 = calculateEMA(dailyCloses, 50);
+          const dailyEma200 = calculateEMA(dailyCloses, 200);
+          const dailyAdx = calculateADX(dailyCandles);
+          const dailySupertrend = calculateSupertrend(dailyCandles);
+          const dailyRsi = calculateRSI(dailyCloses);
+          const dailyPrice = dailyCloses[dailyCloses.length - 1];
+          htfDaily = {
+            trend: dailyEma20 > dailyEma50 && dailyEma50 > dailyEma200 ? 'STRONG UPTREND' :
+                   dailyEma20 < dailyEma50 && dailyEma50 < dailyEma200 ? 'STRONG DOWNTREND' :
+                   dailyEma20 > dailyEma50 ? 'WEAK UPTREND' : 'WEAK DOWNTREND',
+            adx: dailyAdx?.adx,
+            supertrend: dailySupertrend?.direction,
+            rsi: Math.round(dailyRsi * 10) / 10,
+            ema20: dailyEma20,
+            ema50: dailyEma50,
+            ema200: dailyEma200,
+            priceVsEma200: ((dailyPrice - dailyEma200) / dailyEma200 * 100).toFixed(1)
+          };
+        }
+        await sleep(30);
+      } catch (e) {
+        console.warn(`HTF daily fetch failed for ${market.symbol}:`, e.message);
+      }
+
+      // 1H timeframe for additional confluence (main analysis is 4H)
+      let htfHourly = null;
+      try {
+        const hourlyCandles = await fetchKlines(market.symbol, '60', 100);
+        if (hourlyCandles.length >= 50) {
+          const hourlyCloses = hourlyCandles.map(c => c.close);
+          const hourlyEma20 = calculateEMA(hourlyCloses, 20);
+          const hourlyEma50 = calculateEMA(hourlyCloses, 50);
+          const hourlyRsi = calculateRSI(hourlyCloses);
+          const hourlySupertrend = calculateSupertrend(hourlyCandles);
+          htfHourly = {
+            trend: hourlyEma20 > hourlyEma50 ? 'BULLISH' : 'BEARISH',
+            rsi: Math.round(hourlyRsi * 10) / 10,
+            supertrend: hourlySupertrend?.direction
+          };
+        }
+        await sleep(30);
+      } catch (e) {
+        console.warn(`HTF hourly fetch failed for ${market.symbol}:`, e.message);
+      }
+
+      // Full MTF analysis for top 5 coins (most detailed)
       let mtfAnalysis = null;
       if (enrichedData.length < 5) {
         mtfAnalysis = await analyzeMultiTimeframe(market.symbol);
@@ -4024,6 +4166,8 @@ async function runAiAnalysis() {
         volumeTrend,
         trend,
         mtfAnalysis,
+        htfDaily,
+        htfHourly,
         // Advanced indicators
         vwap,
         orderBlocks,
@@ -4035,7 +4179,7 @@ async function runAiAnalysis() {
         adx,
         stochRsi,
         supertrend,
-        // NEW: Fibonacci, Trend Structure, Confluence
+        // Fibonacci, Trend Structure, Confluence
         fibonacci,
         trendStructure,
         confluence
