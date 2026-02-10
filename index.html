@@ -230,6 +230,30 @@
             </svg>
             AI
           </button>
+          <button class="nav-btn" data-view="data">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+            </svg>
+            Data
+          </button>
+          <button class="nav-btn" data-view="stats">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            Stats
+          </button>
+          <button class="nav-btn" data-view="health">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            Health
+          </button>
+          <button class="nav-btn" data-view="ai-context">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+            </svg>
+            Context
+          </button>
         </div>
         <div class="nav-center">
           <div class="monitoring-status" id="monitoringStatus">
@@ -800,6 +824,220 @@
           </div>
         </div>
       </div>
+
+      <!-- DATA VIEW — Liquidations, L/S Ratios, Sentiment -->
+      <div class="view" id="view-data">
+        <div class="main-view-content">
+          <div class="main-view-header">
+            <h2>Market Data</h2>
+            <span class="main-view-subtitle">Liquidations, Long/Short Ratios, Sentiment</span>
+          </div>
+          <div class="main-view-body data-grid">
+            <div class="data-section">
+              <div class="data-header">
+                <div class="data-title-wrap">
+                  <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-droplet"/></svg>24H Liquidations</span>
+                  <span class="data-subtitle">All Exchanges</span>
+                </div>
+                <span class="data-update" id="liqDataUpdate">--</span>
+              </div>
+              <div class="data-legend">
+                <span class="legend-item"><span class="legend-badge bottom">BOTTOM</span> Longs rekt</span>
+                <span class="legend-item"><span class="legend-badge top">TOP</span> Shorts rekt</span>
+              </div>
+              <div class="liquidation-list" id="liquidationList">
+                <div class="empty-state">
+                  <p>Configure Coinglass API in Settings</p>
+                </div>
+              </div>
+            </div>
+            <div class="data-section">
+              <div class="data-header">
+                <div class="data-title-wrap">
+                  <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-users"/></svg>Long/Short Ratio</span>
+                </div>
+              </div>
+              <div class="ls-ratio-list" id="lsRatioList">
+                <div class="empty-state">No data available</div>
+              </div>
+            </div>
+            <div class="data-section">
+              <div class="data-header">
+                <div class="data-title-wrap">
+                  <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-activity"/></svg>Social Sentiment</span>
+                </div>
+              </div>
+              <div class="sentiment-list" id="sentimentList">
+                <div class="empty-state">
+                  <p>Configure LunarCrush API in Settings</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATS VIEW — AI Performance, Consensus, Predictions -->
+      <div class="view" id="view-stats">
+        <div class="main-view-content">
+          <div class="main-view-header">
+            <h2>AI Stats</h2>
+            <span class="main-view-subtitle">Performance, Consensus, Predictions</span>
+            <div class="export-buttons" style="margin-left:auto">
+              <button class="export-btn" id="exportCsvBtn" title="CSV">CSV</button>
+              <button class="export-btn" id="exportJsonBtn" title="JSON">JSON</button>
+            </div>
+          </div>
+          <div class="main-view-body stats-grid">
+            <div class="data-section stats-perf-section">
+              <div class="data-header">
+                <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-stats"/></svg>AI Performance</span>
+              </div>
+              <div class="ai-performance-summary" id="aiPerformanceSummary">
+                <div class="perf-card claude-perf">
+                  <div class="perf-header">
+                    <svg class="perf-icon" width="18" height="18"><use href="#icon-brain"/></svg>
+                    <span class="perf-name">Claude</span>
+                  </div>
+                  <div class="perf-stats">
+                    <div class="perf-stat">
+                      <span class="stat-value" id="claudeWinRate">--%</span>
+                      <span class="stat-label">Win Rate</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="claudeTradeRecord">0W 0L</span>
+                      <span class="stat-label">Trades</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="claudeTotalTrades">0</span>
+                      <span class="stat-label">Picks</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="claudeAvgConf">--%</span>
+                      <span class="stat-label">Avg Conf</span>
+                    </div>
+                  </div>
+                  <div class="perf-bar-container">
+                    <div class="perf-bar claude-bar" id="claudePerfBar" style="width: 0%"></div>
+                  </div>
+                </div>
+                <div class="perf-card openai-perf">
+                  <div class="perf-header">
+                    <svg class="perf-icon" width="18" height="18"><use href="#icon-sparkles"/></svg>
+                    <span class="perf-name">Gemini</span>
+                  </div>
+                  <div class="perf-stats">
+                    <div class="perf-stat">
+                      <span class="stat-value" id="openaiWinRate">--%</span>
+                      <span class="stat-label">Win Rate</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="openaiTradeRecord">0W 0L</span>
+                      <span class="stat-label">Trades</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="openaiTotalTrades">0</span>
+                      <span class="stat-label">Picks</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="openaiAvgConf">--%</span>
+                      <span class="stat-label">Avg Conf</span>
+                    </div>
+                  </div>
+                  <div class="perf-bar-container">
+                    <div class="perf-bar openai-bar" id="openaiPerfBar" style="width: 0%"></div>
+                  </div>
+                </div>
+                <div class="perf-card grok-perf">
+                  <div class="perf-header">
+                    <svg class="perf-icon" width="18" height="18"><use href="#icon-bolt"/></svg>
+                    <span class="perf-name">Grok</span>
+                  </div>
+                  <div class="perf-stats">
+                    <div class="perf-stat">
+                      <span class="stat-value" id="grokWinRate">--%</span>
+                      <span class="stat-label">Win Rate</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="grokTradeRecord">0W 0L</span>
+                      <span class="stat-label">Trades</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="grokTotalTrades">0</span>
+                      <span class="stat-label">Picks</span>
+                    </div>
+                    <div class="perf-stat">
+                      <span class="stat-value" id="grokAvgConf">--%</span>
+                      <span class="stat-label">Avg Conf</span>
+                    </div>
+                  </div>
+                  <div class="perf-bar-container">
+                    <div class="perf-bar grok-bar" id="grokPerfBar" style="width: 0%"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="data-section">
+              <div class="data-header">
+                <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-target"/></svg>Consensus</span>
+              </div>
+              <div class="consensus-stats" id="consensusStats">
+                <div class="consensus-row">
+                  <span class="consensus-type gold"><svg class="consensus-icon" width="12" height="12"><use href="#icon-crown"/></svg>Gold</span>
+                  <span class="consensus-rate" id="goldConsensusRate">--%</span>
+                  <span class="consensus-count" id="goldConsensusCount">0</span>
+                </div>
+                <div class="consensus-row">
+                  <span class="consensus-type silver"><svg class="consensus-icon" width="12" height="12"><use href="#icon-gem"/></svg>Silver</span>
+                  <span class="consensus-rate" id="silverConsensusRate">--%</span>
+                  <span class="consensus-count" id="silverConsensusCount">0</span>
+                </div>
+              </div>
+            </div>
+            <div class="data-section">
+              <div class="data-header">
+                <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-trending"/></svg>Predictions</span>
+              </div>
+              <div class="ai-predictions-list" id="aiPredictionsList">
+                <div class="empty-state">No predictions yet</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- HEALTH VIEW — System Health Dashboard -->
+      <div class="view" id="view-health">
+        <div class="main-view-content">
+          <div class="main-view-header">
+            <h2>System Health</h2>
+            <span class="main-view-subtitle">API status, Trading engine, Cron jobs</span>
+            <button class="refresh-health-btn" id="refreshHealthBtn" title="Refresh" style="margin-left:auto">&#x21BB;</button>
+          </div>
+          <div class="main-view-body health-grid">
+            <div id="healthContent">
+              <div class="empty-state">Loading system health...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI CONTEXT VIEW — AI Strategy & Learning -->
+      <div class="view" id="view-ai-context">
+        <div class="main-view-content">
+          <div class="main-view-header">
+            <h2>AI Strategy &amp; Learning</h2>
+            <span class="main-view-subtitle">Optimizer, track records, lessons, strategy changes</span>
+            <button class="refresh-ai-ctx-btn" id="refreshAiContextBtn" title="Refresh" style="margin-left:auto">&#x21BB;</button>
+          </div>
+          <div class="main-view-body ai-context-grid">
+            <div id="aiContextContent">
+              <div class="empty-state">Loading AI context...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </main>
 
     <!-- RIGHT PANEL — Watchlist + Signals -->
@@ -877,10 +1115,6 @@
           <svg width="12" height="12"><use href="#icon-layers"/></svg>
           <span>All</span>
         </button>
-        <button class="signal-tab" data-signal-tab="data">
-          <svg width="12" height="12"><use href="#icon-droplet"/></svg>
-          <span>Data</span>
-        </button>
         <button class="signal-tab" data-signal-tab="news">
           <svg width="12" height="12"><use href="#icon-newspaper"/></svg>
           <span>News</span>
@@ -888,18 +1122,6 @@
         <button class="signal-tab" data-signal-tab="calendar">
           <svg width="12" height="12"><use href="#icon-calendar"/></svg>
           <span>Events</span>
-        </button>
-        <button class="signal-tab" data-signal-tab="stats">
-          <svg width="12" height="12"><use href="#icon-stats"/></svg>
-          <span>Stats</span>
-        </button>
-        <button class="signal-tab" data-signal-tab="health">
-          <svg width="12" height="12"><use href="#icon-activity"/></svg>
-          <span>Health</span>
-        </button>
-        <button class="signal-tab" data-signal-tab="ai-context">
-          <svg width="12" height="12"><use href="#icon-brain"/></svg>
-          <span>AI</span>
         </button>
       </div>
 
@@ -925,171 +1147,6 @@
           <div class="loading-state">
             <div class="spinner"></div>
             <span>Scanning for signals...</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Data View -->
-      <div class="sidebar-view" id="dataView">
-        <div class="data-section">
-          <div class="data-header">
-            <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-droplet"/></svg>24H Liquidations</span>
-              <span class="data-subtitle">All Exchanges</span>
-            </div>
-            <span class="data-update" id="liqDataUpdate">--</span>
-          </div>
-          <div class="data-legend">
-            <span class="legend-item"><span class="legend-badge bottom">BOTTOM</span> Longs rekt</span>
-            <span class="legend-item"><span class="legend-badge top">TOP</span> Shorts rekt</span>
-          </div>
-          <div class="liquidation-list" id="liquidationList">
-            <div class="empty-state">
-              <p>Configure Coinglass API in Settings</p>
-            </div>
-          </div>
-        </div>
-        <div class="data-section">
-          <div class="data-header">
-            <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-users"/></svg>Long/Short Ratio</span>
-            </div>
-          </div>
-          <div class="ls-ratio-list" id="lsRatioList">
-            <div class="empty-state">No data available</div>
-          </div>
-        </div>
-        <div class="data-section">
-          <div class="data-header">
-            <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-activity"/></svg>Social Sentiment</span>
-            </div>
-          </div>
-          <div class="sentiment-list" id="sentimentList">
-            <div class="empty-state">
-              <p>Configure LunarCrush API in Settings</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Stats View -->
-      <div class="sidebar-view" id="statsView">
-        <div class="data-section">
-          <div class="data-header">
-            <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-stats"/></svg>AI Performance</span>
-            <div class="export-buttons">
-              <button class="export-btn" id="exportCsvBtn" title="CSV">CSV</button>
-              <button class="export-btn" id="exportJsonBtn" title="JSON">JSON</button>
-            </div>
-          </div>
-          <div class="ai-performance-summary" id="aiPerformanceSummary">
-            <div class="perf-card claude-perf">
-              <div class="perf-header">
-                <svg class="perf-icon" width="18" height="18"><use href="#icon-brain"/></svg>
-                <span class="perf-name">Claude</span>
-              </div>
-              <div class="perf-stats">
-                <div class="perf-stat">
-                  <span class="stat-value" id="claudeWinRate">--%</span>
-                  <span class="stat-label">Win Rate</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="claudeTradeRecord">0W 0L</span>
-                  <span class="stat-label">Trades</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="claudeTotalTrades">0</span>
-                  <span class="stat-label">Picks</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="claudeAvgConf">--%</span>
-                  <span class="stat-label">Avg Conf</span>
-                </div>
-              </div>
-              <div class="perf-bar-container">
-                <div class="perf-bar claude-bar" id="claudePerfBar" style="width: 0%"></div>
-              </div>
-            </div>
-            <div class="perf-card openai-perf">
-              <div class="perf-header">
-                <svg class="perf-icon" width="18" height="18"><use href="#icon-sparkles"/></svg>
-                <span class="perf-name">Gemini</span>
-              </div>
-              <div class="perf-stats">
-                <div class="perf-stat">
-                  <span class="stat-value" id="openaiWinRate">--%</span>
-                  <span class="stat-label">Win Rate</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="openaiTradeRecord">0W 0L</span>
-                  <span class="stat-label">Trades</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="openaiTotalTrades">0</span>
-                  <span class="stat-label">Picks</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="openaiAvgConf">--%</span>
-                  <span class="stat-label">Avg Conf</span>
-                </div>
-              </div>
-              <div class="perf-bar-container">
-                <div class="perf-bar openai-bar" id="openaiPerfBar" style="width: 0%"></div>
-              </div>
-            </div>
-            <div class="perf-card grok-perf">
-              <div class="perf-header">
-                <svg class="perf-icon" width="18" height="18"><use href="#icon-bolt"/></svg>
-                <span class="perf-name">Grok</span>
-              </div>
-              <div class="perf-stats">
-                <div class="perf-stat">
-                  <span class="stat-value" id="grokWinRate">--%</span>
-                  <span class="stat-label">Win Rate</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="grokTradeRecord">0W 0L</span>
-                  <span class="stat-label">Trades</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="grokTotalTrades">0</span>
-                  <span class="stat-label">Picks</span>
-                </div>
-                <div class="perf-stat">
-                  <span class="stat-value" id="grokAvgConf">--%</span>
-                  <span class="stat-label">Avg Conf</span>
-                </div>
-              </div>
-              <div class="perf-bar-container">
-                <div class="perf-bar grok-bar" id="grokPerfBar" style="width: 0%"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="data-section">
-          <div class="data-header">
-            <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-target"/></svg>Consensus</span>
-          </div>
-          <div class="consensus-stats" id="consensusStats">
-            <div class="consensus-row">
-              <span class="consensus-type gold"><svg class="consensus-icon" width="12" height="12"><use href="#icon-crown"/></svg>Gold</span>
-              <span class="consensus-rate" id="goldConsensusRate">--%</span>
-              <span class="consensus-count" id="goldConsensusCount">0</span>
-            </div>
-            <div class="consensus-row">
-              <span class="consensus-type silver"><svg class="consensus-icon" width="12" height="12"><use href="#icon-gem"/></svg>Silver</span>
-              <span class="consensus-rate" id="silverConsensusRate">--%</span>
-              <span class="consensus-count" id="silverConsensusCount">0</span>
-            </div>
-          </div>
-        </div>
-        <div class="data-section">
-          <div class="data-header">
-            <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-trending"/></svg>Predictions</span>
-          </div>
-          <div class="ai-predictions-list" id="aiPredictionsList">
-            <div class="empty-state">No predictions yet</div>
           </div>
         </div>
       </div>
@@ -1166,36 +1223,6 @@
             <div class="calendar-list" id="pastEvents">
               <div class="empty-state">No recent events</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- System Health View -->
-      <div class="sidebar-view" id="healthView">
-        <div class="data-section">
-          <div class="data-header">
-            <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-activity"/></svg>System Health</span>
-            </div>
-            <button class="refresh-health-btn" id="refreshHealthBtn" title="Refresh">&#x21BB;</button>
-          </div>
-          <div id="healthContent">
-            <div class="empty-state">Loading system health...</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- AI Context View -->
-      <div class="sidebar-view" id="aiContextView">
-        <div class="data-section">
-          <div class="data-header">
-            <div class="data-title-wrap">
-              <span class="data-title"><svg class="data-icon" width="14" height="14"><use href="#icon-brain"/></svg>AI Strategy &amp; Learning</span>
-            </div>
-            <button class="refresh-ai-ctx-btn" id="refreshAiContextBtn" title="Refresh">&#x21BB;</button>
-          </div>
-          <div id="aiContextContent">
-            <div class="empty-state">Loading AI context...</div>
           </div>
         </div>
       </div>

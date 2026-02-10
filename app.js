@@ -9385,18 +9385,10 @@ function initEventListeners() {
           document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
           if (tab === 'new' || tab === 'all') {
             document.getElementById('signalsView')?.classList.add('active');
-          } else if (tab === 'data') {
-            document.getElementById('dataView')?.classList.add('active');
           } else if (tab === 'news') {
             document.getElementById('newsView')?.classList.add('active');
-          } else if (tab === 'stats') {
-            document.getElementById('statsView')?.classList.add('active');
-          } else if (tab === 'health') {
-            document.getElementById('healthView')?.classList.add('active');
-            loadSystemHealth();
-          } else if (tab === 'ai-context') {
-            document.getElementById('aiContextView')?.classList.add('active');
-            loadAiContext();
+          } else if (tab === 'calendar') {
+            document.getElementById('calendarView')?.classList.add('active');
           }
         }
       }
@@ -9419,8 +9411,12 @@ function initEventListeners() {
       if (view === 'signals') renderSignalsMainView();
       if (view === 'ai') {
         renderAiDetailView();
-        loadAiSignalLogFromServer(); // Fetch latest signals immediately
+        loadAiSignalLogFromServer();
       }
+      if (view === 'data') renderDataView();
+      if (view === 'stats') renderStatsView();
+      if (view === 'health') loadSystemHealth();
+      if (view === 'ai-context') loadAiContext();
       // Resize chart when switching back
       if (view === 'chart') {
         setTimeout(() => {
@@ -9595,7 +9591,7 @@ function initEventListeners() {
     });
   }
 
-  // Signal tabs (New/All/Data/News/Calendar/Stats)
+  // Signal tabs (New/All/News/Events) — Data/Stats/Health/AI moved to main nav
   document.querySelectorAll('.signal-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.signal-tab').forEach(t => t.classList.remove('active'));
@@ -9603,28 +9599,15 @@ function initEventListeners() {
 
       const tabType = tab.dataset.signalTab;
 
-      // Handle sidebar view switching
-      // Hide all views first
+      // Hide all sidebar views first
       document.querySelectorAll('.sidebar-view').forEach(v => v.classList.remove('active'));
 
-      if (tabType === 'data') {
-        document.getElementById('dataView')?.classList.add('active');
-        renderDataView();
-      } else if (tabType === 'news') {
+      if (tabType === 'news') {
         document.getElementById('newsView')?.classList.add('active');
         renderNewsView();
       } else if (tabType === 'calendar') {
         document.getElementById('calendarView')?.classList.add('active');
         renderCalendarView();
-      } else if (tabType === 'stats') {
-        document.getElementById('statsView')?.classList.add('active');
-        renderStatsView();
-      } else if (tabType === 'health') {
-        document.getElementById('healthView')?.classList.add('active');
-        loadSystemHealth();
-      } else if (tabType === 'ai-context') {
-        document.getElementById('aiContextView')?.classList.add('active');
-        loadAiContext();
       } else {
         document.getElementById('signalsView')?.classList.add('active');
         state.signalTab = tabType;

@@ -1411,3 +1411,109 @@
   text-align: center;
   padding: 20px 14px;
 }
+
+/* ===== FULL-WIDTH GRID LAYOUTS (main nav views) ===== */
+
+/* Data view — 3-column grid for Liquidations, L/S Ratio, Sentiment */
+.data-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  align-content: start;
+}
+.data-grid > .data-section {
+  border-bottom: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  padding: 14px;
+  background: var(--tv-bg-secondary);
+}
+
+/* Stats view — perf cards in a row */
+.stats-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stats-grid > .data-section {
+  border-bottom: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  padding: 16px;
+  background: var(--tv-bg-secondary);
+}
+.stats-grid .ai-performance-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.stats-grid .perf-stats {
+  grid-template-columns: repeat(4, 1fr);
+}
+.stats-grid .consensus-stats {
+  display: flex;
+  gap: 16px;
+}
+.stats-grid .consensus-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--tv-raised);
+  border-radius: var(--r-sm);
+}
+
+/* Health view — multi-column grid */
+.health-grid #healthContent {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.health-grid .health-section {
+  border-bottom: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  padding: 14px;
+  background: var(--tv-bg-secondary);
+}
+.health-grid .health-footer {
+  grid-column: 1 / -1;
+}
+.health-grid .health-row { font-size: 13px; padding: 5px 0; }
+.health-grid .health-label { font-size: 13px; }
+.health-grid .health-value { font-size: 12px; }
+
+/* AI Context view — multi-column grid */
+.ai-context-grid #aiContextContent {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.ai-context-grid .ai-ctx-section {
+  border-bottom: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  padding: 14px;
+  background: var(--tv-bg-secondary);
+}
+.ai-context-grid .ai-ctx-card {
+  background: var(--tv-bg);
+}
+.ai-context-grid .ai-ctx-field { font-size: 12px; padding: 4px 0; }
+.ai-context-grid .ai-ctx-field-value { font-size: 11px; }
+
+/* Responsive — collapse grids on smaller screens */
+@media (max-width: 1200px) {
+  .data-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 900px) {
+  .data-grid { grid-template-columns: 1fr; }
+  .stats-grid .ai-performance-summary { grid-template-columns: 1fr; }
+  .health-grid #healthContent { grid-template-columns: 1fr; }
+  .ai-context-grid #aiContextContent { grid-template-columns: 1fr; }
+  .stats-grid .consensus-stats { flex-direction: column; }
+  .main-view-header { padding: 10px 14px 8px; }
+  .main-view-header h2 { font-size: 15px; }
+  .main-view-body { padding: 12px 14px; }
+}
