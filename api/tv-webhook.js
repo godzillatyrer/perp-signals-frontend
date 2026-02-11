@@ -3,9 +3,19 @@
 // Used as a confirmation filter: AI consensus trades only proceed if TV indicator agrees
 //
 // TradingView Alert Message format (set in alert dialog):
-//   {"secret":"YOUR_SECRET","symbol":"{{ticker}}","signal":"BUY","price":"{{close}}","interval":"{{interval}}"}
+//   {"secret":"YOUR_SECRET","symbol":"{{ticker}}","signal":"BUY","price":"{{close}}","tp":"123.45","sl":"98.76","interval":"{{interval}}"}
 //
-// The "secret" must match the TV_WEBHOOK_SECRET environment variable.
+// Fields:
+//   secret   (required) — must match TV_WEBHOOK_SECRET env var
+//   symbol   (required) — ticker symbol (auto-normalizes to USDT pair)
+//   signal   (required) — "BUY" or "SELL"
+//   price    (optional) — entry price at time of signal
+//   tp       (optional) — take profit price from indicator
+//   sl       (optional) — stop loss price from indicator
+//   interval (optional) — chart timeframe
+//   indicator(optional) — name of the indicator
+//
+// When TP/SL are provided, they override the AI-generated targets on confirmed trades.
 // Signal TTL is configurable (default 30 min) — signals expire after this period.
 
 import { Redis } from '@upstash/redis';
@@ -88,6 +98,8 @@ export default async function handler(request, response) {
     let symbol = (body.symbol || '').toUpperCase().trim();
     const signal = (body.signal || '').toUpperCase().trim();
     const price = parseFloat(body.price) || 0;
+    const tp = parseFloat(body.tp) || null;
+    const sl = parseFloat(body.sl) || null;
     const interval = body.interval || '';
     const indicatorName = body.indicator || 'TV Indicator';
 
@@ -122,6 +134,8 @@ export default async function handler(request, response) {
       symbol,
       signal,          // BUY or SELL
       price,
+      tp,              // Take profit price (null if not provided)
+      sl,              // Stop loss price (null if not provided)
       interval,
       indicatorName,
       timestamp: now,
@@ -133,7 +147,8 @@ export default async function handler(request, response) {
     const ttlSeconds = Math.ceil(ttlMs / 1000);
     await r.set(key, JSON.stringify(signalData), { ex: ttlSeconds });
 
-    console.log(`📺 TV Signal: ${signal} ${symbol} @ $${price} (TTL: ${TV_INDICATOR.signalTTLMinutes}min)`);
+    const tpslInfo = tp && sl ? ` | TP: $${tp} SL: $${sl}` : '';
+    console.log(`📺 TV Signal: ${signal} ${symbol} @ $${price}${tpslInfo} (TTL: ${TV_INDICATOR.signalTTLMinutes}min)`);
 
     // Also store in a recent signals list for the dashboard (last 50)
     const listKey = 'tv_signal_history';
@@ -142,7 +157,7 @@ export default async function handler(request, response) {
 
     return response.status(200).json({
       ok: true,
-      stored: { symbol, signal, price, expiresAt: signalData.expiresAt }
+      stored: { symbol, signal, price, tp, sl, expiresAt: signalData.expiresAt }
     });
 
   } catch (e) {

@@ -5519,7 +5519,9 @@ function openDualPortfolioTrade(signal) {
   }
 
   // === TRADINGVIEW INDICATOR CONFIRMATION FILTER ===
+  // When TV indicator provides TP/SL, override the AI-generated targets
   const tvConfig = tc.TV_INDICATOR || { enabled: false };
+  let tvOverride = false;
   if (tvConfig.enabled && tvConfig.mode === 'confirmation' && window._tvSignals) {
     const tvSignal = window._tvSignals[signal.symbol];
     if (tvSignal && tvSignal.expiresAt > Date.now()) {
@@ -5528,7 +5530,15 @@ function openDualPortfolioTrade(signal) {
         debugLog(`📺 TV FILTER: ${signal.symbol} TV says ${tvSignal.signal} but AI says ${signal.direction} — BLOCKED`);
         return;
       }
-      debugLog(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} matches AI ${signal.direction} ✓`);
+      // Override AI TP/SL with indicator's levels when provided
+      if (tvSignal.tp && tvSignal.sl) {
+        debugLog(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} ✓ — using indicator TP: $${tvSignal.tp} SL: $${tvSignal.sl}`);
+        signal.tp = tvSignal.tp;
+        signal.sl = tvSignal.sl;
+        tvOverride = true;
+      } else {
+        debugLog(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} matches AI ${signal.direction} ✓`);
+      }
     } else if (tvConfig.strict) {
       debugLog(`📺 TV FILTER (strict): No TV signal for ${signal.symbol} — BLOCKED`);
       return;
@@ -5665,7 +5675,8 @@ function openDualPortfolioTrade(signal) {
     riskMultiplier: streakMultiplier,
     regimeMultiplier: regimeMultiplier,
     kellyRisk: kellyRisk,
-    adjustedRisk: adjustedRisk
+    adjustedRisk: adjustedRisk,
+    tvOverride: tvOverride
   };
 
   portfolio.trades.push(trade);
@@ -7646,7 +7657,8 @@ function renderHealthDashboard(data) {
     for (const [sym, sig] of Object.entries(window._tvSignals || {})) {
       const ttlLeft = Math.max(0, Math.round((sig.expiresAt - Date.now()) / 60000));
       const isBuy = sig.signal === 'BUY';
-      html += `<div class="health-row"><span class="health-dot" style="background:${isBuy ? 'var(--long)' : 'var(--short)'}"></span><span class="health-label">${sym.replace('USDT', '')}</span><span class="health-value" style="color:${isBuy ? 'var(--long)' : 'var(--short)'}">${sig.signal} @ $${sig.price ? sig.price.toFixed(2) : '?'} (${ttlLeft}m left)</span></div>`;
+      const tpslText = sig.tp && sig.sl ? ` | TP: $${parseFloat(sig.tp).toFixed(2)} SL: $${parseFloat(sig.sl).toFixed(2)}` : '';
+      html += `<div class="health-row"><span class="health-dot" style="background:${isBuy ? 'var(--long)' : 'var(--short)'}"></span><span class="health-label">${sym.replace('USDT', '')}</span><span class="health-value" style="color:${isBuy ? 'var(--long)' : 'var(--short)'}">${sig.signal} @ $${sig.price ? sig.price.toFixed(2) : '?'}${tpslText} (${ttlLeft}m left)</span></div>`;
     }
   }
   html += '</div>';
