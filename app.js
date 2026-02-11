@@ -6134,9 +6134,11 @@ function updateDualPortfolioEquityChart(portfolioType) {
 function updatePortfolioComparison() {
   const silverReturn = ((dualPortfolioState.silver.balance - dualPortfolioState.silver.startBalance) / dualPortfolioState.silver.startBalance * 100);
   const goldReturn = ((dualPortfolioState.gold.balance - dualPortfolioState.gold.startBalance) / dualPortfolioState.gold.startBalance * 100);
+  const tvReturn = ((tvPortfolioState.balance - tvPortfolioState.startBalance) / tvPortfolioState.startBalance * 100);
 
   const silverEl = document.getElementById('silverReturnCompare');
   const goldEl = document.getElementById('goldReturnCompare');
+  const tvEl = document.getElementById('tvReturnCompare');
   const bestEl = document.getElementById('bestStrategy');
   const lastSyncEl = document.getElementById('lastSyncTime');
 
@@ -6148,19 +6150,283 @@ function updatePortfolioComparison() {
     goldEl.textContent = (goldReturn >= 0 ? '+' : '') + goldReturn.toFixed(1) + '%';
     goldEl.className = 'comparison-value ' + (goldReturn >= 0 ? 'positive' : 'negative');
   }
+  if (tvEl) {
+    tvEl.textContent = (tvReturn >= 0 ? '+' : '') + tvReturn.toFixed(1) + '%';
+    tvEl.className = 'comparison-value ' + (tvReturn >= 0 ? 'positive' : 'negative');
+  }
   if (bestEl) {
-    if (silverReturn === goldReturn) {
+    const strategies = [
+      { name: 'Silver (2/3)', ret: silverReturn, color: 'var(--silver)' },
+      { name: 'Gold (3/3)', ret: goldReturn, color: 'var(--gold)' },
+      { name: 'TV Indicator', ret: tvReturn, color: '#8a2be2' }
+    ];
+    strategies.sort((a, b) => b.ret - a.ret);
+    if (strategies[0].ret === strategies[1].ret && strategies[1].ret === strategies[2].ret) {
       bestEl.textContent = 'Tied';
-    } else if (silverReturn > goldReturn) {
-      bestEl.textContent = 'Silver (2/3)';
-      bestEl.style.color = 'var(--silver)';
+      bestEl.style.color = '';
     } else {
-      bestEl.textContent = 'Gold (3/3)';
-      bestEl.style.color = 'var(--gold)';
+      bestEl.textContent = strategies[0].name;
+      bestEl.style.color = strategies[0].color;
     }
   }
   if (lastSyncEl && dualPortfolioState.lastSync) {
     lastSyncEl.textContent = timeAgo(dualPortfolioState.lastSync);
+  }
+}
+
+// ============================================
+// TV INDICATOR STANDALONE PORTFOLIO
+// ============================================
+
+// TV portfolio state — fetched from server, not managed client-side
+// Trades are opened by tv-webhook.js and monitored by monitor-positions.js
+const tvPortfolioState = {
+  balance: 5000,
+  startBalance: 5000,
+  trades: [],
+  equityHistory: [{ time: Date.now(), value: 5000 }],
+  stats: { totalTrades: 0, winningTrades: 0, losingTrades: 0, totalPnL: 0, maxDrawdown: 0, peakEquity: 5000, winRate: 0 },
+  equityChart: null,
+  equitySeries: null,
+  lastFetched: 0
+};
+
+// Fetch TV portfolio data from server (called periodically)
+async function fetchTvPortfolio() {
+  try {
+    const resp = await fetch('/api/tv-webhook');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (!data.tvPortfolio) return;
+
+    const p = data.tvPortfolio;
+    tvPortfolioState.balance = p.balance || 5000;
+    tvPortfolioState.startBalance = p.startBalance || 5000;
+    tvPortfolioState.trades = p.trades || [];
+    tvPortfolioState.equityHistory = p.equityHistory || [{ time: Date.now(), value: 5000 }];
+    tvPortfolioState.stats = p.stats || tvPortfolioState.stats;
+    tvPortfolioState.lastFetched = Date.now();
+
+    // Update UI
+    updateTvPortfolioStats();
+    renderTvPortfolioPositions();
+    renderTvPortfolioHistory();
+    updateTvPortfolioEquityChart();
+    updatePortfolioComparison();
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+function updateTvPortfolioStats() {
+  const p = tvPortfolioState;
+  const closedTrades = p.trades.filter(t => t.status === 'closed');
+  const wins = closedTrades.filter(t => t.pnl > 0).length;
+  const winRate = closedTrades.length > 0 ? (wins / closedTrades.length * 100) : 0;
+  const totalPnL = p.balance - p.startBalance;
+  const returnPct = (totalPnL / p.startBalance * 100);
+
+  // Calculate max drawdown from equity history
+  let peak = p.startBalance;
+  let maxDd = 0;
+  for (const point of p.equityHistory) {
+    if (point.value > peak) peak = point.value;
+    const dd = (peak - point.value) / peak * 100;
+    if (dd > maxDd) maxDd = dd;
+  }
+
+  const el = (id) => document.getElementById(id);
+  const equityEl = el('equityValueTv');
+  const winRateEl = el('winRateValueTv');
+  const maxDdEl = el('maxDrawdownTv');
+  const posCountEl = el('positionCountTv');
+  const histCountEl = el('historyCountTv');
+  const totalPnlEl = el('totalPnlTv');
+  const returnPctEl = el('returnPctTv');
+  const unrealizedEl = el('unrealizedPnlTv');
+
+  if (equityEl) equityEl.textContent = '$' + p.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (winRateEl) winRateEl.textContent = winRate.toFixed(0) + '%';
+  if (maxDdEl) maxDdEl.textContent = maxDd.toFixed(1) + '%';
+  if (posCountEl) posCountEl.textContent = p.trades.filter(t => t.status === 'open').length;
+  if (histCountEl) histCountEl.textContent = closedTrades.length;
+  if (totalPnlEl) {
+    totalPnlEl.textContent = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
+    totalPnlEl.className = 'stat-value ' + (totalPnL >= 0 ? 'positive' : 'negative');
+  }
+  if (returnPctEl) {
+    returnPctEl.textContent = (returnPct >= 0 ? '+' : '') + returnPct.toFixed(1) + '%';
+    returnPctEl.className = 'stat-value ' + (returnPct >= 0 ? 'positive' : 'negative');
+  }
+
+  // Calculate unrealized PnL from open trades
+  const openTrades = p.trades.filter(t => t.status === 'open');
+  let unrealizedPnl = 0;
+  for (const t of openTrades) {
+    const currentPrice = state.priceCache[t.symbol] || t.entry;
+    const priceDiff = t.direction === 'LONG' ? currentPrice - t.entry : t.entry - currentPrice;
+    const remaining = t.remainingSize || t.size;
+    unrealizedPnl += (priceDiff / t.entry) * remaining + (t.partialPnl || 0);
+  }
+  if (unrealizedEl) {
+    unrealizedEl.textContent = (unrealizedPnl >= 0 ? '+' : '') + unrealizedPnl.toFixed(2);
+    unrealizedEl.className = 'stat-value ' + (unrealizedPnl >= 0 ? 'green' : 'red');
+  }
+}
+
+function renderTvPortfolioPositions() {
+  const container = document.getElementById('positionsListTv');
+  if (!container) return;
+
+  const openTrades = tvPortfolioState.trades.filter(t => t.status === 'open');
+  if (openTrades.length === 0) {
+    container.innerHTML = '<div class="empty-state">No open positions</div>';
+    return;
+  }
+
+  container.innerHTML = openTrades.map(t => {
+    const currentPrice = state.priceCache[t.symbol] || t.entry;
+    const remaining = t.remainingSize || t.size;
+    const priceDiff = t.direction === 'LONG' ? currentPrice - t.entry : t.entry - currentPrice;
+    const pnl = (priceDiff / t.entry) * remaining + (t.partialPnl || 0);
+    const pnlPct = (pnl / t.size * 100).toFixed(2);
+    const isLong = t.direction === 'LONG';
+
+    const tpDist = Math.abs(t.tp - t.entry);
+    const progress = tpDist > 0 ? ((isLong ? currentPrice - t.entry : t.entry - currentPrice) / tpDist * 100) : 0;
+    const progressClamped = Math.max(-100, Math.min(100, progress));
+    const progressColor = progressClamped >= 0 ? 'var(--long)' : 'var(--short)';
+
+    const risk = Math.abs(t.entry - t.sl);
+    const reward = Math.abs(t.tp - t.entry);
+    const rr = risk > 0 ? (reward / risk).toFixed(1) : '-';
+
+    const elapsed = Date.now() - (t.timestamp || Date.now());
+    const hours = Math.floor(elapsed / 3600000);
+    const mins = Math.floor((elapsed % 3600000) / 60000);
+    const timeOpen = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+    const trailBadge = t.isTrailing ? '<span class="trail-badge">TRAILING</span>' :
+                       (t.originalSl ? '<span class="be-badge">BE</span>' : '');
+    const tpBadges = [t.tp1Hit && 'TP1', t.tp2Hit && 'TP2'].filter(Boolean).map(l => `<span class="be-badge">${l}</span>`).join('');
+
+    return `
+      <div class="position-card ${pnl >= 0 ? 'positive' : 'negative'}">
+        <div class="pos-header">
+          <div class="pos-symbol-row">
+            <span class="pos-symbol">${t.symbol.replace('USDT', '')}</span>
+            <span class="pos-dir ${t.direction.toLowerCase()}">${t.direction}</span>
+            <span class="pos-consensus" style="color:#8a2be2">TV</span>
+            ${trailBadge}${tpBadges}
+          </div>
+          <div class="pos-pnl ${pnl >= 0 ? 'positive' : 'negative'}">
+            <span class="pos-pnl-value">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
+            <span class="pos-pnl-pct">${pnlPct}%</span>
+          </div>
+        </div>
+        <div class="pos-progress-bar">
+          <div class="pos-progress-fill" style="width: ${Math.abs(progressClamped)}%; background: ${progressColor};"></div>
+          <span class="pos-progress-label">${progressClamped >= 0 ? '+' : ''}${progressClamped.toFixed(0)}% to TP</span>
+        </div>
+        <div class="pos-levels">
+          <div class="pos-level"><span class="pos-level-label">Entry</span><span class="pos-level-value">$${formatPrice(t.entry)}</span></div>
+          <div class="pos-level"><span class="pos-level-label">Current</span><span class="pos-level-value" style="color: ${pnl >= 0 ? 'var(--long)' : 'var(--short)'}">$${formatPrice(currentPrice)}</span></div>
+          <div class="pos-level"><span class="pos-level-label">TP</span><span class="pos-level-value tp">$${formatPrice(t.tp)}</span></div>
+          <div class="pos-level"><span class="pos-level-label">SL</span><span class="pos-level-value sl">$${formatPrice(t.sl)}</span></div>
+        </div>
+        <div class="pos-meta">
+          <span class="pos-meta-item"><span class="pos-meta-label">Size</span> $${t.size.toFixed(0)}</span>
+          <span class="pos-meta-item"><span class="pos-meta-label">Lev</span> ${t.leverage || '-'}x</span>
+          <span class="pos-meta-item"><span class="pos-meta-label">R:R</span> 1:${rr}</span>
+          <span class="pos-meta-item"><span class="pos-meta-label">Open</span> ${timeOpen}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderTvPortfolioHistory() {
+  const container = document.getElementById('historyListTv');
+  if (!container) return;
+
+  const closedTrades = tvPortfolioState.trades.filter(t => t.status === 'closed').slice(-20).reverse();
+  if (closedTrades.length === 0) {
+    container.innerHTML = '<div class="empty-state">No trade history</div>';
+    return;
+  }
+
+  container.innerHTML = closedTrades.map(t => `
+    <div class="history-item">
+      <span class="symbol">${t.symbol.replace('USDT', '')} <span class="ai-trade-badge" style="color:#8a2be2">TV</span></span>
+      <span class="direction ${t.direction.toLowerCase()}">${t.direction}</span>
+      <span class="entry">$${formatPrice(t.entry)}</span>
+      <span class="exit">$${formatPrice(t.exitPrice)}</span>
+      <span class="pnl ${t.pnl >= 0 ? 'positive' : 'negative'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>
+      <span class="time">${timeAgo(t.closeTimestamp)}</span>
+    </div>
+  `).join('');
+}
+
+function initTvPortfolioEquityChart() {
+  const container = document.getElementById('equityChartTv');
+  if (!container || typeof LightweightCharts === 'undefined') return;
+
+  tvPortfolioState.equityChart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 200,
+    layout: { background: { type: 'solid', color: '#0a0a12' }, textColor: '#a8a8be' },
+    grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255, 255, 255, 0.03)' } },
+    rightPriceScale: { visible: true, borderVisible: false },
+    timeScale: { visible: true, borderVisible: false, timeVisible: true },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+  });
+
+  tvPortfolioState.equitySeries = tvPortfolioState.equityChart.addAreaSeries({
+    lineColor: '#8a2be2',
+    topColor: 'rgba(138,43,226,0.25)',
+    bottomColor: 'rgba(138,43,226,0.06)',
+    lineWidth: 2
+  });
+
+  updateTvPortfolioEquityChart();
+}
+
+function updateTvPortfolioEquityChart() {
+  const series = tvPortfolioState.equitySeries;
+  const chart = tvPortfolioState.equityChart;
+  if (!series) return;
+
+  const data = tvPortfolioState.equityHistory.map(p => ({
+    time: Math.floor(p.time / 1000),
+    value: p.value
+  }));
+
+  if (data.length > 0) {
+    series.setData(data);
+    chart?.timeScale().fitContent();
+  }
+}
+
+// Reset TV portfolio (server-side reset via DELETE to /api/tv-webhook)
+async function resetTvPortfolio() {
+  if (!confirm('Are you sure you want to reset the TV Indicator portfolio to $5,000? This will close all positions and clear trade history.')) return;
+  try {
+    const resp = await fetch('/api/tv-webhook', { method: 'DELETE' });
+    if (resp.ok) {
+      tvPortfolioState.balance = 5000;
+      tvPortfolioState.startBalance = 5000;
+      tvPortfolioState.trades = [];
+      tvPortfolioState.equityHistory = [{ time: Date.now(), value: 5000 }];
+      tvPortfolioState.stats = { totalTrades: 0, winningTrades: 0, losingTrades: 0, totalPnL: 0, maxDrawdown: 0, peakEquity: 5000, winRate: 0 };
+      updateTvPortfolioStats();
+      renderTvPortfolioPositions();
+      renderTvPortfolioHistory();
+      updateTvPortfolioEquityChart();
+      updatePortfolioComparison();
+      debugLog('📺 TV Indicator portfolio reset to $5,000');
+    }
+  } catch (e) {
+    console.error('Failed to reset TV portfolio:', e);
   }
 }
 
@@ -6351,18 +6617,26 @@ function initDualPortfolioEventListeners() {
 
       // Resize charts
       setTimeout(() => {
-        const suffix = strategy === 'silver' ? 'Silver' : 'Gold';
-        const chart = dualPortfolioState[`equityChart${suffix}`];
-        const container = document.getElementById(`equityChart${suffix}`);
-        if (chart && container) {
-          chart.resize(container.clientWidth, 200);
+        if (strategy === 'tv') {
+          const chart = tvPortfolioState.equityChart;
+          const container = document.getElementById('equityChartTv');
+          if (chart && container) {
+            chart.resize(container.clientWidth, 200);
+          }
+        } else {
+          const suffix = strategy === 'silver' ? 'Silver' : 'Gold';
+          const chart = dualPortfolioState[`equityChart${suffix}`];
+          const container = document.getElementById(`equityChart${suffix}`);
+          if (chart && container) {
+            chart.resize(container.clientWidth, 200);
+          }
         }
       }, 100);
     });
   });
 
-  // Portfolio content tabs (for both silver and gold)
-  document.querySelectorAll('#portfolio-silver .portfolio-tab, #portfolio-gold .portfolio-tab').forEach(tab => {
+  // Portfolio content tabs (for silver, gold, and tv)
+  document.querySelectorAll('#portfolio-silver .portfolio-tab, #portfolio-gold .portfolio-tab, #portfolio-tv .portfolio-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       const parent = tab.closest('.portfolio-panel-growth');
       parent.querySelectorAll('.portfolio-tab').forEach(t => t.classList.remove('active'));
@@ -6379,11 +6653,16 @@ function initDualPortfolioEventListeners() {
   if (resetSilverBtn) resetSilverBtn.addEventListener('click', () => resetDualPortfolio('silver'));
   if (resetGoldBtn) resetGoldBtn.addEventListener('click', () => resetDualPortfolio('gold'));
 
+  // TV portfolio reset
+  const resetTvBtn = document.getElementById('resetBalanceTvBtn');
+  if (resetTvBtn) resetTvBtn.addEventListener('click', resetTvPortfolio);
+
   // Sync button
   const syncBtn = document.getElementById('syncPortfolioBtn');
   if (syncBtn) {
     syncBtn.addEventListener('click', async () => {
       await loadDualPortfolioFromBackend();
+      await fetchTvPortfolio();
     });
   }
 }
@@ -10062,11 +10341,12 @@ function initEventListeners() {
     });
   });
 
-  // Portfolio tabs
+  // Portfolio tabs (scoped to parent panel to avoid cross-panel interference)
   document.querySelectorAll('.portfolio-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.portfolio-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      const parent = tab.closest('.portfolio-panel-growth') || tab.parentElement;
+      parent.querySelectorAll('.portfolio-tab').forEach(t => t.classList.remove('active'));
+      parent.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       tab.classList.add('active');
       const tabContent = document.getElementById(`tab-${tab.dataset.tab}`);
       if (tabContent) tabContent.classList.add('active');
@@ -10782,6 +11062,11 @@ async function init() {
   updatePortfolioComparison();
   debugLog('💼 Dual Portfolio System initialized');
 
+  // Initialize TV Indicator Portfolio
+  await fetchTvPortfolio();
+  initTvPortfolioEquityChart();
+  debugLog('📺 TV Indicator Portfolio initialized');
+
   // Initialize AI Detail view
   initAiDetailTabs();
   renderAiDetailView();
@@ -10808,6 +11093,7 @@ async function init() {
   managedSetInterval(loadAiSignalLogFromServer, CONFIG.AI_SIGNAL_LOG_SYNC_INTERVAL);
   managedSetInterval(loadPerformanceStatsFromRedis, CONFIG.PERFORMANCE_STATS_INTERVAL);
   managedSetInterval(loadOptimizerStatus, CONFIG.OPTIMIZER_STATUS_INTERVAL);
+  managedSetInterval(fetchTvPortfolio, 30000);  // TV portfolio refresh every 30s
 
   debugLog('🤖 Sentient Trader v4.0 - Dual AI System');
   debugLog('💰 Starting balance: $' + state.balance.toFixed(2));
