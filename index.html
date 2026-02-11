@@ -254,6 +254,12 @@
             </svg>
             Context
           </button>
+          <button class="nav-btn" data-view="terminal">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+            Terminal
+          </button>
         </div>
         <div class="nav-center">
           <div class="monitoring-status" id="monitoringStatus">
@@ -1034,6 +1040,23 @@
             <div id="aiContextContent">
               <div class="empty-state">Loading AI context...</div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-terminal">
+        <div class="main-view-content">
+          <div class="main-view-header">
+            <h2>Live Terminal</h2>
+            <span class="main-view-subtitle">Real-time system activity, errors, and events</span>
+            <div style="margin-left:auto;display:flex;gap:8px;">
+              <button id="terminalAutoScroll" class="refresh-health-btn" title="Auto-scroll" style="font-size:11px;padding:4px 10px;">Auto-scroll: ON</button>
+              <button id="clearTerminal" class="refresh-health-btn" title="Clear" style="font-size:11px;padding:4px 10px;">Clear</button>
+              <button id="refreshTerminal" class="refresh-health-btn" title="Fetch server logs">&#x21BB;</button>
+            </div>
+          </div>
+          <div class="main-view-body" style="padding:0;">
+            <div id="terminalOutput" style="background:#0d1117;color:#c9d1d9;font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px;line-height:1.6;padding:12px 16px;height:calc(100vh - 200px);overflow-y:auto;white-space:pre-wrap;word-break:break-word;"></div>
           </div>
         </div>
       </div>

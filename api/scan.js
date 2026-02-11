@@ -2240,24 +2240,27 @@ async function openTradeForSignal(signal) {
     }
 
     // === MAX DRAWDOWN FROM PEAK KILL SWITCH ===
-    // If portfolio is down more than 20% from its peak equity, stop all new trades
-    const MAX_DRAWDOWN_KILL = 0.20; // 20% from peak
+    // If portfolio is down more than 30% from its peak equity, stop all new trades
+    const MAX_DRAWDOWN_KILL = 0.30; // 30% from peak
     const peakEquity = portfolio.stats?.peakEquity || portfolio.startBalance || 5000;
     const currentEquity = portfolio.balance;
     const drawdownFromPeak = peakEquity > 0 ? (peakEquity - currentEquity) / peakEquity : 0;
 
-    if (drawdownFromPeak >= MAX_DRAWDOWN_KILL) {
+    // Check for manual override flag (set from UI, expires after 24h)
+    const manualOverride = portfolio._drawdownOverride && portfolio._drawdownOverride > Date.now();
+
+    if (drawdownFromPeak >= MAX_DRAWDOWN_KILL && !manualOverride) {
       console.log(`🚨 DRAWDOWN KILL SWITCH: ${portfolioType.toUpperCase()} down ${(drawdownFromPeak * 100).toFixed(1)}% from peak ($${peakEquity.toFixed(0)} → $${currentEquity.toFixed(0)})`);
       if (!portfolio._drawdownKillAlerted) {
         portfolio._drawdownKillAlerted = true;
         portfolioData.lastUpdated = Date.now();
         await r.set(PORTFOLIO_KEY, JSON.stringify(portfolioData));
-        await sendTelegramMessage(`🚨 <b>DRAWDOWN KILL SWITCH ACTIVATED</b>\n\n${portfolioType.toUpperCase()} portfolio: -${(drawdownFromPeak * 100).toFixed(1)}% from peak\nPeak: $${peakEquity.toFixed(2)} → Current: $${currentEquity.toFixed(2)}\n\n⛔ ALL new trades halted until manual reset or equity recovers above -15% from peak.`);
+        await sendTelegramMessage(`🚨 <b>DRAWDOWN KILL SWITCH ACTIVATED</b>\n\n${portfolioType.toUpperCase()} portfolio: -${(drawdownFromPeak * 100).toFixed(1)}% from peak\nPeak: $${peakEquity.toFixed(2)} → Current: $${currentEquity.toFixed(2)}\n\n⛔ ALL new trades halted until manual override or equity recovers above -25% from peak.`);
       }
       return { opened: false, reason: 'max_drawdown_kill' };
     }
-    // Reset kill alert if recovered above -15%
-    if (drawdownFromPeak < 0.15 && portfolio._drawdownKillAlerted) {
+    // Reset kill alert if recovered above -25% or manual override active
+    if ((drawdownFromPeak < 0.25 || manualOverride) && portfolio._drawdownKillAlerted) {
       portfolio._drawdownKillAlerted = false;
     }
 

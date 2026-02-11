@@ -5506,12 +5506,13 @@ function openDualPortfolioTrade(signal) {
     return;
   }
 
-  // MAX DRAWDOWN KILL SWITCH: Stop opening trades if down >20% from peak
+  // MAX DRAWDOWN KILL SWITCH: Stop opening trades if down >30% from peak
   const peakEquity = portfolio.stats?.peakEquity || portfolio.startBalance || 5000;
   const ddFromPeak = peakEquity > 0 ? (peakEquity - portfolio.balance) / peakEquity : 0;
-  if (ddFromPeak >= 0.20) {
+  const hasOverride = portfolio._drawdownOverride && portfolio._drawdownOverride > Date.now();
+  if (ddFromPeak >= 0.30 && !hasOverride) {
     debugLog(`🚨 ${portfolioType.toUpperCase()}: DRAWDOWN KILL -${(ddFromPeak * 100).toFixed(1)}% from peak, blocking new trades`);
-    showNotification(`${portfolioType.toUpperCase()} portfolio down ${(ddFromPeak * 100).toFixed(1)}% from peak — new trades halted`, 'error');
+    showNotification(`${portfolioType.toUpperCase()} portfolio down ${(ddFromPeak * 100).toFixed(1)}% from peak — new trades halted. Use override button to resume.`, 'error');
     return;
   }
 
@@ -5998,6 +5999,27 @@ function resetDualPortfolio(portfolioType) {
 
   debugLog(`💰 ${portfolioType.toUpperCase()} portfolio reset to $5,000`);
 }
+
+// Override drawdown kill switch for 24 hours (both portfolios)
+async function overrideDrawdownKill() {
+  const confirmMsg = 'Are you sure? This will allow new trades for 24 hours even though drawdown exceeds -30%. The system will resume normal kill switch behavior after 24h.';
+  if (!confirm(confirmMsg)) return;
+
+  const overrideUntil = Date.now() + 24 * 60 * 60 * 1000; // 24h from now
+  dualPortfolioState.silver._drawdownOverride = overrideUntil;
+  dualPortfolioState.gold._drawdownOverride = overrideUntil;
+
+  saveDualPortfolio();
+  syncDualPortfolioToBackend();
+
+  showNotification('Drawdown kill switch overridden for 24 hours. New trades will be allowed.', 'success');
+  debugLog('🔓 Drawdown kill switch manually overridden for 24 hours');
+
+  // Refresh health display
+  if (typeof renderSystemHealth === 'function') renderSystemHealth();
+}
+// Make it globally accessible for the button onclick
+window.overrideDrawdownKill = overrideDrawdownKill;
 
 // Sync dual portfolio to backend (Redis)
 async function syncDualPortfolioToBackend() {
@@ -7332,6 +7354,24 @@ function renderHealthDashboard(data) {
     }
     html += `<div class="health-row">${dot(!!p.lastTradeTime)}<span class="health-label">Last Trade</span><span class="health-value">${p.lastTradeSymbol || '--'} ${ago(p.lastTradeTime)}</span></div>`;
     html += `<div class="health-row">${dot(!!p.lastUpdated)}<span class="health-label">Portfolio Updated</span><span class="health-value">${ago(p.lastUpdated)}</span></div>`;
+
+    // Drawdown kill switch status
+    const silverPeak = dualPortfolioState.silver?.stats?.peakEquity || dualPortfolioState.silver?.startBalance || 5000;
+    const goldPeak = dualPortfolioState.gold?.stats?.peakEquity || dualPortfolioState.gold?.startBalance || 5000;
+    const silverDD = silverPeak > 0 ? ((silverPeak - (dualPortfolioState.silver?.balance || silverPeak)) / silverPeak * 100) : 0;
+    const goldDD = goldPeak > 0 ? ((goldPeak - (dualPortfolioState.gold?.balance || goldPeak)) / goldPeak * 100) : 0;
+    const silverKilled = silverDD >= 30 && !(dualPortfolioState.silver?._drawdownOverride > Date.now());
+    const goldKilled = goldDD >= 30 && !(dualPortfolioState.gold?._drawdownOverride > Date.now());
+    const silverOverride = dualPortfolioState.silver?._drawdownOverride > Date.now();
+    const goldOverride = dualPortfolioState.gold?._drawdownOverride > Date.now();
+
+    const ddColor = (dd) => dd >= 30 ? 'negative' : dd >= 20 ? 'warning' : '';
+    html += `<div class="health-row">${dot(!silverKilled)}<span class="health-label">Silver Drawdown</span><span class="health-value ${ddColor(silverDD)}">${silverDD.toFixed(1)}%${silverKilled ? ' HALTED' : ''}${silverOverride ? ' (override)' : ''}</span></div>`;
+    html += `<div class="health-row">${dot(!goldKilled)}<span class="health-label">Gold Drawdown</span><span class="health-value ${ddColor(goldDD)}">${goldDD.toFixed(1)}%${goldKilled ? ' HALTED' : ''}${goldOverride ? ' (override)' : ''}</span></div>`;
+
+    if (silverKilled || goldKilled) {
+      html += `<div class="health-row" style="margin-top:6px;"><button onclick="overrideDrawdownKill()" style="background:#ef5350;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;width:100%;">Override Drawdown Kill Switch (24h)</button></div>`;
+    }
   } else {
     html += `<div class="health-row">${dot(false)}<span class="health-label">Portfolio</span><span class="health-value">No data</span></div>`;
   }
@@ -9525,6 +9565,7 @@ function initEventListeners() {
       if (view === 'stats') renderStatsView();
       if (view === 'health') loadSystemHealth();
       if (view === 'ai-context') loadAiContext();
+      if (view === 'terminal') fetchServerLogs();
       // Resize chart when switching back
       if (view === 'chart') {
         setTimeout(() => {
@@ -10180,6 +10221,168 @@ function initSettingsModal() {
 }
 
 // ============================================
+// LIVE TERMINAL — Real-time system activity log
+// ============================================
+
+const _terminalLog = [];
+const MAX_TERMINAL_LINES = 500;
+let _terminalAutoScroll = true;
+
+function terminalWrite(message, type = 'info') {
+  const now = new Date();
+  const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+
+  const colorMap = {
+    info: '#8b949e',
+    success: '#3fb950',
+    warn: '#d29922',
+    error: '#f85149',
+    trade: '#a371f7',
+    scan: '#58a6ff',
+    system: '#79c0ff'
+  };
+  const color = colorMap[type] || colorMap.info;
+
+  const entry = { ts, message, type, color };
+  _terminalLog.push(entry);
+  if (_terminalLog.length > MAX_TERMINAL_LINES) _terminalLog.splice(0, _terminalLog.length - MAX_TERMINAL_LINES);
+
+  const el = document.getElementById('terminalOutput');
+  if (el) {
+    const line = document.createElement('div');
+    line.innerHTML = `<span style="color:#484f58">[${ts}]</span> <span style="color:${color}">${escapeHtml(message)}</span>`;
+    el.appendChild(line);
+    if (_terminalAutoScroll) el.scrollTop = el.scrollHeight;
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Hook into console.log to capture debug messages for terminal
+const _origConsoleLog = console.log;
+const _origConsoleError = console.error;
+const _origConsoleWarn = console.warn;
+
+console.log = function(...args) {
+  _origConsoleLog.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  if (msg.includes('TRADE') || msg.includes('trade')) terminalWrite(msg, 'trade');
+  else if (msg.includes('scan') || msg.includes('Scan') || msg.includes('AI')) terminalWrite(msg, 'scan');
+  else if (msg.includes('✅') || msg.includes('success')) terminalWrite(msg, 'success');
+  else terminalWrite(msg, 'info');
+};
+
+console.error = function(...args) {
+  _origConsoleError.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  terminalWrite(msg, 'error');
+};
+
+console.warn = function(...args) {
+  _origConsoleWarn.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  terminalWrite(msg, 'warn');
+};
+
+// Fetch server-side scan/monitor logs
+async function fetchServerLogs() {
+  terminalWrite('Fetching latest server activity...', 'system');
+  try {
+    // Fetch last scan result
+    const scanRes = await fetch('/api/scan');
+    if (scanRes.ok) {
+      const data = await scanRes.json();
+      if (data.success) {
+        terminalWrite(`Server scan completed: ${data.aiResponses || 0} AI responses, ${data.consensusSignals || 0} consensus, ${data.alertsSent || 0} alerts, ${data.tradesOpened || 0} trades opened`, 'scan');
+        if (data.evaluation) {
+          terminalWrite(`Pending signal evaluation: ${data.evaluation.wins || 0} wins, ${data.evaluation.losses || 0} losses, ${data.evaluation.expired || 0} expired`, 'info');
+        }
+        if (data.signals && data.signals.length > 0) {
+          for (const s of data.signals) {
+            terminalWrite(`Signal: ${s.direction} ${s.symbol} (${s.confidence}%) — ${s.aiSources.join(', ')}`, 'trade');
+          }
+        }
+        if (data.optimization) {
+          terminalWrite(`Optimizer: cycle #${data.optimization.cycle}, min conf=${data.optimization.minConfidence}%, ADX=${data.optimization.minADX}, ${data.optimization.paused ? 'PAUSED' : 'active'}`, 'system');
+        }
+      } else {
+        terminalWrite(`Server scan: ${data.message || 'no signals'}`, 'warn');
+      }
+    }
+  } catch (e) {
+    terminalWrite(`Failed to fetch server logs: ${e.message}`, 'error');
+  }
+
+  // Check monitor status
+  try {
+    const monRes = await fetch('/api/monitor-positions');
+    if (monRes.ok) {
+      const data = await monRes.json();
+      terminalWrite(`Position monitor: ${data.tradesChecked || 0} positions checked, ${data.tradesClosed || 0} closed this cycle`, 'success');
+      if (data.actions && data.actions.length > 0) {
+        for (const action of data.actions.slice(-5)) {
+          terminalWrite(`  ${action}`, 'trade');
+        }
+      }
+    }
+  } catch (e) {
+    terminalWrite(`Monitor check failed: ${e.message}`, 'error');
+  }
+
+  // Check API health
+  try {
+    const apis = ['Binance', 'Bybit'];
+    for (const api of apis) {
+      const url = api === 'Binance' ? 'https://api.binance.com/api/v3/ping' : 'https://api.bybit.com/v5/market/time';
+      try {
+        const start = Date.now();
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        const latency = Date.now() - start;
+        terminalWrite(`${api} API: ${res.ok ? 'OK' : 'ERROR'} (${latency}ms)`, res.ok ? 'success' : 'error');
+      } catch {
+        terminalWrite(`${api} API: UNREACHABLE`, 'error');
+      }
+    }
+  } catch (e) {
+    terminalWrite(`API health check failed: ${e.message}`, 'error');
+  }
+}
+
+// Initialize terminal controls
+function initTerminal() {
+  const autoScrollBtn = document.getElementById('terminalAutoScroll');
+  if (autoScrollBtn) {
+    autoScrollBtn.addEventListener('click', () => {
+      _terminalAutoScroll = !_terminalAutoScroll;
+      autoScrollBtn.textContent = `Auto-scroll: ${_terminalAutoScroll ? 'ON' : 'OFF'}`;
+    });
+  }
+
+  const clearBtn = document.getElementById('clearTerminal');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      const el = document.getElementById('terminalOutput');
+      if (el) el.innerHTML = '';
+      _terminalLog.length = 0;
+      terminalWrite('Terminal cleared', 'system');
+    });
+  }
+
+  const refreshBtn = document.getElementById('refreshTerminal');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', fetchServerLogs);
+  }
+
+  terminalWrite('Sentient Trader terminal initialized', 'system');
+  terminalWrite(`Tracking ${30} coins across 3 AI models (Claude, Gemini, Grok)`, 'system');
+  terminalWrite('Drawdown kill switch: -30% from peak', 'system');
+  terminalWrite('Anti-martingale: +30% per win streak, 2.0x cap', 'system');
+  terminalWrite('Kelly Criterion: activates after 15 closed trades', 'system');
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
@@ -10304,6 +10507,9 @@ async function init() {
   // Initialize countdown
   state.nextAiScanTime = Date.now() + 5000; // First scan in 5 seconds
   updateAiScanCountdown();
+
+  // Initialize live terminal
+  initTerminal();
 
   debugLog('✅ Sentient Trader initialized successfully');
 }
