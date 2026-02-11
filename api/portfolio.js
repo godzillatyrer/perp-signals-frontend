@@ -2,6 +2,7 @@
 // Supports two portfolios: 2/3 consensus and 3/3 consensus strategies
 
 import { Redis } from '@upstash/redis';
+import { PORTFOLIO_CONFIG } from '../lib/trading-config.js';
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
 
@@ -52,22 +53,8 @@ function getDefaultData() {
     silver: getDefaultPortfolio('silver'), // 2/3 consensus
     gold: getDefaultPortfolio('gold'),     // 3/3 consensus
     config: {
-      // Capital-heavy config: lower leverage, higher capital per trade
-      // Matches client-side dualPortfolioState.config
-      silverConfig: {
-        leverage: 5,
-        riskPercent: 18,     // 18% risk per trade
-        maxOpenTrades: 5,
-        tpMultiplier: 2.5,
-        slPercent: 2
-      },
-      goldConfig: {
-        leverage: 7,
-        riskPercent: 22,     // 22% risk per trade
-        maxOpenTrades: 4,
-        tpMultiplier: 3,
-        slPercent: 1.5
-      }
+      silverConfig: { ...PORTFOLIO_CONFIG.silver },
+      goldConfig: { ...PORTFOLIO_CONFIG.gold }
     },
     lastUpdated: Date.now()
   };
