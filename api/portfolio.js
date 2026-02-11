@@ -52,20 +52,21 @@ function getDefaultData() {
     silver: getDefaultPortfolio('silver'), // 2/3 consensus
     gold: getDefaultPortfolio('gold'),     // 3/3 consensus
     config: {
-      // Aggressive settings for 200% monthly growth target
+      // Capital-heavy config: lower leverage, higher capital per trade
+      // Matches client-side dualPortfolioState.config
       silverConfig: {
-        leverage: 10,
-        riskPercent: 5,      // 5% risk per trade
-        maxOpenTrades: 8,
-        tpMultiplier: 2.5,   // TP is 2.5x the SL distance
-        slPercent: 2         // 2% stop loss
+        leverage: 5,
+        riskPercent: 18,     // 18% risk per trade
+        maxOpenTrades: 5,
+        tpMultiplier: 2.5,
+        slPercent: 2
       },
       goldConfig: {
-        leverage: 15,        // Higher leverage for gold (higher confidence)
-        riskPercent: 8,      // 8% risk per trade
-        maxOpenTrades: 5,
-        tpMultiplier: 3,     // TP is 3x the SL distance
-        slPercent: 1.5       // Tighter SL for gold trades
+        leverage: 7,
+        riskPercent: 22,     // 22% risk per trade
+        maxOpenTrades: 4,
+        tpMultiplier: 3,
+        slPercent: 1.5
       }
     },
     lastUpdated: Date.now()
@@ -232,7 +233,17 @@ export default async function handler(request, response) {
 
     // POST - Replace all portfolio data (full sync from client)
     if (request.method === 'POST') {
-      const { data } = request.body;
+      const { action, data } = request.body || {};
+
+      // Save sentiment data to Redis for server-side scan.js to use
+      if (action === 'save_sentiment' && data) {
+        try {
+          await r.set('social_sentiment_data', JSON.stringify(data), { ex: 3600 }); // 1h TTL
+          return response.status(200).json({ success: true });
+        } catch (e) {
+          return response.status(200).json({ success: false, error: e.message });
+        }
+      }
 
       if (!data) {
         return response.status(400).json({

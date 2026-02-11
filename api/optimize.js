@@ -428,13 +428,44 @@ async function runOptimization(redis) {
   // Save to Redis
   await redis.set(OPTIMIZATION_KEY, JSON.stringify(config));
 
-  // Also save to optimization log (append, keep last 20 entries)
+  // Also save to optimization log with A/B tracking (append, keep last 30 entries)
   try {
     let log = [];
     const savedLog = await redis.get(OPTIMIZATION_LOG_KEY);
     if (savedLog) {
       log = typeof savedLog === 'string' ? JSON.parse(savedLog) : savedLog;
     }
+
+    // A/B tracking: compare performance BEFORE vs AFTER last optimization
+    // Find trades opened AFTER the previous optimization cycle
+    const lastOptTime = prevConfig.lastOptimized || 0;
+    const tradesAfterLastOpt = allTrades.filter(t => {
+      const openTime = t.timestamp || t.openTimestamp || 0;
+      return openTime > lastOptTime;
+    });
+    const tradesBeforeLastOpt = allTrades.filter(t => {
+      const openTime = t.timestamp || t.openTimestamp || 0;
+      return openTime <= lastOptTime;
+    });
+
+    const beforeWR = tradesBeforeLastOpt.length > 0
+      ? Math.round(tradesBeforeLastOpt.filter(t => (t.pnl || 0) > 0).length / tradesBeforeLastOpt.length * 100) : null;
+    const afterWR = tradesAfterLastOpt.length > 0
+      ? Math.round(tradesAfterLastOpt.filter(t => (t.pnl || 0) > 0).length / tradesAfterLastOpt.length * 100) : null;
+    const beforePnl = tradesBeforeLastOpt.reduce((s, t) => s + (t.pnl || 0), 0);
+    const afterPnl = tradesAfterLastOpt.reduce((s, t) => s + (t.pnl || 0), 0);
+
+    const abReport = {
+      beforeOpt: { trades: tradesBeforeLastOpt.length, winRate: beforeWR, pnl: Math.round(beforePnl * 100) / 100 },
+      afterOpt: { trades: tradesAfterLastOpt.length, winRate: afterWR, pnl: Math.round(afterPnl * 100) / 100 },
+      improved: afterWR !== null && beforeWR !== null ? afterWR > beforeWR : null
+    };
+
+    if (abReport.afterOpt.trades >= 3 && abReport.beforeOpt.trades >= 3) {
+      const direction = abReport.improved ? 'IMPROVED' : 'DECLINED';
+      changes.push(`A/B: Pre-opt ${abReport.beforeOpt.winRate}% WR ($${abReport.beforeOpt.pnl}) → Post-opt ${abReport.afterOpt.winRate}% WR ($${abReport.afterOpt.pnl}) = ${direction}`);
+    }
+
     log.unshift({
       timestamp: Date.now(),
       cycle: config.cycleCount,
@@ -442,9 +473,17 @@ async function runOptimization(redis) {
       winRate: Math.round(overallWR * 100),
       pnl: Math.round(totalPnl * 100) / 100,
       changes: changes,
-      aiWeights: { ...config.aiWeights }
+      aiWeights: { ...config.aiWeights },
+      ab: abReport,
+      params: {
+        confidence: config.alertConfidence,
+        minRR: config.minRiskReward,
+        minADX: config.minADX,
+        blockedRegimes: config.blockedRegimes,
+        blacklist: config.symbolBlacklist
+      }
     });
-    log = log.slice(0, 20);
+    log = log.slice(0, 30);
     await redis.set(OPTIMIZATION_LOG_KEY, JSON.stringify(log));
   } catch (e) {
     console.error('Failed to save optimization log:', e.message);

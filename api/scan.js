@@ -15,18 +15,30 @@ const CONFIG = {
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
   MIN_TP_PERCENT_MID_CAP: 7,
-  // Top coins to analyze
-  TOP_COINS: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'],
+  // Top coins to analyze — top 30 by volume for maximum opportunity
+  TOP_COINS: [
+    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
+    'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT',
+    'SUIUSDT', 'PEPEUSDT', 'WIFUSDT', 'NEARUSDT', 'ARBUSDT',
+    'OPUSDT', 'FETUSDT', 'INJUSDT', 'APTUSDT', 'ATOMUSDT',
+    'FILUSDT', 'ICPUSDT', 'RUNEUSDT', 'LTCUSDT', 'UNIUSDT',
+    'AAVEUSDT', 'RENDERUSDT', 'TRXUSDT', 'TIAUSDT', 'MATICUSDT'
+  ],
   // Signal cooldown in hours - 12 hours per coin (same coin cannot signal again)
   SIGNAL_COOLDOWN_HOURS: 12,
   // Price move % that overrides cooldown - ONLY 10%+ can bypass 12h cooldown
   PRICE_MOVE_OVERRIDE_PERCENT: 10,
   // Correlation groups (don't send multiple signals from same group)
   CORRELATION_GROUPS: {
-    'LAYER1': ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'AVAXUSDT', 'DOTUSDT'],
-    'MEME': ['DOGEUSDT'],
-    'DEFI': ['LINKUSDT', 'ADAUSDT'],
-    'EXCHANGE': ['BNBUSDT']
+    'BTC_ECOSYSTEM': ['BTCUSDT'],
+    'ETH_ECOSYSTEM': ['ETHUSDT', 'OPUSDT', 'ARBUSDT', 'MATICUSDT'],
+    'ALT_L1': ['SOLUSDT', 'AVAXUSDT', 'DOTUSDT', 'NEARUSDT', 'APTUSDT', 'SUIUSDT', 'ATOMUSDT', 'ICPUSDT'],
+    'MEME': ['DOGEUSDT', 'PEPEUSDT', 'WIFUSDT'],
+    'DEFI': ['LINKUSDT', 'ADAUSDT', 'UNIUSDT', 'AAVEUSDT', 'INJUSDT', 'RUNEUSDT'],
+    'AI_TOKENS': ['FETUSDT', 'RENDERUSDT'],
+    'STORAGE': ['FILUSDT', 'TIAUSDT'],
+    'EXCHANGE': ['BNBUSDT'],
+    'LEGACY': ['LTCUSDT', 'TRXUSDT', 'XRPUSDT']
   },
   // Max signals per correlation group per scan
   MAX_SIGNALS_PER_GROUP: 1,
@@ -881,18 +893,28 @@ function calculateFibonacciLevels(candles, lookback = 50) {
   };
 }
 
-// VWAP (Volume Weighted Average Price)
+// VWAP (Volume Weighted Average Price) — resets daily for crypto (00:00 UTC)
 function calculateVWAP(candles) {
   if (!candles || candles.length < 10) return { vwap: 0, deviation: 0, pricePosition: 'NEUTRAL' };
+
+  // Find the start of the current UTC day and use only today's candles
+  const now = new Date();
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
+  const todayCandles = candles.filter(c => c.time >= todayStart);
+
+  // Fall back to last 24 candles if no today data (e.g. daily timeframe)
+  const vwapCandles = todayCandles.length >= 3 ? todayCandles : candles.slice(-24);
 
   let cumulativeTPV = 0;
   let cumulativeVolume = 0;
 
-  for (const candle of candles) {
+  for (const candle of vwapCandles) {
     const typicalPrice = (candle.high + candle.low + candle.close) / 3;
     cumulativeTPV += typicalPrice * candle.volume;
     cumulativeVolume += candle.volume;
   }
+
+  if (cumulativeVolume === 0) return { vwap: 0, deviation: 0, pricePosition: 'NEUTRAL' };
 
   const vwap = cumulativeTPV / cumulativeVolume;
   const currentPrice = candles[candles.length - 1].close;
@@ -1316,16 +1338,17 @@ async function fetchMarketData() {
     try {
       console.log('Trying CoinGecko API...');
       const cgIds = {
-        'BTCUSDT': 'bitcoin',
-        'ETHUSDT': 'ethereum',
-        'SOLUSDT': 'solana',
-        'BNBUSDT': 'binancecoin',
-        'XRPUSDT': 'ripple',
-        'DOGEUSDT': 'dogecoin',
-        'ADAUSDT': 'cardano',
-        'AVAXUSDT': 'avalanche-2',
-        'LINKUSDT': 'chainlink',
-        'DOTUSDT': 'polkadot'
+        'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'SOLUSDT': 'solana',
+        'BNBUSDT': 'binancecoin', 'XRPUSDT': 'ripple', 'DOGEUSDT': 'dogecoin',
+        'ADAUSDT': 'cardano', 'AVAXUSDT': 'avalanche-2', 'LINKUSDT': 'chainlink',
+        'DOTUSDT': 'polkadot', 'SUIUSDT': 'sui', 'PEPEUSDT': 'pepe',
+        'WIFUSDT': 'dogwifcoin', 'NEARUSDT': 'near', 'ARBUSDT': 'arbitrum',
+        'OPUSDT': 'optimism', 'FETUSDT': 'artificial-superintelligence-alliance',
+        'INJUSDT': 'injective-protocol', 'APTUSDT': 'aptos', 'ATOMUSDT': 'cosmos',
+        'FILUSDT': 'filecoin', 'ICPUSDT': 'internet-computer',
+        'RUNEUSDT': 'thorchain', 'LTCUSDT': 'litecoin', 'UNIUSDT': 'uniswap',
+        'AAVEUSDT': 'aave', 'RENDERUSDT': 'render-token', 'TRXUSDT': 'tron',
+        'TIAUSDT': 'celestia', 'MATICUSDT': 'matic-network'
       };
 
       const ids = Object.values(cgIds).join(',');
@@ -1430,6 +1453,7 @@ async function fetchMarketData() {
   data.btcDominance = await fetchBtcDominance();
   _btcDominance = data.btcDominance;
   _btcPrice24hChange = data.prices?.BTCUSDT?.change24h || 0;
+  _fundingRates = Object.keys(data.fundingRates).length > 0 ? data.fundingRates : null;
 
   return data;
 }
@@ -1513,6 +1537,29 @@ DERIVATIVES INTELLIGENCE:
     }
   } catch (e) {
     console.log('Could not fetch Discord calls context:', e.message);
+  }
+
+  // Add social sentiment data from Redis (collected by frontend from LunarCrush)
+  try {
+    const r = getRedis();
+    if (r) {
+      const sentimentData = await r.get('social_sentiment_data');
+      if (sentimentData) {
+        const parsed = typeof sentimentData === 'string' ? JSON.parse(sentimentData) : sentimentData;
+        if (parsed && Object.keys(parsed).length > 0) {
+          prompt += '\n=== SOCIAL SENTIMENT DATA ===\n';
+          prompt += 'Use sentiment as a CONTRARIAN indicator — extreme bullishness at resistance = potential reversal down, extreme bearishness at support = potential reversal up.\n';
+          for (const [symbol, data] of Object.entries(parsed)) {
+            if (data.sentiment !== undefined) {
+              prompt += `${symbol}: Sentiment=${data.sentiment}/5 Social Volume=${data.socialVolume || 'N/A'} ${data.trend || ''}\n`;
+            }
+          }
+          prompt += '\n';
+        }
+      }
+    }
+  } catch (e) {
+    console.log('Could not load sentiment data for prompt:', e.message);
   }
 
   prompt += 'MARKET DATA WITH TECHNICAL INDICATORS:\n';
@@ -1784,9 +1831,10 @@ function validateSignalLevels(signal) {
 function validateSignalWithIndicators(signal, indicators) {
   if (!validateSignalLevels(signal)) return false;
   if (!indicators) return true;
+  // ATR too low = not enough volatility for meaningful moves
   if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) return false;
-  if (indicators.volumeTrend === 'DECREASING') return false;
-  if (['RANGING', 'CHOPPY', 'SIDEWAYS', 'VOLATILE'].includes(indicators.marketRegime)) return false;
+  // Volume and regime are now SOFT filters — handled in main handler with confidence penalties
+  // instead of hard-blocking here. This lets consensus signals through even in suboptimal conditions.
   return true;
 }
 
@@ -2020,17 +2068,31 @@ function createTradeKeyboard(signal) {
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
 
-// Module-level cache for BTC dominance (set during fetchMarketData, read in openTradeForSignal)
+// Module-level cache for BTC dominance and funding rates (set during fetchMarketData, read in openTradeForSignal)
 let _btcDominance = null;
 let _btcPrice24hChange = null;
+let _fundingRates = null;
 
+// Matches client-side dualPortfolioState.config exactly
 const TRADE_CONFIG = {
-  silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8 },
-  gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5 }
+  silver: { leverage: 5, riskPercent: 18, maxOpenTrades: 5 },
+  gold: { leverage: 7, riskPercent: 22, maxOpenTrades: 4 }
 };
 
+// Confidence-based position scaling (same as client-side)
+const CONFIDENCE_SCALING = {
+  ultra: { minConfidence: 92, multiplier: 1.3 },
+  high:  { minConfidence: 85, multiplier: 1.1 },
+  base:  { minConfidence: 75, multiplier: 1.0 },
+  low:   { minConfidence: 0,  multiplier: 0.7 }
+};
+
+// Hard cap: no single trade can risk more than 40% of portfolio regardless of multipliers
+const MAX_RISK_CAP_PERCENT = 40;
+
 // === ANTI-MARTINGALE: Progressive risk on winning streaks ===
-// +50% per consecutive win, capped at 3x base risk. Resets on any loss.
+// +30% per consecutive win, capped at 2x base risk. Resets on any loss.
+// Matches client-side calculation for consistent position sizing.
 function calculateWinStreak(trades) {
   const closed = (trades || [])
     .filter(t => t.status === 'closed' && t.pnl !== undefined)
@@ -2045,8 +2107,8 @@ function calculateWinStreak(trades) {
 }
 
 function getStreakMultiplier(streak) {
-  // 0 wins = 1.0x, 1 win = 1.5x, 2 wins = 2.0x, 3 wins = 2.5x, 4+ = 3.0x cap
-  return Math.min(1 + streak * 0.5, 3.0);
+  // 0 wins = 1.0x, 1 win = 1.3x, 2 wins = 1.6x, 3 wins = 1.9x, 4+ = 2.0x cap
+  return Math.min(1 + streak * 0.3, 2.0);
 }
 
 function getDefaultPortfolio(type) {
@@ -2189,6 +2251,45 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'weekly_loss_limit' };
     }
 
+    // === MAX DRAWDOWN FROM PEAK KILL SWITCH ===
+    // If portfolio is down more than 30% from its peak equity, stop all new trades
+    const MAX_DRAWDOWN_KILL = 0.30; // 30% from peak
+    const peakEquity = portfolio.stats?.peakEquity || portfolio.startBalance || 5000;
+    const currentEquity = portfolio.balance;
+    const drawdownFromPeak = peakEquity > 0 ? (peakEquity - currentEquity) / peakEquity : 0;
+
+    // Check for manual override flag (set from UI, expires after 24h)
+    const manualOverride = portfolio._drawdownOverride && portfolio._drawdownOverride > Date.now();
+
+    if (drawdownFromPeak >= MAX_DRAWDOWN_KILL && !manualOverride) {
+      console.log(`🚨 DRAWDOWN KILL SWITCH: ${portfolioType.toUpperCase()} down ${(drawdownFromPeak * 100).toFixed(1)}% from peak ($${peakEquity.toFixed(0)} → $${currentEquity.toFixed(0)})`);
+      if (!portfolio._drawdownKillAlerted) {
+        portfolio._drawdownKillAlerted = true;
+        portfolioData.lastUpdated = Date.now();
+        await r.set(PORTFOLIO_KEY, JSON.stringify(portfolioData));
+        await sendTelegramMessage(`🚨 <b>DRAWDOWN KILL SWITCH ACTIVATED</b>\n\n${portfolioType.toUpperCase()} portfolio: -${(drawdownFromPeak * 100).toFixed(1)}% from peak\nPeak: $${peakEquity.toFixed(2)} → Current: $${currentEquity.toFixed(2)}\n\n⛔ ALL new trades halted until manual override or equity recovers above -25% from peak.`);
+      }
+      return { opened: false, reason: 'max_drawdown_kill' };
+    }
+    // Reset kill alert if recovered above -25% or manual override active
+    if ((drawdownFromPeak < 0.25 || manualOverride) && portfolio._drawdownKillAlerted) {
+      portfolio._drawdownKillAlerted = false;
+    }
+
+    // === EXTREME FUNDING RATE FILTER ===
+    // Block trades when funding is extreme (crowded positioning)
+    if (_fundingRates && _fundingRates[signal.symbol] !== undefined) {
+      const funding = _fundingRates[signal.symbol];
+      if (signal.direction === 'LONG' && funding > 0.05) {
+        console.log(`💰 FUNDING FILTER: ${signal.symbol} funding ${funding.toFixed(4)}% too high for LONG — crowded longs`);
+        return { opened: false, reason: 'extreme_funding' };
+      }
+      if (signal.direction === 'SHORT' && funding < -0.05) {
+        console.log(`💰 FUNDING FILTER: ${signal.symbol} funding ${funding.toFixed(4)}% too negative for SHORT — crowded shorts`);
+        return { opened: false, reason: 'extreme_funding' };
+      }
+    }
+
     // === BTC DOMINANCE MACRO FILTER ===
     // If BTC dominance rising + BTC price rising → alts get drained, block alt LONGs
     // If BTC dominance falling + BTC stable → alt season, allow alt trades
@@ -2216,13 +2317,61 @@ async function openTradeForSignal(signal) {
     // === ANTI-MARTINGALE: Increase risk on winning streaks ===
     const winStreak = calculateWinStreak(portfolio.trades);
     const streakMultiplier = getStreakMultiplier(winStreak);
-    const adjustedRisk = riskPercent * streakMultiplier;
 
-    if (streakMultiplier > 1) {
-      console.log(`🔥 ${portfolioType.toUpperCase()}: Win streak ${winStreak} → ${streakMultiplier}x risk (${riskPercent}% → ${adjustedRisk.toFixed(1)}%)`);
+    // === KELLY CRITERION POSITION SIZING ===
+    // Uses actual win rate and avg win/loss to calculate optimal risk
+    // Falls back to base risk if not enough data
+    let kellyRisk = riskPercent;
+    const closedTrades2 = (portfolio.trades || []).filter(t => t.status === 'closed' && t.pnl !== undefined);
+    if (closedTrades2.length >= 15) {
+      const wins = closedTrades2.filter(t => t.pnl > 0);
+      const losses = closedTrades2.filter(t => t.pnl <= 0);
+      const winRate = wins.length / closedTrades2.length;
+      const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+      const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 1;
+      const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : 1;
+
+      // Kelly: f* = (bp - q) / b where b = win/loss ratio, p = win rate, q = loss rate
+      const kellyFull = (winLossRatio * winRate - (1 - winRate)) / Math.max(winLossRatio, 0.01);
+      // Use HALF Kelly for safety (standard practice)
+      const kellyHalf = Math.max(0, kellyFull * 0.5) * 100; // convert to percent
+      // Clamp between 1% and base risk * 2
+      kellyRisk = Math.max(1, Math.min(kellyHalf, riskPercent * 2));
+      console.log(`📐 KELLY: WR=${(winRate * 100).toFixed(0)}% W/L=${winLossRatio.toFixed(2)} → Full=${(kellyFull * 100).toFixed(1)}% Half=${kellyHalf.toFixed(1)}% → Using ${kellyRisk.toFixed(1)}%`);
     }
 
-    // Calculate position size with streak-adjusted risk
+    // === REGIME-SPECIFIC RISK ADJUSTMENT ===
+    // Reduce risk in choppy/volatile regimes, increase in strong trends
+    let regimeMultiplier = 1.0;
+    if (signal.marketRegime === 'TRENDING_UP' || signal.marketRegime === 'TRENDING_DOWN') {
+      regimeMultiplier = 1.1; // 10% more in trending
+    } else if (signal.marketRegime === 'VOLATILE') {
+      regimeMultiplier = 0.7; // 30% less in volatile
+    } else if (signal.marketRegime === 'RANGING' || signal.marketRegime === 'CHOPPY') {
+      regimeMultiplier = 0.6; // 40% less in choppy
+    }
+
+    // === CONFIDENCE-BASED POSITION SCALING (matches client) ===
+    const confidence = signal.confidence || 80;
+    let confidenceMultiplier = CONFIDENCE_SCALING.low.multiplier;
+    if (confidence >= CONFIDENCE_SCALING.ultra.minConfidence) confidenceMultiplier = CONFIDENCE_SCALING.ultra.multiplier;
+    else if (confidence >= CONFIDENCE_SCALING.high.minConfidence) confidenceMultiplier = CONFIDENCE_SCALING.high.multiplier;
+    else if (confidence >= CONFIDENCE_SCALING.base.minConfidence) confidenceMultiplier = CONFIDENCE_SCALING.base.multiplier;
+
+    let adjustedRisk = kellyRisk * streakMultiplier * regimeMultiplier * confidenceMultiplier;
+
+    // Hard cap: never risk more than MAX_RISK_CAP_PERCENT on a single trade
+    if (adjustedRisk > MAX_RISK_CAP_PERCENT) {
+      console.log(`🛡️ RISK CAP: ${adjustedRisk.toFixed(1)}% exceeds ${MAX_RISK_CAP_PERCENT}% cap → clamped`);
+      adjustedRisk = MAX_RISK_CAP_PERCENT;
+    }
+
+    const confLabel = confidence >= 92 ? 'ULTRA' : confidence >= 85 ? 'HIGH' : confidence >= 75 ? 'BASE' : 'LOW';
+    if (streakMultiplier > 1 || regimeMultiplier !== 1.0 || confidenceMultiplier !== 1.0) {
+      console.log(`🔥 ${portfolioType.toUpperCase()}: Risk ${kellyRisk.toFixed(1)}% × streak ${streakMultiplier}x × regime ${regimeMultiplier}x × ${confLabel} conf ${confidenceMultiplier}x = ${adjustedRisk.toFixed(1)}%`);
+    }
+
+    // Calculate position size with adjusted risk
     const riskAmount = portfolio.balance * (adjustedRisk / 100);
     const positionSize = riskAmount * leverage;
 
@@ -2423,16 +2572,30 @@ export default async function handler(request, response) {
     const evalResults = await evaluateAndUpdateAIWinLoss(marketData.prices);
     console.log(`   Evaluation: ${evalResults.wins || 0} wins, ${evalResults.losses || 0} losses, ${evalResults.expired || 0} expired`);
 
-    // Fetch technical indicators for all coins
-    console.log('📈 Calculating technical indicators...');
+    // Fetch technical indicators for all coins in parallel batches
+    console.log(`📈 Calculating technical indicators for ${CONFIG.TOP_COINS.length} coins...`);
     const indicatorData = {};
-    for (const symbol of CONFIG.TOP_COINS) {
-      const indicators = await calculateIndicators(symbol);
-      if (indicators) {
-        indicatorData[symbol] = indicators;
-        console.log(`  ${symbol}: ADX=${indicators.adx?.adx} Supertrend=${indicators.supertrend?.direction} RSI=${indicators.rsi}`);
+    const BATCH_SIZE = 5; // Process 5 coins at a time to avoid rate limits
+    for (let i = 0; i < CONFIG.TOP_COINS.length; i += BATCH_SIZE) {
+      const batch = CONFIG.TOP_COINS.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async symbol => {
+          try {
+            return { symbol, indicators: await calculateIndicators(symbol) };
+          } catch (e) {
+            console.log(`⚠️ Indicators failed for ${symbol}: ${e.message}`);
+            return { symbol, indicators: null };
+          }
+        })
+      );
+      for (const { symbol, indicators } of results) {
+        if (indicators) {
+          indicatorData[symbol] = indicators;
+          console.log(`  ${symbol}: ADX=${indicators.adx?.adx} Supertrend=${indicators.supertrend?.direction} RSI=${indicators.rsi}`);
+        }
       }
     }
+    console.log(`📈 Indicators calculated for ${Object.keys(indicatorData).length}/${CONFIG.TOP_COINS.length} coins`);
 
     // Build analysis prompt with indicator data
     const prompt = await buildAnalysisPrompt(marketData, indicatorData);
@@ -2469,7 +2632,7 @@ export default async function handler(request, response) {
 
       if (signal.symbol === 'BTCUSDT' || signal.symbol === 'ETHUSDT') {
         minTP = CONFIG.MIN_TP_PERCENT_BTC_ETH;
-      } else if (['BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT'].includes(signal.symbol)) {
+      } else if (['BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'LINKUSDT', 'LTCUSDT', 'TRXUSDT', 'ATOMUSDT', 'NEARUSDT', 'APTUSDT', 'ICPUSDT', 'UNIUSDT'].includes(signal.symbol)) {
         minTP = CONFIG.MIN_TP_PERCENT_LARGE_CAP;
       }
 
@@ -2529,21 +2692,58 @@ export default async function handler(request, response) {
     });
     console.log(`🔄 After Supertrend filter: ${alertSignals.length} signals`);
 
-    // Filter by market regime (uses optimized blocked list)
+    // Apply confidence penalties for suboptimal conditions (soft filters)
+    // instead of hard-blocking — lets signals through but reduces confidence
+    alertSignals = alertSignals.map(signal => {
+      const indicators = indicatorData[signal.symbol];
+      if (!indicators) return signal;
+
+      let penalty = 0;
+      const warnings = [];
+
+      // Volume penalty: decreasing volume reduces confidence
+      if (indicators.volumeTrend === 'DECREASING') {
+        penalty += 5;
+        warnings.push('low volume');
+      }
+
+      // Low ATR penalty
+      if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) {
+        penalty += 3;
+        warnings.push(`low ATR ${indicators.atrPercent.toFixed(2)}%`);
+      }
+
+      // Regime penalty
+      if (indicators.marketRegime === 'CHOPPY') {
+        penalty += 8;
+        warnings.push('choppy regime');
+      } else if (indicators.marketRegime === 'RANGING') {
+        penalty += 5;
+        warnings.push('ranging regime');
+      } else if (indicators.marketRegime === 'VOLATILE') {
+        penalty += 3;
+        warnings.push('volatile regime');
+      }
+
+      if (penalty > 0) {
+        const original = signal.confidence;
+        signal.confidence = Math.max(50, signal.confidence - penalty);
+        console.log(`⚠️ ${signal.symbol}: Confidence ${original} → ${signal.confidence} (−${penalty}: ${warnings.join(', ')})`);
+      }
+
+      return signal;
+    });
+
+    // Filter by blocked regimes (only hard-block optimizer-identified bad regimes)
     const blockedRegimes = optConfig?.blockedRegimes || ['CHOPPY'];
     alertSignals = alertSignals.filter(signal => {
       const indicators = indicatorData[signal.symbol];
       if (!indicators) return true;
+      // Gold consensus overrides regime blocks
+      if (signal.isGoldConsensus) return true;
       if (blockedRegimes.includes(indicators.marketRegime)) {
-        console.log(`⛔ ${signal.symbol}: Market regime ${indicators.marketRegime} - BLOCKED`);
+        console.log(`⛔ ${signal.symbol}: Market regime ${indicators.marketRegime} - Silver BLOCKED`);
         return false;
-      }
-      // Log soft warnings for volume/ATR but don't block
-      if (indicators.atrPercent !== undefined && indicators.atrPercent < CONFIG.MIN_ATR_PERCENT) {
-        console.log(`⚠️ ${signal.symbol}: Low ATR ${indicators.atrPercent.toFixed(2)}% (soft warning)`);
-      }
-      if (indicators.volumeTrend === 'DECREASING') {
-        console.log(`⚠️ ${signal.symbol}: Decreasing volume (soft warning)`);
       }
       return true;
     });
@@ -2568,15 +2768,27 @@ export default async function handler(request, response) {
     alertSignals = alertSignals.map(signal => adjustTPSLForVolatility(signal, marketData));
 
     // Re-validate risk/reward after volatility adjustment (uses optimized thresholds)
+    // Regime-specific R:R — trending markets can use lower R:R (higher win rate),
+    // ranging markets need higher R:R to compensate for lower win rate
     const optMinRR = opt('minRiskReward', CONFIG.MIN_RISK_REWARD);
     const optMinRRGold = opt('minRiskRewardGold', 1.5);
     alertSignals = alertSignals.filter(signal => {
       const risk = Math.abs(signal.entry - signal.stopLoss);
       const reward = Math.abs(signal.takeProfit - signal.entry);
       const rr = reward / Math.max(risk, 1e-9);
-      const minRR = signal.isGoldConsensus ? optMinRRGold : optMinRR;
+
+      // Regime-specific R:R thresholds
+      const indicators = indicatorData[signal.symbol];
+      const regime = indicators?.marketRegime || 'UNKNOWN';
+      let minRR = signal.isGoldConsensus ? optMinRRGold : optMinRR;
+      if (regime === 'TRENDING_UP' || regime === 'TRENDING_DOWN') {
+        minRR = Math.max(minRR * 0.85, 1.2); // Lower R:R OK in strong trends
+      } else if (regime === 'RANGING' || regime === 'CHOPPY') {
+        minRR = minRR * 1.25; // Need higher R:R in choppy markets
+      }
+
       if (rr < minRR) {
-        console.log(`⛔ ${signal.symbol}: R/R ${rr.toFixed(2)} < ${minRR} after volatility adjust - BLOCKED`);
+        console.log(`⛔ ${signal.symbol}: R/R ${rr.toFixed(2)} < ${minRR.toFixed(2)} (${regime}) after volatility adjust - BLOCKED`);
         return false;
       }
       return true;
