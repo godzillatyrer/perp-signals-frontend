@@ -4,7 +4,7 @@
 import { Redis } from '@upstash/redis';
 
 const CONFIG = {
-  SIGNAL_COOLDOWN_HOURS: 12,
+  SIGNAL_COOLDOWN_HOURS: 4,
   PRICE_MOVE_OVERRIDE_PERCENT: 10  // Only 10%+ price move can override cooldown
 };
 
@@ -66,7 +66,7 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
 
   const hoursSinceLast = (Date.now() - lastSignal.timestamp) / (1000 * 60 * 60);
 
-  // Cooldown expired (12h passed)
+  // Cooldown expired (4h passed)
   if (hoursSinceLast >= CONFIG.SIGNAL_COOLDOWN_HOURS) {
     return {
       onCooldown: false,
