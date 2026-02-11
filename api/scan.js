@@ -19,6 +19,7 @@ import {
   KELLY_CRITERION,
   REGIME_RISK,
   ANTI_MARTINGALE,
+  TV_INDICATOR,
   getStreakMultiplier
 } from '../lib/trading-config.js';
 
@@ -2204,6 +2205,41 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'duplicate' };
     }
 
+    // === TRADINGVIEW INDICATOR CONFIRMATION FILTER ===
+    // When TV indicator provides TP/SL, override the AI-generated targets
+    if (TV_INDICATOR.enabled && TV_INDICATOR.mode === 'confirmation') {
+      try {
+        const tvKey = `${TV_INDICATOR.redisKeyPrefix || 'tv_signal:'}${signal.symbol}`;
+        const tvSignalRaw = await r.get(tvKey);
+        const tvSignal = tvSignalRaw ? (typeof tvSignalRaw === 'string' ? JSON.parse(tvSignalRaw) : tvSignalRaw) : null;
+
+        if (tvSignal && tvSignal.expiresAt > Date.now()) {
+          // TV signal exists and is not expired — check direction match
+          const tvDirection = tvSignal.signal === 'BUY' ? 'LONG' : 'SHORT';
+          if (tvDirection !== signal.direction) {
+            console.log(`📺 TV FILTER: ${signal.symbol} TV says ${tvSignal.signal} but AI says ${signal.direction} — BLOCKED`);
+            return { opened: false, reason: 'tv_direction_mismatch' };
+          }
+          // Override AI TP/SL with indicator's levels when provided
+          if (tvSignal.tp && tvSignal.sl) {
+            console.log(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} ✓ — using indicator TP: $${tvSignal.tp} SL: $${tvSignal.sl} (AI had TP: $${signal.takeProfit?.toFixed(2)} SL: $${signal.stopLoss?.toFixed(2)})`);
+            signal.takeProfit = tvSignal.tp;
+            signal.stopLoss = tvSignal.sl;
+            signal.tvOverride = true;
+          } else {
+            console.log(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} matches AI ${signal.direction} ✓ (keeping AI TP/SL)`);
+          }
+        } else if (TV_INDICATOR.strict) {
+          // Strict mode: no TV signal = no trade
+          console.log(`📺 TV FILTER (strict): No TV signal for ${signal.symbol} — BLOCKED`);
+          return { opened: false, reason: 'tv_no_signal' };
+        }
+        // Non-strict mode: no TV signal for this coin = allow trade through
+      } catch (tvErr) {
+        console.log(`⚠️ TV filter check failed: ${tvErr.message} — allowing trade through`);
+      }
+    }
+
     // Correlation protection — max 1 trade per correlation group
     const tradeGroup = getCorrelationGroup(signal.symbol);
     const groupConflict = openTrades.find(t => getCorrelationGroup(t.symbol) === tradeGroup);
@@ -2381,9 +2417,10 @@ async function openTradeForSignal(signal) {
     const positionSize = riskAmount * leverage;
 
     // Volatility-adjusted targets — widen TP/SL in high ATR, tighten in low
+    // Skip volatility adjustment if TV indicator provided TP/SL (indicator already accounts for it)
     let adjustedTP = signal.takeProfit;
     let adjustedSL = signal.stopLoss;
-    if (signal.atrPercent) {
+    if (signal.atrPercent && !signal.tvOverride) {
       const atr = signal.atrPercent;
       // Normal ATR ~1.5-3%. Scale TP/SL if outside that range
       if (atr > 3) {
@@ -2425,6 +2462,7 @@ async function openTradeForSignal(signal) {
       atrPercent: signal.atrPercent || null,
       streakAtOpen: winStreak,
       riskMultiplier: streakMultiplier,
+      tvOverride: signal.tvOverride || false,
       openedBy: 'backend-scan'
     };
 
