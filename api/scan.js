@@ -2073,10 +2073,22 @@ let _btcDominance = null;
 let _btcPrice24hChange = null;
 let _fundingRates = null;
 
+// Matches client-side dualPortfolioState.config exactly
 const TRADE_CONFIG = {
-  silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8 },
-  gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5 }
+  silver: { leverage: 5, riskPercent: 18, maxOpenTrades: 5 },
+  gold: { leverage: 7, riskPercent: 22, maxOpenTrades: 4 }
 };
+
+// Confidence-based position scaling (same as client-side)
+const CONFIDENCE_SCALING = {
+  ultra: { minConfidence: 92, multiplier: 1.3 },
+  high:  { minConfidence: 85, multiplier: 1.1 },
+  base:  { minConfidence: 75, multiplier: 1.0 },
+  low:   { minConfidence: 0,  multiplier: 0.7 }
+};
+
+// Hard cap: no single trade can risk more than 40% of portfolio regardless of multipliers
+const MAX_RISK_CAP_PERCENT = 40;
 
 // === ANTI-MARTINGALE: Progressive risk on winning streaks ===
 // +30% per consecutive win, capped at 2x base risk. Resets on any loss.
@@ -2339,10 +2351,24 @@ async function openTradeForSignal(signal) {
       regimeMultiplier = 0.6; // 40% less in choppy
     }
 
-    const adjustedRisk = kellyRisk * streakMultiplier * regimeMultiplier;
+    // === CONFIDENCE-BASED POSITION SCALING (matches client) ===
+    const confidence = signal.confidence || 80;
+    let confidenceMultiplier = CONFIDENCE_SCALING.low.multiplier;
+    if (confidence >= CONFIDENCE_SCALING.ultra.minConfidence) confidenceMultiplier = CONFIDENCE_SCALING.ultra.multiplier;
+    else if (confidence >= CONFIDENCE_SCALING.high.minConfidence) confidenceMultiplier = CONFIDENCE_SCALING.high.multiplier;
+    else if (confidence >= CONFIDENCE_SCALING.base.minConfidence) confidenceMultiplier = CONFIDENCE_SCALING.base.multiplier;
 
-    if (streakMultiplier > 1 || regimeMultiplier !== 1.0) {
-      console.log(`🔥 ${portfolioType.toUpperCase()}: Risk ${kellyRisk.toFixed(1)}% × streak ${streakMultiplier}x × regime ${regimeMultiplier}x = ${adjustedRisk.toFixed(1)}%`);
+    let adjustedRisk = kellyRisk * streakMultiplier * regimeMultiplier * confidenceMultiplier;
+
+    // Hard cap: never risk more than MAX_RISK_CAP_PERCENT on a single trade
+    if (adjustedRisk > MAX_RISK_CAP_PERCENT) {
+      console.log(`🛡️ RISK CAP: ${adjustedRisk.toFixed(1)}% exceeds ${MAX_RISK_CAP_PERCENT}% cap → clamped`);
+      adjustedRisk = MAX_RISK_CAP_PERCENT;
+    }
+
+    const confLabel = confidence >= 92 ? 'ULTRA' : confidence >= 85 ? 'HIGH' : confidence >= 75 ? 'BASE' : 'LOW';
+    if (streakMultiplier > 1 || regimeMultiplier !== 1.0 || confidenceMultiplier !== 1.0) {
+      console.log(`🔥 ${portfolioType.toUpperCase()}: Risk ${kellyRisk.toFixed(1)}% × streak ${streakMultiplier}x × regime ${regimeMultiplier}x × ${confLabel} conf ${confidenceMultiplier}x = ${adjustedRisk.toFixed(1)}%`);
     }
 
     // Calculate position size with adjusted risk
