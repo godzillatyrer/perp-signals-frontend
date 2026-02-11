@@ -19,6 +19,7 @@ import {
   KELLY_CRITERION,
   REGIME_RISK,
   ANTI_MARTINGALE,
+  TV_INDICATOR,
   getStreakMultiplier
 } from '../lib/trading-config.js';
 
@@ -2202,6 +2203,32 @@ async function openTradeForSignal(signal) {
     if (openTrades.some(t => t.symbol === signal.symbol)) {
       console.log(`📦 ${portfolioType.toUpperCase()}: Already in ${signal.symbol}, skipping`);
       return { opened: false, reason: 'duplicate' };
+    }
+
+    // === TRADINGVIEW INDICATOR CONFIRMATION FILTER ===
+    if (TV_INDICATOR.enabled && TV_INDICATOR.mode === 'confirmation') {
+      try {
+        const tvKey = `${TV_INDICATOR.redisKeyPrefix || 'tv_signal:'}${signal.symbol}`;
+        const tvSignalRaw = await r.get(tvKey);
+        const tvSignal = tvSignalRaw ? (typeof tvSignalRaw === 'string' ? JSON.parse(tvSignalRaw) : tvSignalRaw) : null;
+
+        if (tvSignal && tvSignal.expiresAt > Date.now()) {
+          // TV signal exists and is not expired — check direction match
+          const tvDirection = tvSignal.signal === 'BUY' ? 'LONG' : 'SHORT';
+          if (tvDirection !== signal.direction) {
+            console.log(`📺 TV FILTER: ${signal.symbol} TV says ${tvSignal.signal} but AI says ${signal.direction} — BLOCKED`);
+            return { opened: false, reason: 'tv_direction_mismatch' };
+          }
+          console.log(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} matches AI ${signal.direction} ✓`);
+        } else if (TV_INDICATOR.strict) {
+          // Strict mode: no TV signal = no trade
+          console.log(`📺 TV FILTER (strict): No TV signal for ${signal.symbol} — BLOCKED`);
+          return { opened: false, reason: 'tv_no_signal' };
+        }
+        // Non-strict mode: no TV signal for this coin = allow trade through
+      } catch (tvErr) {
+        console.log(`⚠️ TV filter check failed: ${tvErr.message} — allowing trade through`);
+      }
     }
 
     // Correlation protection — max 1 trade per correlation group
