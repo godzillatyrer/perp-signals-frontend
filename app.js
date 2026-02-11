@@ -5518,23 +5518,6 @@ function openDualPortfolioTrade(signal) {
     return;
   }
 
-  // === TRADINGVIEW INDICATOR CONFIRMATION FILTER ===
-  const tvConfig = tc.TV_INDICATOR || { enabled: false };
-  if (tvConfig.enabled && tvConfig.mode === 'confirmation' && window._tvSignals) {
-    const tvSignal = window._tvSignals[signal.symbol];
-    if (tvSignal && tvSignal.expiresAt > Date.now()) {
-      const tvDirection = tvSignal.signal === 'BUY' ? 'LONG' : 'SHORT';
-      if (tvDirection !== signal.direction) {
-        debugLog(`📺 TV FILTER: ${signal.symbol} TV says ${tvSignal.signal} but AI says ${signal.direction} — BLOCKED`);
-        return;
-      }
-      debugLog(`📺 TV CONFIRMED: ${signal.symbol} ${tvSignal.signal} matches AI ${signal.direction} ✓`);
-    } else if (tvConfig.strict) {
-      debugLog(`📺 TV FILTER (strict): No TV signal for ${signal.symbol} — BLOCKED`);
-      return;
-    }
-  }
-
   // === CORRELATION PROTECTION: Max 1 trade per correlation group ===
   const correlationGroups = tc.CORRELATION_GROUPS || {};
   const getGroup = (sym) => {
@@ -7632,23 +7615,6 @@ function renderHealthDashboard(data) {
   html += `<div class="health-row">${dot(true)}<span class="health-label">/api/monitor-positions</span><span class="health-value">Every 2 min</span></div>`;
   html += `<div class="health-row">${dot(true)}<span class="health-label">/api/evaluate-positions</span><span class="health-value">Every 30 min</span></div>`;
   html += `<div class="health-row">${dot(true)}<span class="health-label">/api/optimize</span><span class="health-value">Every 6 hours</span></div>`;
-  html += '</div>';
-
-  // --- TradingView Indicator ---
-  const tvConfig = window._tradingConfig?.TV_INDICATOR || {};
-  const tvSignals = window._tvSignalHistory || [];
-  const activeTvCount = Object.keys(window._tvSignals || {}).length;
-  html += '<div class="health-section"><div class="health-section-title">TradingView Indicator</div>';
-  html += `<div class="health-row">${dot(tvConfig.enabled)}<span class="health-label">Status</span><span class="health-value">${tvConfig.enabled ? 'Enabled (' + tvConfig.mode + ')' : 'Disabled'}</span></div>`;
-  html += `<div class="health-row">${dot(activeTvCount > 0)}<span class="health-label">Active Signals</span><span class="health-value">${activeTvCount} (TTL: ${tvConfig.signalTTLMinutes || 30}min)</span></div>`;
-  html += `<div class="health-row">${dot(!tvConfig.strict)}<span class="health-label">Mode</span><span class="health-value">${tvConfig.strict ? 'Strict (all coins need TV)' : 'Lenient (untracked coins trade freely)'}</span></div>`;
-  if (activeTvCount > 0) {
-    for (const [sym, sig] of Object.entries(window._tvSignals || {})) {
-      const ttlLeft = Math.max(0, Math.round((sig.expiresAt - Date.now()) / 60000));
-      const isBuy = sig.signal === 'BUY';
-      html += `<div class="health-row"><span class="health-dot" style="background:${isBuy ? 'var(--long)' : 'var(--short)'}"></span><span class="health-label">${sym.replace('USDT', '')}</span><span class="health-value" style="color:${isBuy ? 'var(--long)' : 'var(--short)'}">${sig.signal} @ $${sig.price ? sig.price.toFixed(2) : '?'} (${ttlLeft}m left)</span></div>`;
-    }
-  }
   html += '</div>';
 
   // --- Cooldowns ---
@@ -10642,38 +10608,6 @@ function initTerminal() {
 }
 
 // ============================================
-// TRADINGVIEW INDICATOR SIGNALS
-// ============================================
-
-// Cache of active TV signals: { BTCUSDT: { signal: 'BUY', expiresAt: ..., ... } }
-window._tvSignals = {};
-window._tvSignalHistory = [];
-
-async function fetchTvSignals() {
-  try {
-    const resp = await fetch('/api/tv-webhook');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (!data.enabled) return;
-
-    // Index active signals by symbol for O(1) lookup
-    const signalMap = {};
-    for (const sig of (data.signals || [])) {
-      signalMap[sig.symbol] = sig;
-    }
-    window._tvSignals = signalMap;
-    window._tvSignalHistory = data.signals || [];
-
-    const count = Object.keys(signalMap).length;
-    if (count > 0) {
-      debugLog(`📺 TV Signals refreshed: ${count} active`);
-    }
-  } catch (e) {
-    // Silent fail — TV signals are optional
-  }
-}
-
-// ============================================
 // INITIALIZATION
 // ============================================
 
@@ -10814,10 +10748,6 @@ async function init() {
 
   // Periodically update funding rates
   managedSetInterval(fetchFundingRates, CONFIG.FUNDING_RATES_INTERVAL);
-
-  // Periodically refresh TradingView indicator signals (every 60s)
-  fetchTvSignals();
-  managedSetInterval(fetchTvSignals, 60000);
 
   // Initialize countdown
   state.nextAiScanTime = Date.now() + 5000; // First scan in 5 seconds
