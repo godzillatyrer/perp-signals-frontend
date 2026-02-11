@@ -6,8 +6,7 @@ import { Redis } from '@upstash/redis';
 import {
   PORTFOLIO_CONFIG,
   PARTIAL_TP,
-  TRAIL_CONFIG,
-  TV_PORTFOLIO
+  TRAIL_CONFIG
 } from '../lib/trading-config.js';
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
@@ -449,27 +448,7 @@ export default async function handler(request, response) {
       }
     }
 
-    // Also load TV portfolio open trades for price fetching
-    let tvPortfolioData = null;
-    let tvOpenTrades = [];
-    if (TV_PORTFOLIO.enabled) {
-      try {
-        const tvRaw = await r.get(TV_PORTFOLIO.redisKey);
-        if (tvRaw) {
-          tvPortfolioData = typeof tvRaw === 'string' ? JSON.parse(tvRaw) : tvRaw;
-          tvOpenTrades = (tvPortfolioData.trades || []).filter(t => t.status === 'open');
-          for (const trade of tvOpenTrades) {
-            symbols.add(trade.symbol);
-          }
-        }
-      } catch (e) {
-        console.log('TV portfolio load error:', e.message);
-      }
-    }
-
-    const totalOpenTrades = openTrades.length + tvOpenTrades.length;
-
-    if (totalOpenTrades === 0) {
+    if (openTrades.length === 0) {
       console.log('📭 No open trades to monitor');
       return response.status(200).json({
         success: true,
@@ -480,7 +459,7 @@ export default async function handler(request, response) {
       });
     }
 
-    console.log(`📊 Found ${openTrades.length} silver/gold + ${tvOpenTrades.length} TV open trades across ${symbols.size} symbols`);
+    console.log(`📊 Found ${openTrades.length} open trades across ${symbols.size} symbols`);
 
     // 3. Fetch current prices
     const prices = await getCurrentPrices([...symbols]);
@@ -713,209 +692,6 @@ export default async function handler(request, response) {
       }
     }
 
-    // 6b. Monitor TV portfolio trades (separate from silver/gold)
-    let tvTradesChecked = 0;
-    let tvTradesClosed = 0;
-    let tvSlAdjusted = false;
-    if (tvPortfolioData && tvOpenTrades.length > 0) {
-      console.log(`📺 Monitoring ${tvOpenTrades.length} TV portfolio trades`);
-      tvTradesChecked = tvOpenTrades.length;
-
-      const tvConfig = TRAIL_CONFIG.silver; // TV uses silver-level trailing config
-      let tvChanged = false;
-      const tvClosedTrades = [];
-
-      for (const trade of tvOpenTrades) {
-        const currentPrice = prices[trade.symbol];
-        if (!currentPrice) {
-          console.log(`⚠️ TV: No price for ${trade.symbol}, skipping`);
-          continue;
-        }
-
-        const tradeInPortfolio = tvPortfolioData.trades.find(t => t.id === trade.id);
-        if (!tradeInPortfolio) continue;
-
-        const isLong = trade.direction === 'LONG';
-        const tpDistance = Math.abs(trade.tp - trade.entry);
-        const priceProgress = isLong
-          ? (currentPrice - trade.entry) / tpDistance
-          : (trade.entry - currentPrice) / tpDistance;
-
-        // --- Breakeven + Trailing Stop Logic ---
-        if (priceProgress >= tvConfig.breakevenThreshold) {
-          const trailDistance = trade.entry * (tvConfig.trailPercent / 100);
-          const newTrailSL = isLong
-            ? currentPrice - trailDistance
-            : currentPrice + trailDistance;
-
-          const breakevenSL = trade.entry;
-          const bestSL = isLong
-            ? Math.max(newTrailSL, breakevenSL)
-            : Math.min(newTrailSL, breakevenSL);
-
-          const shouldUpdate = isLong
-            ? bestSL > tradeInPortfolio.sl
-            : bestSL < tradeInPortfolio.sl;
-
-          if (shouldUpdate) {
-            if (!tradeInPortfolio.originalSl) {
-              tradeInPortfolio.originalSl = tradeInPortfolio.sl;
-            }
-            const oldSL = tradeInPortfolio.sl;
-            tradeInPortfolio.sl = bestSL;
-            tradeInPortfolio.slAdjustedAt = Date.now();
-            tradeInPortfolio.isTrailing = true;
-            tvSlAdjusted = true;
-            tvChanged = true;
-
-            const moveType = Math.abs(bestSL - trade.entry) < 0.0001 ? 'BREAKEVEN' : 'TRAILING';
-            console.log(`📺 TV ${trade.symbol}: SL ${moveType} $${oldSL.toFixed(4)} → $${bestSL.toFixed(4)}`);
-
-            const slMsg = `📺 <b>TV Portfolio SL ${moveType}</b> — ${trade.symbol} ${trade.direction}\n\n` +
-              `📊 Entry: $${trade.entry.toFixed(4)}\n` +
-              `💰 Current: $${currentPrice.toFixed(4)} (${priceProgress > 0 ? '+' : ''}${(priceProgress * 100).toFixed(1)}%)\n` +
-              `🛑 SL: $${oldSL.toFixed(4)} → <b>$${bestSL.toFixed(4)}</b>\n` +
-              `🎯 TP: $${trade.tp.toFixed(4)}\n` +
-              `📡 Source: ${trade.indicatorName || 'TV Indicator'}`;
-            await sendTelegramMessage(slMsg);
-          }
-        }
-
-        // --- Partial TP + SL Check ---
-        const currentSL = tradeInPortfolio.sl;
-        const remainingSize = tradeInPortfolio.remainingSize || tradeInPortfolio.size;
-
-        const slHit = isLong ? currentPrice <= currentSL : currentPrice >= currentSL;
-
-        if (slHit) {
-          const priceDiff = isLong ? currentSL - trade.entry : trade.entry - currentSL;
-          const pnl = (priceDiff / trade.entry) * remainingSize;
-          const totalPnl = (tradeInPortfolio.partialPnl || 0) + pnl;
-
-          tradeInPortfolio.status = 'closed';
-          tradeInPortfolio.exitPrice = currentSL;
-          tradeInPortfolio.pnl = totalPnl;
-          tradeInPortfolio.closeTimestamp = Date.now();
-          tradeInPortfolio.closedBy = 'backend-monitor';
-          tradeInPortfolio.remainingSize = 0;
-
-          tvPortfolioData.balance += pnl;
-          tvPortfolioData.equityHistory.push({ time: Date.now(), value: tvPortfolioData.balance });
-          tvChanged = true;
-          tvTradesClosed++;
-
-          tvClosedTrades.push({ trade: tradeInPortfolio, exitPrice: currentSL, pnl: totalPnl, isTP: false });
-
-          const closeType = tradeInPortfolio.isTrailing ? 'TRAIL SL' : 'SL';
-          console.log(`📺 TV ${closeType} Closed ${trade.symbol} ${trade.direction} | PnL: $${totalPnl.toFixed(2)}`);
-        } else {
-          // Check partial TP levels
-          const tpLevels = [
-            { key: 'tp1Hit', ...PARTIAL_TP.tp1 },
-            { key: 'tp2Hit', ...PARTIAL_TP.tp2 },
-            { key: 'tp3Hit', ...PARTIAL_TP.tp3 }
-          ];
-
-          for (const level of tpLevels) {
-            if (tradeInPortfolio[level.key]) continue;
-
-            const tpPrice = isLong
-              ? trade.entry + tpDistance * level.percent
-              : trade.entry - tpDistance * level.percent;
-            const hit = isLong ? currentPrice >= tpPrice : currentPrice <= tpPrice;
-
-            if (hit) {
-              const closeSize = trade.size * level.closeRatio;
-              const priceDiff = isLong ? tpPrice - trade.entry : trade.entry - tpPrice;
-              const partialPnl = (priceDiff / trade.entry) * closeSize;
-
-              tradeInPortfolio[level.key] = true;
-              tradeInPortfolio.remainingSize = (tradeInPortfolio.remainingSize || trade.size) - closeSize;
-              tradeInPortfolio.partialPnl = (tradeInPortfolio.partialPnl || 0) + partialPnl;
-              tvPortfolioData.balance += partialPnl;
-              tvChanged = true;
-
-              const tpLabel = level.key.toUpperCase().replace('HIT', '');
-              console.log(`📺 TV ${tpLabel} HIT ${trade.symbol}: closed ${(level.closeRatio * 100)}% @ $${tpPrice.toFixed(4)} | +$${partialPnl.toFixed(2)}`);
-
-              if (level.key === 'tp1Hit' && !tradeInPortfolio.originalSl) {
-                tradeInPortfolio.originalSl = tradeInPortfolio.sl;
-                tradeInPortfolio.sl = trade.entry;
-                console.log(`📺 TV ${trade.symbol}: SL moved to BREAKEVEN after TP1`);
-              }
-
-              const tpMsg = `📺 <b>TV Portfolio ${tpLabel} HIT</b> — ${trade.symbol} ${trade.direction}\n\n` +
-                `🎯 Closed ${(level.closeRatio * 100)}% @ $${tpPrice.toFixed(4)}\n` +
-                `💰 Partial PnL: +$${partialPnl.toFixed(2)}\n` +
-                `📊 Remaining: ${((tradeInPortfolio.remainingSize / trade.size) * 100).toFixed(0)}%\n` +
-                (level.key === 'tp1Hit' ? `🔒 SL moved to BREAKEVEN` : `🛑 SL: $${tradeInPortfolio.sl.toFixed(4)}`) +
-                `\n📡 Source: ${trade.indicatorName || 'TV Indicator'}`;
-              await sendTelegramMessage(tpMsg);
-
-              if (level.key === 'tp3Hit') {
-                const totalPnl = tradeInPortfolio.partialPnl;
-                tradeInPortfolio.status = 'closed';
-                tradeInPortfolio.exitPrice = tpPrice;
-                tradeInPortfolio.pnl = totalPnl;
-                tradeInPortfolio.closeTimestamp = Date.now();
-                tradeInPortfolio.closedBy = 'backend-monitor';
-                tradeInPortfolio.remainingSize = 0;
-
-                tvPortfolioData.equityHistory.push({ time: Date.now(), value: tvPortfolioData.balance });
-                tvTradesClosed++;
-
-                tvClosedTrades.push({ trade: tradeInPortfolio, exitPrice: tpPrice, pnl: totalPnl, isTP: true });
-                console.log(`📺 TV FULL TP Closed ${trade.symbol} ${trade.direction} | Total PnL: $${totalPnl.toFixed(2)}`);
-              }
-              break;
-            }
-          }
-        }
-      }
-
-      // Save TV portfolio if changed
-      if (tvChanged) {
-        // Recalculate TV portfolio stats
-        tvPortfolioData.stats = calculateEnhancedStats(tvPortfolioData);
-        tvPortfolioData.lastUpdated = Date.now();
-
-        // Keep equity history and trades bounded
-        if (tvPortfolioData.equityHistory.length > 200) {
-          tvPortfolioData.equityHistory = tvPortfolioData.equityHistory.slice(-200);
-        }
-        if (tvPortfolioData.trades.length > 100) {
-          tvPortfolioData.trades = tvPortfolioData.trades.slice(-100);
-        }
-
-        await r.set(TV_PORTFOLIO.redisKey, JSON.stringify(tvPortfolioData));
-        console.log('📺 Saved updated TV portfolio to Redis');
-
-        // Send Telegram for TV portfolio closed trades
-        for (const { trade, exitPrice, pnl, isTP } of tvClosedTrades) {
-          const resultEmoji = pnl > 0 ? '✅' : '❌';
-          const resultText = isTP ? 'FULL TP HIT' : (trade.isTrailing ? 'TRAIL SL HIT' : 'SL HIT');
-          const pnlSign = pnl >= 0 ? '+' : '';
-          let partialInfo = '';
-          if (trade.tp1Hit || trade.tp2Hit) {
-            const parts = [];
-            if (trade.tp1Hit) parts.push('TP1 ✅');
-            if (trade.tp2Hit) parts.push('TP2 ✅');
-            if (trade.tp3Hit) parts.push('TP3 ✅');
-            partialInfo = `\n📊 Partial TPs: ${parts.join(' → ')}`;
-          }
-          const msg = `📺 <b>TV PORTFOLIO - ${resultText}</b>\n\n` +
-            `${resultEmoji} <b>${trade.symbol}</b> ${trade.direction}\n\n` +
-            `📊 Entry: $${trade.entry.toFixed(4)}\n` +
-            `📊 Exit: $${exitPrice.toFixed(4)}${partialInfo}\n\n` +
-            `💰 Total PnL: <b>${pnlSign}$${pnl.toFixed(2)}</b>\n` +
-            `📈 Position Size: $${trade.size.toFixed(2)}\n` +
-            `📡 Source: ${trade.indicatorName || 'TV Indicator'}\n\n` +
-            `⏰ Closed by: Backend Monitor`;
-          await sendTelegramMessage(msg);
-        }
-      }
-    }
-
     // 7. Server-side shadow PnL resolution for AI signal log
     // Resolves pending→win/loss so AI Strategy tab and AI prompts have track record data
     let shadowResolved = 0;
@@ -992,7 +768,7 @@ export default async function handler(request, response) {
     }
 
     const duration = Date.now() - startTime;
-    console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length}+${tvTradesChecked}tv | Closed: ${closedTrades.length}+${tvTradesClosed}tv | SL adjusted: ${slAdjusted}/${tvSlAdjusted} | Shadow resolved: ${shadowResolved}`);
+    console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length} | Closed: ${closedTrades.length} | SL adjusted: ${slAdjusted} | Shadow resolved: ${shadowResolved}`);
 
     return response.status(200).json({
       success: true,
@@ -1006,11 +782,6 @@ export default async function handler(request, response) {
         isTP: ct.isTP,
         portfolio: ct.portfolioType
       })),
-      tvPortfolio: {
-        tradesChecked: tvTradesChecked,
-        tradesClosed: tvTradesClosed,
-        slAdjusted: tvSlAdjusted
-      },
       shadowResolved,
       duration
     });
