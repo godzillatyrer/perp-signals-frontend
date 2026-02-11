@@ -1785,6 +1785,18 @@ async function fetchBatchSocialSentiment(symbols) {
   }
 
   debugLog(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins`);
+
+  // Persist sentiment data to Redis so server-side scan.js can use it in AI prompts
+  if (Object.keys(state.socialSentiment).length > 0) {
+    try {
+      await fetch('/api/portfolio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save_sentiment', data: state.socialSentiment })
+      });
+    } catch (e) { /* non-critical */ }
+  }
+
   return state.socialSentiment;
 }
 
@@ -4869,7 +4881,7 @@ async function loadCooldownStatus() {
 
   try {
     // Fetch all cooldowns by checking common symbols
-    const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT'];
+    const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT', 'SUIUSDT', 'PEPEUSDT', 'WIFUSDT', 'NEARUSDT', 'ARBUSDT', 'OPUSDT', 'FETUSDT', 'INJUSDT', 'APTUSDT', 'ATOMUSDT', 'FILUSDT', 'ICPUSDT', 'RUNEUSDT', 'LTCUSDT', 'UNIUSDT', 'AAVEUSDT', 'RENDERUSDT', 'TRXUSDT', 'TIAUSDT', 'MATICUSDT'];
     const cooldowns = [];
 
     for (const symbol of symbols) {
@@ -5034,6 +5046,7 @@ function updateAiScanStatus(status) {
   if (scanEl) scanEl.textContent = status;
 }
 
+let _countdownIntervalId = null;
 function updateAiScanCountdown() {
   if (!state.nextAiScanTime) return;
 
@@ -5048,7 +5061,9 @@ function updateAiScanCountdown() {
   };
 
   update();
-  setInterval(update, 1000);
+  // Clear any existing countdown interval to prevent stacking
+  if (_countdownIntervalId) clearInterval(_countdownIntervalId);
+  _countdownIntervalId = managedSetInterval(update, 1000);
 }
 
 // ============================================
@@ -5481,6 +5496,22 @@ function openDualPortfolioTrade(signal) {
   // Check if already in this trade
   if (openTrades.some(t => t.symbol === signal.symbol)) {
     debugLog(`${portfolioType.toUpperCase()}: Already in ${signal.symbol}, skipping`);
+    return;
+  }
+
+  // DEDUPLICATION: Skip if backend scan already opened this trade
+  // Backend trades have openedBy='backend-scan' — don't duplicate from client
+  if (openTrades.some(t => t.symbol === signal.symbol && t.openedBy === 'backend-scan')) {
+    debugLog(`${portfolioType.toUpperCase()}: Backend already opened ${signal.symbol}, skipping client-side open`);
+    return;
+  }
+
+  // MAX DRAWDOWN KILL SWITCH: Stop opening trades if down >20% from peak
+  const peakEquity = portfolio.stats?.peakEquity || portfolio.startBalance || 5000;
+  const ddFromPeak = peakEquity > 0 ? (peakEquity - portfolio.balance) / peakEquity : 0;
+  if (ddFromPeak >= 0.20) {
+    debugLog(`🚨 ${portfolioType.toUpperCase()}: DRAWDOWN KILL -${(ddFromPeak * 100).toFixed(1)}% from peak, blocking new trades`);
+    showNotification(`${portfolioType.toUpperCase()} portfolio down ${(ddFromPeak * 100).toFixed(1)}% from peak — new trades halted`, 'error');
     return;
   }
 
@@ -8242,7 +8273,7 @@ function renderInsightsPanel() {
   for (const pt of ['silver', 'gold']) {
     const trades = dualPortfolioState[pt]?.trades || [];
     const streak = calculatePortfolioWinStreak(trades);
-    const multiplier = Math.min(1 + streak * 0.5, 3.0);
+    const multiplier = Math.min(1 + streak * 0.3, 2.0);
     const prefix = pt === 'silver' ? 'Silver' : 'Gold';
 
     updateEl(`ins${prefix}Streak`, streak > 0 ? `${streak} wins` : '0');

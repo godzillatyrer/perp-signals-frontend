@@ -232,7 +232,17 @@ export default async function handler(request, response) {
 
     // POST - Replace all portfolio data (full sync from client)
     if (request.method === 'POST') {
-      const { data } = request.body;
+      const { action, data } = request.body || {};
+
+      // Save sentiment data to Redis for server-side scan.js to use
+      if (action === 'save_sentiment' && data) {
+        try {
+          await r.set('social_sentiment_data', JSON.stringify(data), { ex: 3600 }); // 1h TTL
+          return response.status(200).json({ success: true });
+        } catch (e) {
+          return response.status(200).json({ success: false, error: e.message });
+        }
+      }
 
       if (!data) {
         return response.status(400).json({
