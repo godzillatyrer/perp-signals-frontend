@@ -543,7 +543,6 @@
 }
 .strategy-icon.silver { background: var(--silver-soft); color: var(--silver); }
 .strategy-icon.gold { background: var(--gold-soft); color: var(--gold); }
-.strategy-icon.tv { background: rgba(138,43,226,0.15); color: #8a2be2; }
 .strategy-label { font-size: 12px; }
 
 .sync-btn {
@@ -580,7 +579,6 @@
 }
 .portfolio-icon.silver { background: var(--silver-soft); color: var(--silver); }
 .portfolio-icon.gold { background: var(--gold-soft); color: var(--gold); }
-.portfolio-icon.tv { background: rgba(138,43,226,0.15); color: #8a2be2; font-size: 11px; }
 
 .portfolio-balance { display: flex; align-items: center; gap: 6px; font-size: 11px; }
 .portfolio-balance .label { color: var(--t3); font-weight: 600; font-size: 10px; text-transform: uppercase; }

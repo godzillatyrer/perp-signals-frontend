@@ -386,10 +386,6 @@
               <span class="strategy-icon gold">3/3</span>
               <span class="strategy-label">Gold Consensus</span>
             </button>
-            <button class="strategy-tab" data-strategy="tv">
-              <span class="strategy-icon tv">TV</span>
-              <span class="strategy-label">TV Indicator</span>
-            </button>
             <button class="sync-btn" id="syncPortfolioBtn" title="Sync">
               <span class="sync-icon">&#x21BB;</span>
             </button>
@@ -523,70 +519,6 @@
             </div>
           </div>
 
-          <!-- TV Indicator Portfolio -->
-          <div class="portfolio-panel-growth portfolio-tv" id="portfolio-tv">
-            <div class="portfolio-header">
-              <div class="portfolio-title">
-                <span class="portfolio-icon tv">TV</span>
-                <div>
-                  <h3>TV Indicator Portfolio</h3>
-                  <span class="strategy-name">GainzAlgo V2 Standalone (5x, 18% Risk)</span>
-                </div>
-              </div>
-              <div class="portfolio-balance">
-                <span class="label">START:</span>
-                <span class="value" id="startBalanceTv">$5,000</span>
-                <button class="reset-balance-btn" id="resetBalanceTvBtn" title="Reset">Reset</button>
-              </div>
-            </div>
-            <div class="portfolio-stats">
-              <div class="stat-item">
-                <span class="stat-label">EQUITY</span>
-                <span class="stat-value accent" id="equityValueTv">$5,000</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">UNREALIZED</span>
-                <span class="stat-value" id="unrealizedPnlTv">+0.00</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">DRAWDOWN</span>
-                <span class="stat-value" id="maxDrawdownTv">0.0%</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">WIN RATE</span>
-                <span class="stat-value" id="winRateValueTv">0%</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">TOTAL P&L</span>
-                <span class="stat-value" id="totalPnlTv">$0.00</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">RETURN</span>
-                <span class="stat-value" id="returnPctTv">0%</span>
-              </div>
-            </div>
-            <div class="portfolio-tabs">
-              <button class="portfolio-tab active" data-tab="curve-tv">Performance</button>
-              <button class="portfolio-tab" data-tab="positions-tv">Positions <span class="count" id="positionCountTv">0</span></button>
-              <button class="portfolio-tab" data-tab="history-tv">History <span class="count" id="historyCountTv">0</span></button>
-            </div>
-            <div class="portfolio-content">
-              <div class="tab-content active" id="tab-curve-tv">
-                <div class="equity-chart" id="equityChartTv"></div>
-              </div>
-              <div class="tab-content" id="tab-positions-tv">
-                <div class="positions-list" id="positionsListTv">
-                  <div class="empty-state">No open positions</div>
-                </div>
-              </div>
-              <div class="tab-content" id="tab-history-tv">
-                <div class="history-list" id="historyListTv">
-                  <div class="empty-state">No trade history</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div class="portfolio-comparison">
             <h4>Strategy Comparison</h4>
             <div class="comparison-grid">
@@ -597,10 +529,6 @@
               <div class="comparison-item">
                 <span class="comparison-label">Gold (3/3) Return</span>
                 <span class="comparison-value" id="goldReturnCompare">0%</span>
-              </div>
-              <div class="comparison-item">
-                <span class="comparison-label">TV Indicator Return</span>
-                <span class="comparison-value" id="tvReturnCompare">0%</span>
               </div>
               <div class="comparison-item">
                 <span class="comparison-label">Best Strategy</span>
