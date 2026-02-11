@@ -7,6 +7,20 @@
 import { Redis } from '@upstash/redis';
 import { getRecentCalls, formatCallsForAIContext } from './discord.js';
 import { addPendingSignal, evaluatePendingSignals, getPendingSignalsSummary } from './pending-signals.js';
+import {
+  PORTFOLIO_CONFIG,
+  CONFIDENCE_SCALING as SHARED_CONFIDENCE_SCALING,
+  MAX_RISK_CAP_PERCENT as SHARED_MAX_RISK_CAP,
+  CORRELATION_GROUPS as SHARED_CORRELATION_GROUPS,
+  MAX_SIGNALS_PER_GROUP as SHARED_MAX_SIGNALS_PER_GROUP,
+  CIRCUIT_BREAKERS,
+  MAX_EXPOSURE_RATIO,
+  DRAWDOWN_KILL,
+  KELLY_CRITERION,
+  REGIME_RISK,
+  ANTI_MARTINGALE,
+  getStreakMultiplier
+} from '../lib/trading-config.js';
 
 const CONFIG = {
   // Minimum confidence for alerts
@@ -15,33 +29,30 @@ const CONFIG = {
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
   MIN_TP_PERCENT_MID_CAP: 7,
-  // Top coins to analyze — top 30 by volume for maximum opportunity
+  // Top coins to analyze — top 50 by volume for maximum opportunity
   TOP_COINS: [
+    // Tier 1: Major caps
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
+    // Tier 2: Large caps
     'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT',
     'SUIUSDT', 'PEPEUSDT', 'WIFUSDT', 'NEARUSDT', 'ARBUSDT',
     'OPUSDT', 'FETUSDT', 'INJUSDT', 'APTUSDT', 'ATOMUSDT',
     'FILUSDT', 'ICPUSDT', 'RUNEUSDT', 'LTCUSDT', 'UNIUSDT',
-    'AAVEUSDT', 'RENDERUSDT', 'TRXUSDT', 'TIAUSDT', 'MATICUSDT'
+    'AAVEUSDT', 'RENDERUSDT', 'TRXUSDT', 'TIAUSDT', 'MATICUSDT',
+    // Tier 3: Mid caps — added to match watchlist coverage
+    'SEIUSDT', 'JUPUSDT', 'ONDOUSDT', 'ENAUSDT', 'STXUSDT',
+    'EIGENUSDT', 'PENDLEUSDT', 'WLDUSDT', 'MKRUSDT', 'LDOUSDT',
+    'GRTUSDT', 'IMXUSDT', 'FTMUSDT', 'ALGOUSDT', 'FLOWUSDT',
+    'SNXUSDT', 'GMXUSDT', 'DYDXUSDT', 'THETAUSDT', 'HBARUSDT',
+    'JASMYUSDT', 'BLURUSDT', 'ORDIUSDT', 'KASUSDT', 'COOKIEUSDT'
   ],
   // Signal cooldown in hours - 12 hours per coin (same coin cannot signal again)
   SIGNAL_COOLDOWN_HOURS: 12,
   // Price move % that overrides cooldown - ONLY 10%+ can bypass 12h cooldown
   PRICE_MOVE_OVERRIDE_PERCENT: 10,
-  // Correlation groups (don't send multiple signals from same group)
-  CORRELATION_GROUPS: {
-    'BTC_ECOSYSTEM': ['BTCUSDT'],
-    'ETH_ECOSYSTEM': ['ETHUSDT', 'OPUSDT', 'ARBUSDT', 'MATICUSDT'],
-    'ALT_L1': ['SOLUSDT', 'AVAXUSDT', 'DOTUSDT', 'NEARUSDT', 'APTUSDT', 'SUIUSDT', 'ATOMUSDT', 'ICPUSDT'],
-    'MEME': ['DOGEUSDT', 'PEPEUSDT', 'WIFUSDT'],
-    'DEFI': ['LINKUSDT', 'ADAUSDT', 'UNIUSDT', 'AAVEUSDT', 'INJUSDT', 'RUNEUSDT'],
-    'AI_TOKENS': ['FETUSDT', 'RENDERUSDT'],
-    'STORAGE': ['FILUSDT', 'TIAUSDT'],
-    'EXCHANGE': ['BNBUSDT'],
-    'LEGACY': ['LTCUSDT', 'TRXUSDT', 'XRPUSDT']
-  },
-  // Max signals per correlation group per scan
-  MAX_SIGNALS_PER_GROUP: 1,
+  // Correlation groups — sourced from shared lib/trading-config.js
+  CORRELATION_GROUPS: SHARED_CORRELATION_GROUPS,
+  MAX_SIGNALS_PER_GROUP: SHARED_MAX_SIGNALS_PER_GROUP,
   MIN_RISK_REWARD: 2,
   MIN_ATR_PERCENT: 0.4,
   MAX_ENTRY_WIGGLE_PERCENT: 4,
@@ -1338,6 +1349,7 @@ async function fetchMarketData() {
     try {
       console.log('Trying CoinGecko API...');
       const cgIds = {
+        // Original 30
         'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'SOLUSDT': 'solana',
         'BNBUSDT': 'binancecoin', 'XRPUSDT': 'ripple', 'DOGEUSDT': 'dogecoin',
         'ADAUSDT': 'cardano', 'AVAXUSDT': 'avalanche-2', 'LINKUSDT': 'chainlink',
@@ -1348,7 +1360,21 @@ async function fetchMarketData() {
         'FILUSDT': 'filecoin', 'ICPUSDT': 'internet-computer',
         'RUNEUSDT': 'thorchain', 'LTCUSDT': 'litecoin', 'UNIUSDT': 'uniswap',
         'AAVEUSDT': 'aave', 'RENDERUSDT': 'render-token', 'TRXUSDT': 'tron',
-        'TIAUSDT': 'celestia', 'MATICUSDT': 'matic-network'
+        'TIAUSDT': 'celestia', 'MATICUSDT': 'matic-network',
+        // New 25 mid-caps
+        'SEIUSDT': 'sei-network', 'JUPUSDT': 'jupiter-exchange-solana',
+        'ONDOUSDT': 'ondo-finance', 'ENAUSDT': 'ethena',
+        'STXUSDT': 'blockstack', 'EIGENUSDT': 'eigenlayer',
+        'PENDLEUSDT': 'pendle', 'WLDUSDT': 'worldcoin-wld',
+        'MKRUSDT': 'maker', 'LDOUSDT': 'lido-dao',
+        'GRTUSDT': 'the-graph', 'IMXUSDT': 'immutable-x',
+        'FTMUSDT': 'fantom', 'ALGOUSDT': 'algorand',
+        'FLOWUSDT': 'flow', 'SNXUSDT': 'havven',
+        'GMXUSDT': 'gmx', 'DYDXUSDT': 'dydx-chain',
+        'THETAUSDT': 'theta-token', 'HBARUSDT': 'hedera-hashgraph',
+        'JASMYUSDT': 'jasmycoin', 'BLURUSDT': 'blur',
+        'ORDIUSDT': 'ordinals', 'KASUSDT': 'kaspa',
+        'COOKIEUSDT': 'cookie-dao'
       };
 
       const ids = Object.values(cgIds).join(',');
@@ -2073,26 +2099,11 @@ let _btcDominance = null;
 let _btcPrice24hChange = null;
 let _fundingRates = null;
 
-// Matches client-side dualPortfolioState.config exactly
-const TRADE_CONFIG = {
-  silver: { leverage: 5, riskPercent: 18, maxOpenTrades: 5 },
-  gold: { leverage: 7, riskPercent: 22, maxOpenTrades: 4 }
-};
+// All config now imported from shared lib/trading-config.js
+const TRADE_CONFIG = PORTFOLIO_CONFIG;
+const CONFIDENCE_SCALING = SHARED_CONFIDENCE_SCALING;
+const MAX_RISK_CAP_PERCENT = SHARED_MAX_RISK_CAP;
 
-// Confidence-based position scaling (same as client-side)
-const CONFIDENCE_SCALING = {
-  ultra: { minConfidence: 92, multiplier: 1.3 },
-  high:  { minConfidence: 85, multiplier: 1.1 },
-  base:  { minConfidence: 75, multiplier: 1.0 },
-  low:   { minConfidence: 0,  multiplier: 0.7 }
-};
-
-// Hard cap: no single trade can risk more than 40% of portfolio regardless of multipliers
-const MAX_RISK_CAP_PERCENT = 40;
-
-// === ANTI-MARTINGALE: Progressive risk on winning streaks ===
-// +30% per consecutive win, capped at 2x base risk. Resets on any loss.
-// Matches client-side calculation for consistent position sizing.
 function calculateWinStreak(trades) {
   const closed = (trades || [])
     .filter(t => t.status === 'closed' && t.pnl !== undefined)
@@ -2104,11 +2115,6 @@ function calculateWinStreak(trades) {
     else break;
   }
   return streak;
-}
-
-function getStreakMultiplier(streak) {
-  // 0 wins = 1.0x, 1 win = 1.3x, 2 wins = 1.6x, 3 wins = 1.9x, 4+ = 2.0x cap
-  return Math.min(1 + streak * 0.3, 2.0);
 }
 
 function getDefaultPortfolio(type) {
@@ -2135,8 +2141,8 @@ function getDefaultPortfolioData() {
     silver: getDefaultPortfolio('silver'),
     gold: getDefaultPortfolio('gold'),
     config: {
-      silverConfig: TRADE_CONFIG.silver,
-      goldConfig: TRADE_CONFIG.gold
+      silverConfig: { ...PORTFOLIO_CONFIG.silver },
+      goldConfig: { ...PORTFOLIO_CONFIG.gold }
     },
     lastUpdated: Date.now()
   };
@@ -2206,17 +2212,17 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'correlation' };
     }
 
-    // Max exposure limit — total open position value capped at 60% of balance
+    // Max exposure limit — from shared config
     const totalExposure = openTrades.reduce((sum, t) => sum + (t.remainingSize || t.size), 0);
-    const maxExposure = portfolio.balance * 0.60;
+    const maxExposure = portfolio.balance * MAX_EXPOSURE_RATIO;
     if (totalExposure >= maxExposure) {
       console.log(`🛡️ ${portfolioType.toUpperCase()}: Exposure $${totalExposure.toFixed(0)} >= 60% of balance ($${maxExposure.toFixed(0)}), skipping`);
       return { opened: false, reason: 'max_exposure' };
     }
 
-    // === CIRCUIT BREAKER: Daily & Weekly Loss Limits ===
-    const DAILY_LOSS_LIMIT = 0.05;  // 5% of balance
-    const WEEKLY_LOSS_LIMIT = 0.15; // 15% of balance
+    // === CIRCUIT BREAKER: Daily & Weekly Loss Limits (from shared config) ===
+    const DAILY_LOSS_LIMIT = CIRCUIT_BREAKERS.dailyLossLimit;
+    const WEEKLY_LOSS_LIMIT = CIRCUIT_BREAKERS.weeklyLossLimit;
     const now = Date.now();
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
     const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
@@ -2251,9 +2257,8 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'weekly_loss_limit' };
     }
 
-    // === MAX DRAWDOWN FROM PEAK KILL SWITCH ===
-    // If portfolio is down more than 30% from its peak equity, stop all new trades
-    const MAX_DRAWDOWN_KILL = 0.30; // 30% from peak
+    // === MAX DRAWDOWN FROM PEAK KILL SWITCH (from shared config) ===
+    const MAX_DRAWDOWN_KILL = DRAWDOWN_KILL.threshold;
     const peakEquity = portfolio.stats?.peakEquity || portfolio.startBalance || 5000;
     const currentEquity = portfolio.balance;
     const drawdownFromPeak = peakEquity > 0 ? (peakEquity - currentEquity) / peakEquity : 0;
@@ -2271,8 +2276,8 @@ async function openTradeForSignal(signal) {
       }
       return { opened: false, reason: 'max_drawdown_kill' };
     }
-    // Reset kill alert if recovered above -25% or manual override active
-    if ((drawdownFromPeak < 0.25 || manualOverride) && portfolio._drawdownKillAlerted) {
+    // Reset kill alert if recovered above recovery threshold or manual override active
+    if ((drawdownFromPeak < DRAWDOWN_KILL.recoveryThreshold || manualOverride) && portfolio._drawdownKillAlerted) {
       portfolio._drawdownKillAlerted = false;
     }
 

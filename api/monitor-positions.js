@@ -1,26 +1,15 @@
 // Backend Position Monitor - Checks open trades and executes TP/SL
 // Runs as a Vercel cron job every 2 minutes to ensure trades are managed 24/7
-// Features: TP/SL execution, breakeven stop-loss, trailing stop
+// Features: TP/SL execution, breakeven stop-loss, trailing stop, partial TP
 
 import { Redis } from '@upstash/redis';
+import {
+  PORTFOLIO_CONFIG,
+  PARTIAL_TP,
+  TRAIL_CONFIG
+} from '../lib/trading-config.js';
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
-
-// Trailing stop config per portfolio type
-const TRAIL_CONFIG = {
-  silver: { breakevenThreshold: 0.50, trailPercent: 2.0 },
-  gold:   { breakevenThreshold: 0.50, trailPercent: 1.5 }
-};
-
-// Partial Take Profit levels
-// TP1: Close 40% at 50% of target, move SL to breakeven
-// TP2: Close 30% at 75% of target
-// TP3: Close remaining 30% at full target (or trail)
-const PARTIAL_TP = {
-  tp1: { percent: 0.50, closeRatio: 0.40 },
-  tp2: { percent: 0.75, closeRatio: 0.30 },
-  tp3: { percent: 1.00, closeRatio: 0.30 }
-};
 
 let redis = null;
 
@@ -365,20 +354,8 @@ function getDefaultData() {
     silver: getDefaultPortfolio('silver'),
     gold: getDefaultPortfolio('gold'),
     config: {
-      silverConfig: {
-        leverage: 10,
-        riskPercent: 5,
-        maxOpenTrades: 8,
-        tpMultiplier: 2.5,
-        slPercent: 2
-      },
-      goldConfig: {
-        leverage: 15,
-        riskPercent: 8,
-        maxOpenTrades: 5,
-        tpMultiplier: 3,
-        slPercent: 1.5
-      }
+      silverConfig: { ...PORTFOLIO_CONFIG.silver },
+      goldConfig: { ...PORTFOLIO_CONFIG.gold }
     },
     lastUpdated: Date.now()
   };

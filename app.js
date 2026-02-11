@@ -84,7 +84,7 @@ const CONFIG = {
   MIN_CONFIDENCE: 65,
   HIGH_CONFIDENCE: 75, // Alert threshold
   ALERT_CONFIDENCE: 75, // Minimum confidence for alerts
-  TOP_COINS: 50,
+  TOP_COINS: 75,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
   TP_PERCENT: 5, // Minimum 5% TP for worthwhile trades
@@ -112,6 +112,7 @@ const CONFIG = {
   PERFORMANCE_STATS_INTERVAL: 120000,
   OPTIMIZER_STATUS_INTERVAL: 600000,
   FUNDING_RATES_INTERVAL: 300000,
+  SENTIMENT_FETCH_INTERVAL: 1800000, // 30 minutes for LunarCrush (avoid rate limits)
   PRICE_POLLING_INTERVAL: 5000,
   WS_RECONNECT_DELAY: 5000
 };
@@ -1030,6 +1031,7 @@ const state = {
   fundingRates: {}, // Symbol -> funding rate
   openInterest: {}, // Symbol -> OI data
   socialSentiment: {}, // Symbol -> LunarCrush data
+  lastSentimentFetchTime: 0, // Timestamp of last LunarCrush fetch
   liquidationData: {}, // Symbol -> Coinglass liquidation data
   tradeLessons: [], // AI-generated post-trade lessons
   confidenceTracking: [], // Confidence vs outcome correlation data
@@ -1774,6 +1776,14 @@ async function fetchBatchSocialSentiment(symbols) {
     return {};
   }
 
+  // Throttle: only fetch every 30 minutes (reuse cached data in between)
+  const timeSinceLastFetch = Date.now() - state.lastSentimentFetchTime;
+  if (timeSinceLastFetch < CONFIG.SENTIMENT_FETCH_INTERVAL && Object.keys(state.socialSentiment).length > 0) {
+    const minsLeft = Math.round((CONFIG.SENTIMENT_FETCH_INTERVAL - timeSinceLastFetch) / 60000);
+    debugLog(`🌙 LunarCrush cached (next fetch in ${minsLeft}m) - ${Object.keys(state.socialSentiment).length} coins`);
+    return state.socialSentiment;
+  }
+
   debugLog('🌙 Fetching social sentiment data...');
 
   // Fetch for top 10 symbols only to avoid rate limits
@@ -1784,7 +1794,8 @@ async function fetchBatchSocialSentiment(symbols) {
     await sleep(100); // Rate limiting
   }
 
-  debugLog(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins`);
+  state.lastSentimentFetchTime = Date.now();
+  debugLog(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins (next fetch in 30m)`);
 
   // Persist sentiment data to Redis so server-side scan.js can use it in AI prompts
   if (Object.keys(state.socialSentiment).length > 0) {
@@ -5481,10 +5492,12 @@ function calculateMaxDrawdown() {
 // ============================================
 
 // Open trade in dual portfolio (called when consensus signal detected)
+// NOTE: Risk logic mirrors scan.js openTradeForSignal() — keep in sync via lib/trading-config.js
 function openDualPortfolioTrade(signal) {
   const portfolioType = signal.isGoldConsensus ? 'gold' : 'silver';
   const portfolio = dualPortfolioState[portfolioType];
   const config = dualPortfolioState.config[portfolioType];
+  const tc = window._tradingConfig || {}; // Shared config fetched from /api/trading-config
 
   // Check max open trades
   const openTrades = portfolio.trades.filter(t => t.status === 'open');
@@ -5500,27 +5513,97 @@ function openDualPortfolioTrade(signal) {
   }
 
   // DEDUPLICATION: Skip if backend scan already opened this trade
-  // Backend trades have openedBy='backend-scan' — don't duplicate from client
   if (openTrades.some(t => t.symbol === signal.symbol && t.openedBy === 'backend-scan')) {
     debugLog(`${portfolioType.toUpperCase()}: Backend already opened ${signal.symbol}, skipping client-side open`);
     return;
   }
 
-  // MAX DRAWDOWN KILL SWITCH: Stop opening trades if down >30% from peak
+  // === CORRELATION PROTECTION: Max 1 trade per correlation group ===
+  const correlationGroups = tc.CORRELATION_GROUPS || {};
+  const getGroup = (sym) => {
+    for (const [group, symbols] of Object.entries(correlationGroups)) {
+      if (symbols.includes(sym)) return group;
+    }
+    return sym;
+  };
+  const tradeGroup = getGroup(signal.symbol);
+  const groupConflict = openTrades.find(t => getGroup(t.symbol) === tradeGroup);
+  if (groupConflict) {
+    debugLog(`🔗 ${portfolioType.toUpperCase()}: Already in ${groupConflict.symbol} (same ${tradeGroup} group), skipping ${signal.symbol}`);
+    return;
+  }
+
+  // === MAX EXPOSURE: Total open position value capped at 60% of balance ===
+  const maxExposureRatio = tc.MAX_EXPOSURE_RATIO || 0.60;
+  const totalExposure = openTrades.reduce((sum, t) => sum + (t.remainingSize || t.size), 0);
+  const maxExposure = portfolio.balance * maxExposureRatio;
+  if (totalExposure >= maxExposure) {
+    debugLog(`🛡️ ${portfolioType.toUpperCase()}: Exposure $${totalExposure.toFixed(0)} >= ${(maxExposureRatio * 100)}% of balance ($${maxExposure.toFixed(0)}), skipping`);
+    return;
+  }
+
+  // === CIRCUIT BREAKER: Daily & Weekly Loss Limits ===
+  const cbConfig = tc.CIRCUIT_BREAKERS || { dailyLossLimit: 0.05, weeklyLossLimit: 0.15 };
+  const now = Date.now();
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+  const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const closedTrades = (portfolio.trades || []).filter(t => t.status === 'closed');
+  const dailyLosses = closedTrades
+    .filter(t => t.closeTimestamp && t.closeTimestamp > oneDayAgo && t.pnl < 0)
+    .reduce((sum, t) => sum + Math.abs(t.pnl), 0);
+  const weeklyLosses = closedTrades
+    .filter(t => t.closeTimestamp && t.closeTimestamp > oneWeekAgo && t.pnl < 0)
+    .reduce((sum, t) => sum + Math.abs(t.pnl), 0);
+
+  if (dailyLosses >= portfolio.balance * cbConfig.dailyLossLimit) {
+    debugLog(`🚨 CIRCUIT BREAKER: ${portfolioType.toUpperCase()} daily losses $${dailyLosses.toFixed(0)} >= 5% limit`);
+    showNotification(`${portfolioType.toUpperCase()} daily loss limit hit — no new trades until losses reset`, 'error');
+    return;
+  }
+  if (weeklyLosses >= portfolio.balance * cbConfig.weeklyLossLimit) {
+    debugLog(`🚨 CIRCUIT BREAKER: ${portfolioType.toUpperCase()} weekly losses $${weeklyLosses.toFixed(0)} >= 15% limit`);
+    showNotification(`${portfolioType.toUpperCase()} weekly loss limit hit — no new trades until losses reset`, 'error');
+    return;
+  }
+
+  // === MAX DRAWDOWN KILL SWITCH ===
+  const ddConfig = tc.DRAWDOWN_KILL || { threshold: 0.30, recoveryThreshold: 0.25 };
   const peakEquity = portfolio.stats?.peakEquity || portfolio.startBalance || 5000;
   const ddFromPeak = peakEquity > 0 ? (peakEquity - portfolio.balance) / peakEquity : 0;
   const hasOverride = portfolio._drawdownOverride && portfolio._drawdownOverride > Date.now();
-  if (ddFromPeak >= 0.30 && !hasOverride) {
+  if (ddFromPeak >= ddConfig.threshold && !hasOverride) {
     debugLog(`🚨 ${portfolioType.toUpperCase()}: DRAWDOWN KILL -${(ddFromPeak * 100).toFixed(1)}% from peak, blocking new trades`);
     showNotification(`${portfolioType.toUpperCase()} portfolio down ${(ddFromPeak * 100).toFixed(1)}% from peak — new trades halted. Use override button to resume.`, 'error');
     return;
   }
 
-  // Anti-Martingale: Progressive risk on winning streaks
+  // === ANTI-MARTINGALE: Progressive risk on winning streaks ===
+  const amConfig = tc.ANTI_MARTINGALE || { streakIncrement: 0.3, maxMultiplier: 2.0 };
   const winStreak = calculatePortfolioWinStreak(portfolio.trades);
-  const streakMultiplier = Math.min(1 + winStreak * 0.3, 2.0); // Reduced from 0.5/3.0 since base size is already big
+  const streakMultiplier = Math.min(1 + winStreak * amConfig.streakIncrement, amConfig.maxMultiplier);
 
-  // Confidence-based position scaling
+  // === KELLY CRITERION POSITION SIZING ===
+  const kellyConfig = tc.KELLY_CRITERION || { minClosedTrades: 15, kellyFraction: 0.5, minRiskPercent: 1, maxRiskMultiplier: 2 };
+  let kellyRisk = config.riskPercent;
+  const closedForKelly = closedTrades.filter(t => t.pnl !== undefined);
+  if (closedForKelly.length >= kellyConfig.minClosedTrades) {
+    const wins = closedForKelly.filter(t => t.pnl > 0);
+    const losses = closedForKelly.filter(t => t.pnl <= 0);
+    const winRate = wins.length / closedForKelly.length;
+    const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 1;
+    const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : 1;
+    const kellyFull = (winLossRatio * winRate - (1 - winRate)) / Math.max(winLossRatio, 0.01);
+    const kellyHalf = Math.max(0, kellyFull * kellyConfig.kellyFraction) * 100;
+    kellyRisk = Math.max(kellyConfig.minRiskPercent, Math.min(kellyHalf, config.riskPercent * kellyConfig.maxRiskMultiplier));
+    debugLog(`📐 KELLY: WR=${(winRate * 100).toFixed(0)}% W/L=${winLossRatio.toFixed(2)} → Half=${kellyHalf.toFixed(1)}% → Using ${kellyRisk.toFixed(1)}%`);
+  }
+
+  // === REGIME-SPECIFIC RISK ADJUSTMENT ===
+  const regimeRisk = tc.REGIME_RISK || { TRENDING_UP: 1.1, TRENDING_DOWN: 1.1, VOLATILE: 0.7, RANGING: 0.6, CHOPPY: 0.6, DEFAULT: 1.0 };
+  const regimeMultiplier = regimeRisk[signal.marketRegime] || regimeRisk.DEFAULT;
+
+  // === CONFIDENCE-BASED POSITION SCALING ===
   const confidence = signal.confidence || 80;
   const scaling = dualPortfolioState.config.confidenceScaling;
   let confidenceMultiplier = scaling.low.multiplier;
@@ -5528,7 +5611,16 @@ function openDualPortfolioTrade(signal) {
   else if (confidence >= scaling.high.minConfidence) confidenceMultiplier = scaling.high.multiplier;
   else if (confidence >= scaling.base.minConfidence) confidenceMultiplier = scaling.base.multiplier;
 
-  const adjustedRisk = config.riskPercent * streakMultiplier * confidenceMultiplier;
+  // === COMBINE ALL RISK MULTIPLIERS ===
+  let adjustedRisk = kellyRisk * streakMultiplier * regimeMultiplier * confidenceMultiplier;
+
+  // === HARD RISK CAP: Never exceed 40% on any single trade ===
+  const maxRiskCap = tc.MAX_RISK_CAP_PERCENT || 40;
+  const wasCapped = adjustedRisk > maxRiskCap;
+  if (wasCapped) {
+    debugLog(`🛡️ RISK CAP: ${adjustedRisk.toFixed(1)}% exceeds ${maxRiskCap}% cap → clamped`);
+    adjustedRisk = maxRiskCap;
+  }
 
   // Calculate position size: riskAmount = actual capital (margin), positionSize = notional
   const riskAmount = portfolio.balance * (adjustedRisk / 100);
@@ -5551,8 +5643,12 @@ function openDualPortfolioTrade(signal) {
     isGoldConsensus: signal.isGoldConsensus || false,
     isSilverConsensus: signal.isSilverConsensus || false,
     confidence: signal.confidence,
+    marketRegime: signal.marketRegime || null,
     streakAtOpen: winStreak,
-    riskMultiplier: streakMultiplier
+    riskMultiplier: streakMultiplier,
+    regimeMultiplier: regimeMultiplier,
+    kellyRisk: kellyRisk,
+    adjustedRisk: adjustedRisk
   };
 
   portfolio.trades.push(trade);
@@ -5561,8 +5657,11 @@ function openDualPortfolioTrade(signal) {
   updateDualPortfolioStats(portfolioType);
 
   const streakInfo = streakMultiplier > 1 ? ` | 🔥 Streak ${winStreak} (${streakMultiplier.toFixed(1)}x)` : '';
+  const regimeInfo = regimeMultiplier !== 1.0 ? ` | 📊 Regime ${signal.marketRegime} (${regimeMultiplier}x)` : '';
+  const kellyInfo = kellyRisk !== config.riskPercent ? ` | 📐 Kelly ${kellyRisk.toFixed(1)}%` : '';
   const confInfo = ` | 🎯 ${confLabel} conf ${confidence}% (${confidenceMultiplier}x)`;
-  debugLog(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)} | Margin: $${riskAmount.toFixed(2)}${confInfo}${streakInfo}`);
+  const capInfo = wasCapped ? ' | 🛡️ CAPPED' : '';
+  debugLog(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)} | Risk: ${adjustedRisk.toFixed(1)}%${confInfo}${streakInfo}${regimeInfo}${kellyInfo}${capInfo}`);
 
   // Sync to backend
   syncDualPortfolioToBackend();
@@ -5582,26 +5681,109 @@ function calculatePortfolioWinStreak(trades) {
 }
 
 // Update open positions for dual portfolio
+// NOTE: Logic mirrors monitor-positions.js — keep in sync via lib/trading-config.js
 function updateDualPortfolioPositions() {
+  const tc = window._tradingConfig || {};
+  const partialTP = tc.PARTIAL_TP || { tp1: { percent: 0.50, closeRatio: 0.40 }, tp2: { percent: 0.75, closeRatio: 0.30 }, tp3: { percent: 1.00, closeRatio: 0.30 } };
+  const trailConfig = tc.TRAIL_CONFIG || { silver: { breakevenThreshold: 0.50, trailPercent: 2.0 }, gold: { breakevenThreshold: 0.50, trailPercent: 1.5 } };
+  let needsSave = false;
+
   for (const portfolioType of ['silver', 'gold']) {
     const portfolio = dualPortfolioState[portfolioType];
     const openTrades = portfolio.trades.filter(t => t.status === 'open');
     let totalUnrealizedPnl = 0;
+    const config = trailConfig[portfolioType] || trailConfig.silver;
 
     for (const trade of openTrades) {
       const currentPrice = state.priceCache[trade.symbol] || trade.entry;
-      const priceDiff = trade.direction === 'LONG' ? currentPrice - trade.entry : trade.entry - currentPrice;
-      trade.pnl = (priceDiff / trade.entry) * trade.size;
+      const isLong = trade.direction === 'LONG';
+      const remainingSize = trade.remainingSize || trade.size;
+      const priceDiff = isLong ? currentPrice - trade.entry : trade.entry - currentPrice;
+
+      // PnL on remaining position + already-banked partial PnL
+      trade.pnl = (priceDiff / trade.entry) * remainingSize + (trade.partialPnl || 0);
       totalUnrealizedPnl += trade.pnl;
 
-      // Check TP/SL
-      if (trade.direction === 'LONG') {
-        if (currentPrice >= trade.tp || currentPrice <= trade.sl) {
-          closeDualPortfolioTrade(portfolioType, trade, currentPrice);
+      // --- Breakeven + Trailing Stop Logic ---
+      const tpDistance = Math.abs(trade.tp - trade.entry);
+      const priceProgress = isLong
+        ? (currentPrice - trade.entry) / tpDistance
+        : (trade.entry - currentPrice) / tpDistance;
+
+      if (priceProgress >= config.breakevenThreshold) {
+        const trailDistance = trade.entry * (config.trailPercent / 100);
+        const newTrailSL = isLong ? currentPrice - trailDistance : currentPrice + trailDistance;
+        const breakevenSL = trade.entry;
+        const bestSL = isLong ? Math.max(newTrailSL, breakevenSL) : Math.min(newTrailSL, breakevenSL);
+        const shouldUpdate = isLong ? bestSL > trade.sl : bestSL < trade.sl;
+
+        if (shouldUpdate) {
+          if (!trade.originalSl) trade.originalSl = trade.sl;
+          const moveType = Math.abs(bestSL - trade.entry) < 0.0001 ? 'BREAKEVEN' : 'TRAILING';
+          trade.sl = bestSL;
+          trade.slAdjustedAt = Date.now();
+          trade.isTrailing = true;
+          needsSave = true;
+          debugLog(`🔄 ${trade.symbol}: SL ${moveType} → $${formatPrice(bestSL)} (progress ${(priceProgress * 100).toFixed(0)}%)`);
         }
-      } else {
-        if (currentPrice <= trade.tp || currentPrice >= trade.sl) {
-          closeDualPortfolioTrade(portfolioType, trade, currentPrice);
+      }
+
+      // --- Check SL ---
+      const slHit = isLong ? currentPrice <= trade.sl : currentPrice >= trade.sl;
+      if (slHit) {
+        // Close entire remaining position at SL
+        const slPnl = (isLong ? trade.sl - trade.entry : trade.entry - trade.sl) / trade.entry * remainingSize;
+        trade.pnl = (trade.partialPnl || 0) + slPnl;
+        trade.remainingSize = 0;
+        const closeType = trade.isTrailing ? 'TRAIL SL' : 'SL';
+        debugLog(`🛑 ${closeType}: ${trade.symbol} closed | PnL: $${trade.pnl.toFixed(2)}`);
+        closeDualPortfolioTrade(portfolioType, trade, trade.sl);
+        continue;
+      }
+
+      // --- Partial Take Profit ---
+      const tpLevels = [
+        { key: 'tp1Hit', ...partialTP.tp1 },
+        { key: 'tp2Hit', ...partialTP.tp2 },
+        { key: 'tp3Hit', ...partialTP.tp3 }
+      ];
+
+      for (const level of tpLevels) {
+        if (trade[level.key]) continue; // Already hit
+
+        const tpPrice = isLong
+          ? trade.entry + tpDistance * level.percent
+          : trade.entry - tpDistance * level.percent;
+        const hit = isLong ? currentPrice >= tpPrice : currentPrice <= tpPrice;
+
+        if (hit) {
+          const closeSize = trade.size * level.closeRatio;
+          const partialPriceDiff = isLong ? tpPrice - trade.entry : trade.entry - tpPrice;
+          const partialPnl = (partialPriceDiff / trade.entry) * closeSize;
+
+          trade[level.key] = true;
+          trade.remainingSize = (trade.remainingSize || trade.size) - closeSize;
+          trade.partialPnl = (trade.partialPnl || 0) + partialPnl;
+          portfolio.balance += partialPnl;
+          needsSave = true;
+
+          const tpLabel = level.key.toUpperCase().replace('HIT', '');
+          debugLog(`🎯 ${tpLabel} HIT ${trade.symbol}: closed ${(level.closeRatio * 100)}% @ $${formatPrice(tpPrice)} | +$${partialPnl.toFixed(2)}`);
+
+          // Move SL to breakeven after TP1
+          if (level.key === 'tp1Hit' && !trade.originalSl) {
+            trade.originalSl = trade.sl;
+            trade.sl = trade.entry;
+            debugLog(`🔒 ${trade.symbol}: SL moved to BREAKEVEN after TP1`);
+          }
+
+          // TP3 = full target hit, close remaining
+          if (level.key === 'tp3Hit') {
+            trade.pnl = trade.partialPnl;
+            trade.remainingSize = 0;
+            closeDualPortfolioTrade(portfolioType, trade, tpPrice);
+            break;
+          }
         }
       }
     }
@@ -5615,11 +5797,13 @@ function updateDualPortfolioPositions() {
     }
   }
 
+  if (needsSave) saveDualPortfolio();
   renderDualPortfolioPositions('silver');
   renderDualPortfolioPositions('gold');
 }
 
 // Close trade in dual portfolio
+// Handles both full close and partial-TP close (where trade.pnl is already set by caller)
 function closeDualPortfolioTrade(portfolioType, trade, exitPrice) {
   const portfolio = dualPortfolioState[portfolioType];
 
@@ -5627,10 +5811,17 @@ function closeDualPortfolioTrade(portfolioType, trade, exitPrice) {
   trade.exitPrice = exitPrice;
   trade.closeTimestamp = Date.now();
 
-  const priceDiff = trade.direction === 'LONG' ? exitPrice - trade.entry : trade.entry - exitPrice;
-  trade.pnl = (priceDiff / trade.entry) * trade.size;
+  // If partial TPs were taken, trade.pnl is already set correctly by the caller
+  // (includes accumulated partialPnl + remaining position PnL)
+  // Only recalculate if no partial TP history (legacy trades)
+  if (!trade.tp1Hit && !trade.tp2Hit && !trade.tp3Hit) {
+    const priceDiff = trade.direction === 'LONG' ? exitPrice - trade.entry : trade.entry - exitPrice;
+    trade.pnl = (priceDiff / trade.entry) * trade.size;
+    portfolio.balance += trade.pnl;
+  }
+  // For partial-TP trades, the partial PnL was already added to balance incrementally;
+  // the final remaining-position PnL (SL close) is added in updateDualPortfolioPositions
 
-  portfolio.balance += trade.pnl;
   portfolio.equityHistory.push({ time: Date.now(), value: portfolio.balance });
 
   // Update stats
@@ -10421,6 +10612,26 @@ function initTerminal() {
 // ============================================
 
 async function init() {
+  // Fetch shared trading config from server (single source of truth: lib/trading-config.js)
+  // Falls back to hardcoded defaults if fetch fails
+  try {
+    const configResp = await fetch('/api/trading-config');
+    if (configResp.ok) {
+      window._tradingConfig = await configResp.json();
+      // Sync portfolio config with server values
+      const pc = window._tradingConfig.PORTFOLIO_CONFIG;
+      if (pc) {
+        if (pc.silver) Object.assign(dualPortfolioState.config.silver, pc.silver);
+        if (pc.gold) Object.assign(dualPortfolioState.config.gold, pc.gold);
+      }
+      const cs = window._tradingConfig.CONFIDENCE_SCALING;
+      if (cs) dualPortfolioState.config.confidenceScaling = cs;
+      debugLog('📋 Trading config synced from server');
+    }
+  } catch (e) {
+    debugLog('⚠️ Could not fetch trading config, using local defaults');
+  }
+
   loadTrades();
   await loadPerformanceStats();
   loadSignalHistory();
