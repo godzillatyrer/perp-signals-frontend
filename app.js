@@ -1272,10 +1272,17 @@ const dualPortfolioState = {
       maxDrawdown: 0, peakEquity: 5000, winRate: 0
     }
   },
-  // Aggressive config for 200% monthly growth target
+  // Capital-heavy config: lower leverage, higher capital per trade, confidence scaling
   config: {
-    silver: { leverage: 10, riskPercent: 5, maxOpenTrades: 8, tpMultiplier: 2.5, slPercent: 2 },
-    gold: { leverage: 15, riskPercent: 8, maxOpenTrades: 5, tpMultiplier: 3, slPercent: 1.5 }
+    silver: { leverage: 5, riskPercent: 18, maxOpenTrades: 5, tpMultiplier: 2.5, slPercent: 2 },
+    gold: { leverage: 7, riskPercent: 22, maxOpenTrades: 4, tpMultiplier: 3, slPercent: 1.5 },
+    // Confidence-based position scaling (multiplier on base size)
+    confidenceScaling: {
+      ultra: { minConfidence: 92, multiplier: 1.3 },  // 92%+ → 30% bigger
+      high:  { minConfidence: 85, multiplier: 1.1 },  // 85-91% → 10% bigger
+      base:  { minConfidence: 75, multiplier: 1.0 },  // 75-84% → base size
+      low:   { minConfidence: 0,  multiplier: 0.7 }   // <75% → 30% smaller
+    }
   },
   activePortfolio: 'silver',
   equityChartSilver: null,
@@ -5433,12 +5440,22 @@ function openDualPortfolioTrade(signal) {
 
   // Anti-Martingale: Progressive risk on winning streaks
   const winStreak = calculatePortfolioWinStreak(portfolio.trades);
-  const streakMultiplier = Math.min(1 + winStreak * 0.5, 3.0);
-  const adjustedRisk = config.riskPercent * streakMultiplier;
+  const streakMultiplier = Math.min(1 + winStreak * 0.3, 2.0); // Reduced from 0.5/3.0 since base size is already big
 
-  // Calculate position size with streak-adjusted risk
+  // Confidence-based position scaling
+  const confidence = signal.confidence || 80;
+  const scaling = dualPortfolioState.config.confidenceScaling;
+  let confidenceMultiplier = scaling.low.multiplier;
+  if (confidence >= scaling.ultra.minConfidence) confidenceMultiplier = scaling.ultra.multiplier;
+  else if (confidence >= scaling.high.minConfidence) confidenceMultiplier = scaling.high.multiplier;
+  else if (confidence >= scaling.base.minConfidence) confidenceMultiplier = scaling.base.multiplier;
+
+  const adjustedRisk = config.riskPercent * streakMultiplier * confidenceMultiplier;
+
+  // Calculate position size: riskAmount = actual capital (margin), positionSize = notional
   const riskAmount = portfolio.balance * (adjustedRisk / 100);
   const positionSize = riskAmount * config.leverage;
+  const confLabel = confidence >= scaling.ultra.minConfidence ? 'ULTRA' : confidence >= scaling.high.minConfidence ? 'HIGH' : confidence >= scaling.base.minConfidence ? 'BASE' : 'LOW';
 
   const trade = {
     id: Date.now(),
@@ -5465,8 +5482,9 @@ function openDualPortfolioTrade(signal) {
   renderDualPortfolioPositions(portfolioType);
   updateDualPortfolioStats(portfolioType);
 
-  const streakInfo = streakMultiplier > 1 ? ` | 🔥 Streak ${winStreak} (${streakMultiplier}x)` : '';
-  console.log(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)}${streakInfo}`);
+  const streakInfo = streakMultiplier > 1 ? ` | 🔥 Streak ${winStreak} (${streakMultiplier.toFixed(1)}x)` : '';
+  const confInfo = ` | 🎯 ${confLabel} conf ${confidence}% (${confidenceMultiplier}x)`;
+  console.log(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)} | Margin: $${riskAmount.toFixed(2)}${confInfo}${streakInfo}`);
 
   // Sync to backend
   syncDualPortfolioToBackend();
