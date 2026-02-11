@@ -715,8 +715,83 @@ export default async function handler(request, response) {
       }
     }
 
+    // 7. Server-side shadow PnL resolution for AI signal log
+    // Resolves pending→win/loss so AI Strategy tab and AI prompts have track record data
+    let shadowResolved = 0;
+    try {
+      const signalLogRaw = await r.get('ai_signal_log');
+      if (signalLogRaw) {
+        const signalLog = typeof signalLogRaw === 'string' ? JSON.parse(signalLogRaw) : signalLogRaw;
+        // Collect symbols that need prices
+        const shadowSymbols = new Set();
+        for (const source of ['claude', 'openai', 'grok']) {
+          for (const sig of (signalLog[source] || [])) {
+            if (sig.shadowStatus === 'pending' && sig.symbol) shadowSymbols.add(sig.symbol);
+          }
+        }
+
+        if (shadowSymbols.size > 0) {
+          // Reuse prices already fetched for positions, fetch any missing ones
+          const missingSymbols = [...shadowSymbols].filter(s => !prices[s]);
+          let shadowPrices = { ...prices };
+          if (missingSymbols.length > 0) {
+            const extraPrices = await getCurrentPrices(missingSymbols);
+            shadowPrices = { ...shadowPrices, ...extraPrices };
+          }
+
+          let changed = false;
+          const now = Date.now();
+          for (const source of ['claude', 'openai', 'grok']) {
+            for (const sig of (signalLog[source] || [])) {
+              if (sig.shadowStatus !== 'pending') continue;
+              const currentPrice = shadowPrices[sig.symbol];
+              if (!currentPrice) continue;
+
+              const isLong = sig.direction === 'LONG';
+              if (isLong) {
+                if (currentPrice >= sig.tp) {
+                  sig.shadowStatus = 'win';
+                  sig.shadowPnl = ((sig.tp - sig.entry) / sig.entry * 100).toFixed(2);
+                  changed = true; shadowResolved++;
+                } else if (currentPrice <= sig.sl) {
+                  sig.shadowStatus = 'loss';
+                  sig.shadowPnl = ((sig.sl - sig.entry) / sig.entry * 100).toFixed(2);
+                  changed = true; shadowResolved++;
+                }
+              } else {
+                if (currentPrice <= sig.tp) {
+                  sig.shadowStatus = 'win';
+                  sig.shadowPnl = ((sig.entry - sig.tp) / sig.entry * 100).toFixed(2);
+                  changed = true; shadowResolved++;
+                } else if (currentPrice >= sig.sl) {
+                  sig.shadowStatus = 'loss';
+                  sig.shadowPnl = ((sig.entry - sig.sl) / sig.entry * 100).toFixed(2);
+                  changed = true; shadowResolved++;
+                }
+              }
+
+              // Expire pending signals older than 6h
+              if (sig.shadowStatus === 'pending' && now - sig.timestamp > 6 * 60 * 60 * 1000) {
+                const priceDiff = isLong ? currentPrice - sig.entry : sig.entry - currentPrice;
+                sig.shadowStatus = priceDiff > 0 ? 'win' : 'loss';
+                sig.shadowPnl = (priceDiff / sig.entry * 100).toFixed(2);
+                changed = true; shadowResolved++;
+              }
+            }
+          }
+
+          if (changed) {
+            await r.set('ai_signal_log', JSON.stringify(signalLog));
+            console.log(`🔮 Shadow PnL: resolved ${shadowResolved} signals`);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('Shadow PnL resolution skipped:', e.message);
+    }
+
     const duration = Date.now() - startTime;
-    console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length} | Closed: ${closedTrades.length} | SL adjusted: ${slAdjusted}`);
+    console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length} | Closed: ${closedTrades.length} | SL adjusted: ${slAdjusted} | Shadow resolved: ${shadowResolved}`);
 
     return response.status(200).json({
       success: true,
@@ -730,6 +805,7 @@ export default async function handler(request, response) {
         isTP: ct.isTP,
         portfolio: ct.portfolioType
       })),
+      shadowResolved,
       duration
     });
 

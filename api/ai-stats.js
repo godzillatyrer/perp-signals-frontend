@@ -273,6 +273,56 @@ export default async function handler(request, response) {
           break;
         }
 
+        case 'sync_signal_log': {
+          // Sync resolved shadow signals from client back to Redis
+          // Client resolves pending→win/loss via price tracking, needs to persist to Redis
+          const { signalLog } = data;
+          if (signalLog && typeof signalLog === 'object') {
+            // Merge: update shadow status of existing signals, keep any new server-side signals
+            const existing = await r.get('ai_signal_log');
+            const serverLog = existing
+              ? (typeof existing === 'string' ? JSON.parse(existing) : existing)
+              : { claude: [], openai: [], grok: [], consensus: [] };
+
+            for (const source of ['claude', 'openai', 'grok', 'consensus']) {
+              const clientSigs = signalLog[source] || [];
+              const serverSigs = serverLog[source] || [];
+
+              // Build lookup of client signals by timestamp+symbol for fast matching
+              const clientMap = new Map();
+              for (const sig of clientSigs) {
+                clientMap.set(`${sig.timestamp}-${sig.symbol}`, sig);
+              }
+
+              // Update server signals with resolved status from client
+              for (const serverSig of serverSigs) {
+                const key = `${serverSig.timestamp}-${serverSig.symbol}`;
+                const clientSig = clientMap.get(key);
+                if (clientSig && serverSig.shadowStatus === 'pending' && clientSig.shadowStatus !== 'pending') {
+                  serverSig.shadowStatus = clientSig.shadowStatus;
+                  serverSig.shadowPnl = clientSig.shadowPnl;
+                }
+                // Remove from map so we know which client signals are new
+                clientMap.delete(key);
+              }
+
+              // Add any client-only signals (resolved signals that were never on server)
+              for (const [, sig] of clientMap) {
+                serverSigs.push(sig);
+              }
+
+              // Sort newest first, keep max 100
+              serverLog[source] = serverSigs
+                .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+                .slice(0, 100);
+            }
+
+            await r.set('ai_signal_log', JSON.stringify(serverLog));
+          }
+
+          return response.status(200).json({ success: true, synced: true });
+        }
+
         default:
           return response.status(400).json({
             success: false,

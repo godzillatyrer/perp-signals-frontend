@@ -7950,6 +7950,32 @@ function saveAiSignalLog() {
   }
 }
 
+// Sync resolved signal log to Redis so AI Strategy tab and AI prompts see win/loss data
+let _lastSignalLogSync = 0;
+const SIGNAL_LOG_SYNC_THROTTLE = 2 * 60 * 1000; // 2 minutes
+
+async function syncAiSignalLogToServer() {
+  const now = Date.now();
+  if (now - _lastSignalLogSync < SIGNAL_LOG_SYNC_THROTTLE) return;
+  _lastSignalLogSync = now;
+
+  try {
+    const resp = await fetch('/api/ai-stats', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'sync_signal_log',
+        data: { signalLog: state.aiSignalLog }
+      })
+    });
+    if (resp.ok) {
+      debugLog('📡 AI signal log synced to Redis');
+    }
+  } catch (e) {
+    // Silent fail — will retry on next shadow update cycle
+  }
+}
+
 function loadAiSignalLog() {
   try {
     const saved = localStorage.getItem('ai_signal_log');
@@ -7965,6 +7991,11 @@ function loadAiSignalLog() {
   } catch (e) { /* ignore parse errors */ }
   // Also load from server (async, merges with local)
   loadAiSignalLogFromServer();
+  // Sync any locally resolved signals back to Redis on startup
+  const hasResolved = ['claude', 'openai', 'grok'].some(src =>
+    (state.aiSignalLog[src] || []).some(s => s.shadowStatus === 'win' || s.shadowStatus === 'loss')
+  );
+  if (hasResolved) syncAiSignalLogToServer();
 }
 
 async function loadAiSignalLogFromServer() {
@@ -8072,7 +8103,10 @@ function updateShadowPnL() {
       }
     }
   }
-  if (changed) saveAiSignalLog();
+  if (changed) {
+    saveAiSignalLog();
+    syncAiSignalLogToServer();
+  }
 }
 
 // ============================================
