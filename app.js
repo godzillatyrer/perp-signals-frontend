@@ -6,6 +6,40 @@
 // Debug mode - set to true to see detailed API logs
 let DEBUG_MODE = false;
 
+// Debug-gated logging helpers
+function debugLog(...args) { if (DEBUG_MODE) console.log(...args); }
+function debugWarn(...args) { if (DEBUG_MODE) console.warn(...args); }
+
+// Interval/timeout registry for cleanup
+const _intervals = [];
+const _timeouts = [];
+function managedSetInterval(fn, ms) {
+  const id = setInterval(fn, ms);
+  _intervals.push(id);
+  return id;
+}
+function managedSetTimeout(fn, ms) {
+  const id = setTimeout(fn, ms);
+  _timeouts.push(id);
+  return id;
+}
+function clearAllManagedTimers() {
+  _intervals.forEach(id => clearInterval(id));
+  _timeouts.forEach(id => clearTimeout(id));
+  _intervals.length = 0;
+  _timeouts.length = 0;
+}
+
+// Safe JSON parse from fetch response - returns null on failure
+async function safeJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    debugLog('Failed to parse JSON response from:', response.url);
+    return null;
+  }
+}
+
 // Configuration
 const CONFIG = {
   BINANCE_API: 'https://fapi.binance.com',
@@ -69,7 +103,17 @@ const CONFIG = {
   MIN_TP_PERCENT_BTC_ETH: 3, // BTC/ETH need at least 3% move
   MIN_TP_PERCENT_LARGE_CAP: 5, // Large caps (top 10) need 5%
   MIN_TP_PERCENT_MID_CAP: 7, // Mid caps need 7%
-  MIN_TP_PERCENT_SMALL_CAP: 10 // Small caps need 10% minimum move
+  MIN_TP_PERCENT_SMALL_CAP: 10, // Small caps need 10% minimum move
+  // Interval timings (ms)
+  MARKET_RENDER_INTERVAL: 2000,
+  SHADOW_PNL_INTERVAL: 5000,
+  AI_DETAIL_REFRESH_INTERVAL: 30000,
+  AI_SIGNAL_LOG_SYNC_INTERVAL: 120000,
+  PERFORMANCE_STATS_INTERVAL: 120000,
+  OPTIMIZER_STATUS_INTERVAL: 600000,
+  FUNDING_RATES_INTERVAL: 300000,
+  PRICE_POLLING_INTERVAL: 5000,
+  WS_RECONNECT_DELAY: 5000
 };
 
 // Load API keys from localStorage
@@ -144,7 +188,7 @@ function recordSentSignal(symbol, direction, entry) {
     timestamp: Date.now()
   };
   saveSentSignals(signals);
-  console.log(`📝 Recorded signal: ${symbol} ${direction} at ${entry}`);
+  debugLog(`📝 Recorded signal: ${symbol} ${direction} at ${entry}`);
 }
 
 function isSignalOnCooldown(symbol, direction, currentEntry) {
@@ -167,13 +211,13 @@ function isSignalOnCooldown(symbol, direction, currentEntry) {
 
   // If price moved significantly (>10%), allow new signal
   if (priceChange >= PRICE_OVERRIDE_PERCENT) {
-    console.log(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% - allowing new signal`);
+    debugLog(`📈 ${symbol}: Price moved ${priceChange.toFixed(1)}% - allowing new signal`);
     return { onCooldown: false };
   }
 
   // On cooldown
   const hoursRemaining = (SIGNAL_COOLDOWN_HOURS - hoursSinceLast).toFixed(1);
-  console.log(`⏳ ${symbol}: On cooldown (${hoursRemaining}h remaining, price only moved ${priceChange.toFixed(1)}%)`);
+  debugLog(`⏳ ${symbol}: On cooldown (${hoursRemaining}h remaining, price only moved ${priceChange.toFixed(1)}%)`);
   return {
     onCooldown: true,
     hoursRemaining,
@@ -198,7 +242,7 @@ function cleanExpiredSignals() {
 
   if (cleaned > 0) {
     saveSentSignals(signals);
-    console.log(`🧹 Cleaned ${cleaned} expired signal records`);
+    debugLog(`🧹 Cleaned ${cleaned} expired signal records`);
   }
 }
 
@@ -232,7 +276,7 @@ async function recordRedisCooldown(symbol, direction, entry) {
       body: JSON.stringify({ symbol, direction, entry })
     });
     if (response.ok) {
-      console.log(`📝 Recorded ${symbol} cooldown to Redis`);
+      debugLog(`📝 Recorded ${symbol} cooldown to Redis`);
       return true;
     }
   } catch (e) {
@@ -280,7 +324,7 @@ async function sendTelegramMessage(message, parseMode = 'HTML', inlineKeyboard =
       return false;
     }
 
-    console.log('📱 Telegram message sent successfully');
+    debugLog('📱 Telegram message sent successfully');
     return true;
   } catch (error) {
     console.error('❌ Telegram send failed:', error);
@@ -399,7 +443,7 @@ async function sendTelegramSignalAlert(signal) {
   // Check cooldown via Redis (synced with serverless function) - prevent spam
   const cooldownCheck = await checkRedisCooldown(signal.symbol, signal.direction, signal.entry);
   if (cooldownCheck.onCooldown) {
-    console.log(`🚫 ${signal.symbol}: Blocked by Redis cooldown (${cooldownCheck.hoursRemaining}h remaining)`);
+    debugLog(`🚫 ${signal.symbol}: Blocked by Redis cooldown (${cooldownCheck.hoursRemaining}h remaining)`);
     return false;
   }
 
@@ -450,7 +494,7 @@ async function sendSignalToTelegramManual(signal) {
   if (cooldownCheck.onCooldown) {
     const override = confirm(`⚠️ ${signal.symbol} is on cooldown (${cooldownCheck.hoursRemaining}h remaining).\n\nSending anyway will cause duplicate signals.\n\nAre you sure you want to override?`);
     if (!override) {
-      console.log(`🚫 ${signal.symbol}: Manual send cancelled by user (cooldown active)`);
+      debugLog(`🚫 ${signal.symbol}: Manual send cancelled by user (cooldown active)`);
       return false;
     }
     console.warn(`⚠️ ${signal.symbol}: Manual override - sending despite cooldown`);
@@ -464,7 +508,7 @@ async function sendSignalToTelegramManual(signal) {
     // Record the signal to both Redis and localStorage
     recordSentSignal(signal.symbol, signal.direction, signal.entry);
     await recordRedisCooldown(signal.symbol, signal.direction, signal.entry);
-    console.log(`📤 Manually sent ${signal.symbol} signal to Telegram with Win/Loss buttons`);
+    debugLog(`📤 Manually sent ${signal.symbol} signal to Telegram with Win/Loss buttons`);
   }
 
   return success;
@@ -495,7 +539,7 @@ async function updateDiscordStats() {
       winRateEl.textContent = closedTotal > 0 ? `${winRate}% (${wins}W/${losses}L)` : 'No data';
     }
   } catch (e) {
-    console.log('Could not fetch Discord stats:', e.message);
+    debugLog('Could not fetch Discord stats:', e.message);
     openCallsEl.textContent = '-';
     winRateEl.textContent = '-';
   }
@@ -790,7 +834,7 @@ function promptForApiKeys() {
     if (claudeKey && claudeKey.trim().startsWith('sk-ant-')) {
       CONFIG.CLAUDE_API_KEY = claudeKey.trim();
       localStorage.setItem('claude_api_key', claudeKey.trim());
-      console.log('🔑 Claude API Key saved');
+      debugLog('🔑 Claude API Key saved');
     }
   }
 
@@ -800,7 +844,7 @@ function promptForApiKeys() {
     if (geminiKey && geminiKey.trim().length > 10) {
       CONFIG.GEMINI_API_KEY = geminiKey.trim();
       localStorage.setItem('gemini_api_key', geminiKey.trim());
-      console.log('🔑 Gemini API Key saved');
+      debugLog('🔑 Gemini API Key saved');
     }
   }
 
@@ -854,7 +898,7 @@ function setApiKeyManually(provider, key) {
     if (key && key.startsWith('sk-ant-')) {
       CONFIG.CLAUDE_API_KEY = key;
       localStorage.setItem('claude_api_key', key);
-      console.log('✅ Claude API key saved successfully!');
+      debugLog('✅ Claude API key saved successfully!');
       return true;
     } else {
       console.error('❌ Invalid Claude API key. It should start with "sk-ant-"');
@@ -864,7 +908,7 @@ function setApiKeyManually(provider, key) {
     if (key && key.length > 10) {
       CONFIG.GEMINI_API_KEY = key;
       localStorage.setItem('gemini_api_key', key);
-      console.log('✅ Gemini API key saved successfully!');
+      debugLog('✅ Gemini API key saved successfully!');
       return true;
     } else {
       console.error('❌ Invalid Gemini API key.');
@@ -874,7 +918,7 @@ function setApiKeyManually(provider, key) {
     if (key && key.length > 10) {
       CONFIG.LUNARCRUSH_API_KEY = key;
       localStorage.setItem('lunarcrush_api_key', key);
-      console.log('✅ LunarCrush API key saved successfully!');
+      debugLog('✅ LunarCrush API key saved successfully!');
       return true;
     } else {
       console.error('❌ Invalid LunarCrush API key.');
@@ -884,7 +928,7 @@ function setApiKeyManually(provider, key) {
     if (key && key.length > 10) {
       CONFIG.COINGLASS_API_KEY = key;
       localStorage.setItem('coinglass_api_key', key);
-      console.log('✅ Coinglass API key saved successfully!');
+      debugLog('✅ Coinglass API key saved successfully!');
       return true;
     } else {
       console.error('❌ Invalid Coinglass API key.');
@@ -894,7 +938,7 @@ function setApiKeyManually(provider, key) {
     if (key && key.startsWith('xai-')) {
       CONFIG.GROK_API_KEY = key;
       localStorage.setItem('grok_api_key', key);
-      console.log('✅ Grok API key saved successfully!');
+      debugLog('✅ Grok API key saved successfully!');
       return true;
     } else {
       console.error('❌ Invalid Grok API key. It should start with "xai-"');
@@ -902,12 +946,12 @@ function setApiKeyManually(provider, key) {
     }
   } else {
     console.error('❌ Unknown provider. Use "claude", "openai", "grok", "lunarcrush", or "coinglass"');
-    console.log('Examples:');
-    console.log('   setApiKey("claude", "sk-ant-...")');
-    console.log('   setApiKey("openai", "sk-proj-...")');
-    console.log('   setApiKey("grok", "xai-...")');
-    console.log('   setApiKey("lunarcrush", "your-api-key")');
-    console.log('   setApiKey("coinglass", "your-api-key")');
+    debugLog('Examples:');
+    debugLog('   setApiKey("claude", "sk-ant-...")');
+    debugLog('   setApiKey("openai", "sk-proj-...")');
+    debugLog('   setApiKey("grok", "xai-...")');
+    debugLog('   setApiKey("lunarcrush", "your-api-key")');
+    debugLog('   setApiKey("coinglass", "your-api-key")');
     return false;
   }
 }
@@ -1387,7 +1431,7 @@ async function fetchHyperliquidMeta() {
     hyperliquidMeta = data;
     hyperliquidMetaTimestamp = Date.now();
 
-    if (DEBUG_MODE) console.log('🟢 Hyperliquid meta loaded:', data[0]?.universe?.length, 'pairs');
+    if (DEBUG_MODE) debugLog('🟢 Hyperliquid meta loaded:', data[0]?.universe?.length, 'pairs');
     return data;
   } catch (error) {
     console.warn('Hyperliquid meta fetch failed:', error.message);
@@ -1443,7 +1487,7 @@ async function fetchHyperliquidMarkets() {
     // Sort by volume
     markets.sort((a, b) => b.volume - a.volume);
 
-    console.log(`🟢 Hyperliquid: ${markets.length} pairs with >$1M volume`);
+    debugLog(`🟢 Hyperliquid: ${markets.length} pairs with >$1M volume`);
     return markets;
   } catch (error) {
     console.warn('Hyperliquid markets fetch failed:', error.message);
@@ -1545,7 +1589,7 @@ function initHyperliquidWebSocket(symbols) {
     hlWsConnection = new WebSocket(CONFIG.HYPERLIQUID_WS);
 
     hlWsConnection.onopen = () => {
-      console.log('🟢 Hyperliquid WebSocket connected');
+      debugLog('🟢 Hyperliquid WebSocket connected');
 
       // Subscribe to all HL-only symbols
       const hlSymbols = symbols
@@ -1627,7 +1671,7 @@ async function fetchFundingRates() {
       }
     }
     state.fundingRates = rates;
-    console.log('📊 Funding rates updated for', Object.keys(rates).length, 'symbols');
+    debugLog('📊 Funding rates updated for', Object.keys(rates).length, 'symbols');
     return rates;
   } catch (error) {
     console.error('Failed to fetch funding rates:', error);
@@ -1726,11 +1770,11 @@ async function fetchSocialSentiment(symbol) {
 
 async function fetchBatchSocialSentiment(symbols) {
   if (!isLunarCrushConfigured()) {
-    console.log('⚪ LunarCrush not configured - skipping social sentiment');
+    debugLog('⚪ LunarCrush not configured - skipping social sentiment');
     return {};
   }
 
-  console.log('🌙 Fetching social sentiment data...');
+  debugLog('🌙 Fetching social sentiment data...');
 
   // Fetch for top 10 symbols only to avoid rate limits
   const topSymbols = symbols.slice(0, 10);
@@ -1740,7 +1784,7 @@ async function fetchBatchSocialSentiment(symbols) {
     await sleep(100); // Rate limiting
   }
 
-  console.log(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins`);
+  debugLog(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins`);
   return state.socialSentiment;
 }
 
@@ -1762,7 +1806,7 @@ const COINGLASS_CACHE_TTL = 60000; // 1 minute cache
 
 async function fetchLiquidationData(symbol) {
   if (!isCoinglassConfigured()) {
-    if (DEBUG_MODE) console.log('💧 [COINGLASS] Not configured');
+    if (DEBUG_MODE) debugLog('💧 [COINGLASS] Not configured');
     return null;
   }
 
@@ -1793,25 +1837,25 @@ async function fetchFromCoinglassCoinList(symbol) {
     // Method 1: Server-side proxy (uses COINGLASS_API_KEY from Vercel env)
     try {
       const proxyUrl = '/api/coinglass?endpoint=/futures/liquidation/coin-list';
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS] Fetching via server proxy...`);
+      if (DEBUG_MODE) debugLog(`💧 [COINGLASS] Fetching via server proxy...`);
       const response = await fetch(proxyUrl);
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data) {
           data = result;
         } else if (result.success === false) {
-          console.log(`💧 [COINGLASS] Server proxy: ${result.error}`);
+          debugLog(`💧 [COINGLASS] Server proxy: ${result.error}`);
         }
       }
     } catch (e) {
-      console.log(`💧 [COINGLASS] Server proxy failed: ${e.message}`);
+      debugLog(`💧 [COINGLASS] Server proxy failed: ${e.message}`);
     }
 
     // Method 2: Direct with CORS proxy (fallback if server proxy unavailable)
     if (!data && CONFIG.COINGLASS_API_KEY) {
       try {
         const url = getCoinglassUrl('/futures/liquidation/coin-list');
-        if (DEBUG_MODE) console.log(`💧 [COINGLASS] Trying CORS proxy fallback...`);
+        if (DEBUG_MODE) debugLog(`💧 [COINGLASS] Trying CORS proxy fallback...`);
         const response = await fetch(url, {
           headers: {
             'CG-API-KEY': CONFIG.COINGLASS_API_KEY,
@@ -1822,12 +1866,12 @@ async function fetchFromCoinglassCoinList(symbol) {
           data = await response.json();
         }
       } catch (e) {
-        console.log(`💧 [COINGLASS] CORS proxy also failed: ${e.message}`);
+        debugLog(`💧 [COINGLASS] CORS proxy also failed: ${e.message}`);
       }
     }
 
     if (!data || (data.code !== '0' && data.code !== 0) || !data.data) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS] No valid data from any source`);
+      if (DEBUG_MODE) debugLog(`💧 [COINGLASS] No valid data from any source`);
       return null;
     }
 
@@ -1835,7 +1879,7 @@ async function fetchFromCoinglassCoinList(symbol) {
     coinglassCoinListCache = Array.isArray(data.data) ? data.data : [];
     coinglassCoinListCacheTime = now;
 
-    if (DEBUG_MODE) console.log(`💧 [COINGLASS] ✅ Loaded ${coinglassCoinListCache.length} coins`);
+    if (DEBUG_MODE) debugLog(`💧 [COINGLASS] ✅ Loaded ${coinglassCoinListCache.length} coins`);
 
     // Find our symbol
     const coinData = coinglassCoinListCache.find(d =>
@@ -1843,7 +1887,7 @@ async function fetchFromCoinglassCoinList(symbol) {
     );
 
     if (!coinData) {
-      if (DEBUG_MODE) console.log(`💧 [COINGLASS] ${cleanSymbol} not found`);
+      if (DEBUG_MODE) debugLog(`💧 [COINGLASS] ${cleanSymbol} not found`);
       return null;
     }
 
@@ -1898,7 +1942,7 @@ function parseCoinglassData(symbol, coinData) {
   };
 
   if (DEBUG_MODE && (totalLongLiq > 0 || totalShortLiq > 0)) {
-    console.log(`💧 [COINGLASS] ${symbol}: Long=$${totalLongLiq.toFixed(0)}, Short=$${totalShortLiq.toFixed(0)}, L/S=${longRate.toFixed(0)}%/${shortRate.toFixed(0)}%`);
+    debugLog(`💧 [COINGLASS] ${symbol}: Long=$${totalLongLiq.toFixed(0)}, Short=$${totalShortLiq.toFixed(0)}, L/S=${longRate.toFixed(0)}%/${shortRate.toFixed(0)}%`);
   }
 
   return state.liquidationData[symbol];
@@ -1917,11 +1961,11 @@ async function fetchLongShortRatio(symbol) {
 
 async function fetchBatchLiquidationData(symbols) {
   if (!isCoinglassConfigured()) {
-    console.log('⚪ Coinglass not configured - skipping liquidation data');
+    debugLog('⚪ Coinglass not configured - skipping liquidation data');
     return {};
   }
 
-  console.log('💧 Fetching liquidation data...');
+  debugLog('💧 Fetching liquidation data...');
 
   // Fetch coin-list once (it contains all coins)
   // First call will fetch and cache, subsequent calls use cache
@@ -1940,7 +1984,7 @@ async function fetchBatchLiquidationData(symbols) {
     }
   }
 
-  console.log(`💧 Liquidation data loaded for ${Object.keys(state.liquidationData).length} coins`);
+  debugLog(`💧 Liquidation data loaded for ${Object.keys(state.liquidationData).length} coins`);
   return state.liquidationData;
 }
 
@@ -2044,7 +2088,7 @@ function playAlertSound(type = 'signal') {
       oscillator.stop(audioContext.currentTime + 0.2);
     }
   } catch (e) {
-    console.log('Audio not available');
+    debugLog('Audio not available');
   }
 }
 
@@ -2052,7 +2096,7 @@ async function requestNotificationPermission() {
   if ('Notification' in window) {
     const permission = await Notification.requestPermission();
     state.notificationsEnabled = permission === 'granted';
-    console.log('🔔 Notifications:', state.notificationsEnabled ? 'enabled' : 'disabled');
+    debugLog('🔔 Notifications:', state.notificationsEnabled ? 'enabled' : 'disabled');
     return state.notificationsEnabled;
   }
   return false;
@@ -2166,7 +2210,7 @@ async function loadPerformanceStatsFromRedis() {
         };
         // Also save to localStorage as cache
         localStorage.setItem('performance_stats', JSON.stringify(state.performanceStats));
-        console.log('📊 Loaded AI stats from Redis:', data.stats);
+        debugLog('📊 Loaded AI stats from Redis:', data.stats);
         renderStatsView();
         return true;
       }
@@ -2208,7 +2252,7 @@ async function syncAIStatsToRedis() {
       })
     });
     if (response.ok) {
-      console.log('📊 AI stats synced to Redis');
+      debugLog('📊 AI stats synced to Redis');
     }
   } catch (e) {
     console.error('Failed to sync AI stats to Redis:', e);
@@ -2374,13 +2418,13 @@ function updateTrailingStop(trade, currentPrice) {
     newStopLoss = currentPrice * (1 - trailPercent / 100);
     if (newStopLoss > trade.sl) {
       trade.sl = newStopLoss;
-      console.log(`📈 Trailing stop updated for ${trade.symbol}: $${formatPrice(newStopLoss)}`);
+      debugLog(`📈 Trailing stop updated for ${trade.symbol}: $${formatPrice(newStopLoss)}`);
     }
   } else {
     newStopLoss = currentPrice * (1 + trailPercent / 100);
     if (newStopLoss < trade.sl) {
       trade.sl = newStopLoss;
-      console.log(`📉 Trailing stop updated for ${trade.symbol}: $${formatPrice(newStopLoss)}`);
+      debugLog(`📉 Trailing stop updated for ${trade.symbol}: $${formatPrice(newStopLoss)}`);
     }
   }
 }
@@ -2467,7 +2511,7 @@ async function fetchMarkets() {
         }));
 
       if (hlOnlyMarkets.length > 0) {
-        console.log(`🟣 Adding ${hlOnlyMarkets.length} Hyperliquid-only pairs`);
+        debugLog(`🟣 Adding ${hlOnlyMarkets.length} Hyperliquid-only pairs`);
 
         // Add HL-only markets to the list
         primaryMarkets = [...primaryMarkets, ...hlOnlyMarkets];
@@ -2872,10 +2916,10 @@ async function fetchUSDTDominance() {
         lastUpdate: Date.now()
       };
 
-      console.log(`📊 USDT.D: ${current.toFixed(2)}% | Trend: ${trend} | Signal: ${signal}`);
+      debugLog(`📊 USDT.D: ${current.toFixed(2)}% | Trend: ${trend} | Signal: ${signal}`);
     }
   } catch (error) {
-    console.log('USDT.D fetch failed:', error.message);
+    debugLog('USDT.D fetch failed:', error.message);
   }
 
   return usdtDominanceData;
@@ -3190,7 +3234,7 @@ async function analyzeMultiTimeframeRSI(symbol) {
 
       await sleep(30);
     } catch (e) {
-      console.log(`RSI fetch failed for ${symbol} ${label}`);
+      debugLog(`RSI fetch failed for ${symbol} ${label}`);
     }
   }
 
@@ -3607,7 +3651,7 @@ function analyzeMarketStructure(candles, lookback = 30) {
 
 async function callClaudeAPI(prompt) {
   const startTime = Date.now();
-  if (DEBUG_MODE) console.log(`🧠 [CLAUDE] Starting API call with model: ${CONFIG.CLAUDE_MODEL}`);
+  if (DEBUG_MODE) debugLog(`🧠 [CLAUDE] Starting API call with model: ${CONFIG.CLAUDE_MODEL}`);
   updateAiDebugStatus('claude', 'calling');
 
   try {
@@ -3636,7 +3680,7 @@ async function callClaudeAPI(prompt) {
     }
 
     const data = await response.json();
-    if (DEBUG_MODE) console.log(`🧠 [CLAUDE] Success in ${elapsed}ms - Response length: ${data.content?.[0]?.text?.length || 0} chars`);
+    if (DEBUG_MODE) debugLog(`🧠 [CLAUDE] Success in ${elapsed}ms - Response length: ${data.content?.[0]?.text?.length || 0} chars`);
     updateAiDebugStatus('claude', 'success', `${elapsed}ms`);
     return data.content[0].text;
   } catch (error) {
@@ -3648,7 +3692,7 @@ async function callClaudeAPI(prompt) {
 
 async function callGeminiAPI(prompt) {
   const startTime = Date.now();
-  if (DEBUG_MODE) console.log(`💎 [GEMINI] Starting API call with model: ${CONFIG.GEMINI_MODEL}`);
+  if (DEBUG_MODE) debugLog(`💎 [GEMINI] Starting API call with model: ${CONFIG.GEMINI_MODEL}`);
   updateAiDebugStatus('openai', 'calling');
 
   try {
@@ -3696,7 +3740,7 @@ async function callGeminiAPI(prompt) {
       return null;
     }
 
-    if (DEBUG_MODE) console.log(`💎 [GEMINI] Success in ${elapsed}ms - Response length: ${content.length} chars`);
+    if (DEBUG_MODE) debugLog(`💎 [GEMINI] Success in ${elapsed}ms - Response length: ${content.length} chars`);
     updateAiDebugStatus('openai', 'success', `${elapsed}ms`);
     return content;
   } catch (error) {
@@ -3708,7 +3752,7 @@ async function callGeminiAPI(prompt) {
 
 async function callGrokAPI(prompt) {
   const startTime = Date.now();
-  if (DEBUG_MODE) console.log(`⚡ [GROK] Starting API call with model: ${CONFIG.GROK_MODEL}`);
+  if (DEBUG_MODE) debugLog(`⚡ [GROK] Starting API call with model: ${CONFIG.GROK_MODEL}`);
   updateAiDebugStatus('grok', 'calling');
 
   try {
@@ -3742,7 +3786,7 @@ async function callGrokAPI(prompt) {
     }
 
     const data = await response.json();
-    if (DEBUG_MODE) console.log(`⚡ [GROK] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
+    if (DEBUG_MODE) debugLog(`⚡ [GROK] Success in ${elapsed}ms - Response length: ${data.choices?.[0]?.message?.content?.length || 0} chars`);
     updateAiDebugStatus('grok', 'success', `${elapsed}ms`);
     return data.choices[0].message.content;
   } catch (error) {
@@ -4034,7 +4078,7 @@ async function runAiAnalysis() {
 
   // Check if any API key is configured
   if (!isAnyAiConfigured()) {
-    console.log('⚠️ No AI API keys configured. Skipping AI analysis.');
+    debugLog('⚠️ No AI API keys configured. Skipping AI analysis.');
     updateAiScanStatus('No API Key');
     return;
   }
@@ -4045,19 +4089,19 @@ async function runAiAnalysis() {
   if (isClaudeConfigured()) aiNames.push('Claude');
   if (isOpenAIConfigured()) aiNames.push('Gemini');
   if (isGrokConfigured()) aiNames.push('Grok');
-  console.log(`🤖 Starting ${aiNames.join(' + ')} AI market analysis...`);
+  debugLog(`🤖 Starting ${aiNames.join(' + ')} AI market analysis...`);
 
   // Check if we have at least 2 AIs for consensus (required for signals)
   const configuredAIs = countConfiguredAIs();
   if (configuredAIs < 2) {
-    console.log('⚠️ At least 2 AI services required for consensus signals. Configure more APIs in Settings.');
+    debugLog('⚠️ At least 2 AI services required for consensus signals. Configure more APIs in Settings.');
     updateAiScanStatus('Need 2+ AIs');
   }
   updateAiScanStatus('Fetching data...');
 
   try {
     // Fetch all data sources in parallel for efficiency
-    console.log('📊 Fetching market intelligence...');
+    debugLog('📊 Fetching market intelligence...');
     const topMarkets = state.markets.slice(0, 20);
     const topSymbols = topMarkets.map(m => m.symbol);
 
@@ -4068,9 +4112,10 @@ async function runAiAnalysis() {
     await fetchUSDTDominance();
 
     // Fetch social sentiment and liquidation data (if APIs are configured)
-    await Promise.all([
-      fetchBatchSocialSentiment(topSymbols),
-      fetchBatchLiquidationData(topSymbols)
+    // Use timeout to prevent one slow API from blocking the entire analysis
+    await Promise.allSettled([
+      Promise.race([fetchBatchSocialSentiment(topSymbols), new Promise(r => setTimeout(r, 15000))]),
+      Promise.race([fetchBatchLiquidationData(topSymbols), new Promise(r => setTimeout(r, 15000))])
     ]);
 
     // Gather enhanced market data for top 20 coins
@@ -4250,7 +4295,7 @@ async function runAiAnalysis() {
     const openaiPrompt = buildOpenAIPrompt(enrichedData);
     const grokPrompt = buildGrokPrompt(enrichedData);
 
-    console.log('🎯 Using specialized AI roles: Claude=Risk, Gemini=Technical, Grok=Momentum');
+    debugLog('🎯 Using specialized AI roles: Claude=Risk, Gemini=Technical, Grok=Momentum');
 
     // Call all configured AIs in parallel with their specialized prompts
     const apiPromises = [];
@@ -4300,11 +4345,11 @@ async function runAiAnalysis() {
                   } else {
                     recordSignalRejection(validation.reason);
                     recordFilterReason(validation.reason);
-                    console.log(`⛔ Claude pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
+                    debugLog(`⛔ Claude pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
               }
-              console.log('✅ Claude analysis received:', analysis.topPicks?.length || 0, 'picks');
+              debugLog('✅ Claude analysis received:', analysis.topPicks?.length || 0, 'picks');
               // Track AI performance stats
               state.performanceStats.claudeSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.claudeTotalConf += p.confidence || 0; });
@@ -4321,11 +4366,11 @@ async function runAiAnalysis() {
                   } else {
                     recordSignalRejection(validation.reason);
                     recordFilterReason(validation.reason);
-                    console.log(`⛔ Gemini pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
+                    debugLog(`⛔ Gemini pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
               }
-              console.log('✅ Gemini analysis received:', analysis.topPicks?.length || 0, 'picks');
+              debugLog('✅ Gemini analysis received:', analysis.topPicks?.length || 0, 'picks');
               state.performanceStats.openaiSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.openaiTotalConf += p.confidence || 0; });
               openaiPicks.forEach(p => logAiSignal('openai', p));
@@ -4340,11 +4385,11 @@ async function runAiAnalysis() {
                   } else {
                     recordSignalRejection(validation.reason);
                     recordFilterReason(validation.reason);
-                    console.log(`⛔ Grok pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
+                    debugLog(`⛔ Grok pick rejected (${pick.symbol || 'unknown'}): ${validation.reason}`);
                   }
                 });
               }
-              console.log('✅ Grok analysis received:', analysis.topPicks?.length || 0, 'picks');
+              debugLog('✅ Grok analysis received:', analysis.topPicks?.length || 0, 'picks');
               state.performanceStats.grokSignals += analysis.topPicks?.length || 0;
               analysis.topPicks?.forEach(p => { state.performanceStats.grokTotalConf += p.confidence || 0; });
               grokPicks.forEach(p => logAiSignal('grok', p));
@@ -4367,7 +4412,7 @@ async function runAiAnalysis() {
     // Collect all picks with their source
     const eligibleSources = ['claude', 'openai', 'grok'].filter(isAiEligible);
     if (eligibleSources.length < 3) {
-      console.log(`⚖️ AI eligibility filter active. Eligible: ${eligibleSources.join(', ') || 'none'}`);
+      debugLog(`⚖️ AI eligibility filter active. Eligible: ${eligibleSources.join(', ') || 'none'}`);
     }
     const allPicks = [
       ...claudePicks.map(p => ({ ...p, source: 'claude', aiModel: CONFIG.CLAUDE_MODEL })),
@@ -4393,7 +4438,7 @@ async function runAiAnalysis() {
       if (picks.length >= 2) {
         const sources = picks.map(p => p.source).join(', ');
         const entries = picks.map(p => `${p.source}: $${p.entry.toLocaleString()}`).join(', ');
-        console.log(`🔍 Potential consensus ${key}: ${sources} | Entries: ${entries}`);
+        debugLog(`🔍 Potential consensus ${key}: ${sources} | Entries: ${entries}`);
       }
     }
 
@@ -4431,7 +4476,7 @@ async function runAiAnalysis() {
         const adxValue = marketInfo?.adx?.adx || 0;
         const isGold = matchingPicks.length >= 3;
         if (adxValue < 15) {
-          console.log(`⛔ ${symbol}: ADX ${adxValue} < 15 - Skipping (very weak trend)`);
+          debugLog(`⛔ ${symbol}: ADX ${adxValue} < 15 - Skipping (very weak trend)`);
           recordFilterReason('ADX < 15');
           continue;
         }
@@ -4439,24 +4484,24 @@ async function runAiAnalysis() {
         const regime = marketInfo?.marketRegime || 'UNKNOWN';
         // Only hard-block for CHOPPY regime; allow RANGING/SIDEWAYS with confidence penalty
         if (regime === 'CHOPPY') {
-          console.log(`⛔ ${symbol}: Market regime ${regime} - Skipping`);
+          debugLog(`⛔ ${symbol}: Market regime ${regime} - Skipping`);
           recordFilterReason(`Regime ${regime}`);
           continue;
         }
 
         // Volume and ATR: soft warnings instead of hard blocks
         if (marketInfo?.volumeTrend === 'DECREASING') {
-          console.log(`⚠️ ${symbol}: Volume decreasing - applying confidence penalty`);
+          debugLog(`⚠️ ${symbol}: Volume decreasing - applying confidence penalty`);
         }
 
         if (marketInfo?.atrPercent !== undefined && marketInfo.atrPercent < CONFIG.MIN_ATR_PERCENT) {
-          console.log(`⚠️ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - applying penalty`);
+          debugLog(`⚠️ ${symbol}: ATR ${marketInfo.atrPercent.toFixed(2)}% below ${CONFIG.MIN_ATR_PERCENT}% - applying penalty`);
         }
 
         // Supertrend: only hard-block for Silver. Gold consensus overrides Supertrend
         const supertrendDir = marketInfo?.supertrend?.direction;
         if (!isGold && ((direction === 'LONG' && supertrendDir === 'DOWN') || (direction === 'SHORT' && supertrendDir === 'UP'))) {
-          console.log(`⛔ ${symbol}: Supertrend ${supertrendDir} conflicts with ${direction} - Skipping (Silver only)`);
+          debugLog(`⛔ ${symbol}: Supertrend ${supertrendDir} conflicts with ${direction} - Skipping (Silver only)`);
           recordFilterReason('Supertrend mismatch');
           continue;
         }
@@ -4547,9 +4592,9 @@ async function runAiAnalysis() {
         let boostedConf = Math.max(50, Math.min(98, Math.round(adjustedConf)));
 
         // Log confidence calculation
-        console.log(`✅ ${symbol} ${direction}: Base ${baseConf.toFixed(0)}% → Final ${boostedConf}%`);
-        console.log(`   Adjustments: ${adjustments.join(', ')}`);
-        console.log(`   Regime: ${regime}, MTF: ${mtfConfluence} (${mtfScore}%)`);
+        debugLog(`✅ ${symbol} ${direction}: Base ${baseConf.toFixed(0)}% → Final ${boostedConf}%`);
+        debugLog(`   Adjustments: ${adjustments.join(', ')}`);
+        debugLog(`   Regime: ${regime}, MTF: ${mtfConfluence} (${mtfScore}%)`);
 
         // Use most aggressive TP from all matching picks
         const bestTP = direction === 'LONG'
@@ -4565,7 +4610,7 @@ async function runAiAnalysis() {
         // Gold consensus: allow lower R:R (1.5) since all 3 AIs agree
         const minRR = isGold ? 1.5 : CONFIG.MIN_RISK_REWARD;
         if (riskReward < minRR) {
-          console.log(`⛔ ${symbol}: Risk/Reward ${riskReward.toFixed(2)} < ${minRR} - Skipping`);
+          debugLog(`⛔ ${symbol}: Risk/Reward ${riskReward.toFixed(2)} < ${minRR} - Skipping`);
           recordFilterReason('Risk/Reward too low');
           continue;
         }
@@ -4601,7 +4646,7 @@ async function runAiAnalysis() {
                 agrees: dissentingPick.direction === direction, // Same direction but different entry?
                 type: dissentingPick.direction === direction ? 'DIFFERENT_ENTRY' : 'OPPOSITE_DIRECTION'
               };
-              console.log(`🤔 ${missingAi} dissents on ${symbol}: ${dissentingPick.direction} at $${dissentingPick.entry.toLocaleString()} (vs ${direction} at $${avgEntry.toLocaleString()})`);
+              debugLog(`🤔 ${missingAi} dissents on ${symbol}: ${dissentingPick.direction} at $${dissentingPick.entry.toLocaleString()} (vs ${direction} at $${avgEntry.toLocaleString()})`);
             } else {
               // 3rd AI didn't have any opinion on this coin
               dissentingAi = {
@@ -4611,7 +4656,7 @@ async function runAiAnalysis() {
                 reasoning: 'Did not signal this coin',
                 type: 'NO_SIGNAL'
               };
-              console.log(`🤷 ${missingAi} has no opinion on ${symbol}`);
+              debugLog(`🤷 ${missingAi} has no opinion on ${symbol}`);
             }
           }
         }
@@ -4655,10 +4700,10 @@ async function runAiAnalysis() {
         // Track consensus stats
         if (isGoldConsensus) {
           state.performanceStats.goldConsensusSignals++;
-          console.log(`🥇 GOLD CONSENSUS: All 3 AIs agree on ${signal.symbol} ${signal.direction}! [${regime}, MTF:${mtfScore}%]`);
+          debugLog(`🥇 GOLD CONSENSUS: All 3 AIs agree on ${signal.symbol} ${signal.direction}! [${regime}, MTF:${mtfScore}%]`);
         } else {
           state.performanceStats.silverConsensusSignals++;
-          console.log(`🥈 SILVER CONSENSUS: ${aiSources.join(' + ')} agree on ${signal.symbol} ${signal.direction}! [${regime}, MTF:${mtfScore}%]`);
+          debugLog(`🥈 SILVER CONSENSUS: ${aiSources.join(' + ')} agree on ${signal.symbol} ${signal.direction}! [${regime}, MTF:${mtfScore}%]`);
         }
 
         // Track prediction for stats
@@ -4706,14 +4751,14 @@ async function runAiAnalysis() {
           state.aiSignalLog.consensus = state.aiSignalLog.consensus.slice(0, 100);
           saveAiSignalLog();
         } else {
-          console.log(`⏭️ Consensus: Skipping duplicate ${signal.symbol} ${signal.direction} — pending consensus exists`);
+          debugLog(`⏭️ Consensus: Skipping duplicate ${signal.symbol} ${signal.direction} — pending consensus exists`);
         }
       }
     }
 
     // Log if no consensus found but individual AIs had picks
     if (allSignals.length === 0 && allPicks.length > 0) {
-      console.log(`⚠️ No consensus: ${allPicks.length} individual picks but no 2+ AI agreement`);
+      debugLog(`⚠️ No consensus: ${allPicks.length} individual picks but no 2+ AI agreement`);
       recordFilterReason('No consensus');
     }
 
@@ -4751,7 +4796,7 @@ async function runAiAnalysis() {
       signal.tpPercent = tpPercent;
 
       if (tpPercent < minTP) {
-        console.log(`⏭️ Filtered out ${symbol} - TP ${tpPercent.toFixed(1)}% below minimum ${minTP}%`);
+        debugLog(`⏭️ Filtered out ${symbol} - TP ${tpPercent.toFixed(1)}% below minimum ${minTP}%`);
         recordFilterReason('TP below minimum');
         return false;
       }
@@ -4781,7 +4826,7 @@ async function runAiAnalysis() {
 
       const goldCount = filteredSignals.filter(s => s.isGoldConsensus).length;
       const silverCount = filteredSignals.filter(s => s.isSilverConsensus).length;
-      console.log(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${goldCount} gold 🥇, ${silverCount} silver 🥈)`);
+      debugLog(`🤖 AI Analysis complete: ${filteredSignals.length} signals (${goldCount} gold 🥇, ${silverCount} silver 🥈)`);
 
       // Show consensus notification for BOTH Gold and Silver consensus signals
       const alertableSignals = filteredSignals.filter(s =>
@@ -4806,12 +4851,12 @@ async function runAiAnalysis() {
     }
   } catch (error) {
     console.error('AI Analysis failed:', error);
+  } finally {
+    state.isAiScanning = false;
+    state.nextAiScanTime = Date.now() + CONFIG.AI_SCAN_INTERVAL;
+    updateAiScanCountdown();
+    renderAlertBar();
   }
-
-  state.isAiScanning = false;
-  state.nextAiScanTime = Date.now() + CONFIG.AI_SCAN_INTERVAL;
-  updateAiScanCountdown();
-  renderAlertBar();
 }
 
 // Track which signals have been alerted in this session to prevent duplicate alerts
@@ -4874,7 +4919,7 @@ function showConsensusNotification(consensusSignals) {
 
     // Skip if already alerted in this session (prevents spam from "updated" signals)
     if (alertedSignalsThisSession.has(signalKey)) {
-      console.log(`⏭️ ${signal.symbol}: Already alerted this session - skipping notification`);
+      debugLog(`⏭️ ${signal.symbol}: Already alerted this session - skipping notification`);
       continue;
     }
 
@@ -4917,7 +4962,7 @@ async function executeAiTrades() {
 
   // Check if we can open more trades
   if (openTrades.length >= CONFIG.MAX_OPEN_TRADES) {
-    console.log('🤖 Max open trades reached, skipping auto-trade');
+    debugLog('🤖 Max open trades reached, skipping auto-trade');
     return;
   }
 
@@ -4936,7 +4981,7 @@ async function executeAiTrades() {
     );
 
     if (positionSize < 10) {
-      console.log('🤖 Insufficient balance for trade');
+      debugLog('🤖 Insufficient balance for trade');
       continue;
     }
 
@@ -4962,7 +5007,7 @@ async function executeAiTrades() {
     };
 
     state.trades.push(trade);
-    console.log(`🤖 AI Auto-Trade opened: ${signal.direction} ${signal.symbol} @ $${formatPrice(signal.entry)}`);
+    debugLog(`🤖 AI Auto-Trade opened: ${signal.direction} ${signal.symbol} @ $${formatPrice(signal.entry)}`);
 
     // Also open in dual portfolio (routes to silver or gold based on consensus type)
     openDualPortfolioTrade(signal);
@@ -5203,7 +5248,7 @@ async function analyzeMarket(symbol, timeframe = '240') {
 async function runScan() {
   // Skip traditional scan if AI is configured - AI signals are primary
   if (isAnyAiConfigured()) {
-    console.log('⏭️ Skipping traditional scan - using AI signals only');
+    debugLog('⏭️ Skipping traditional scan - using AI signals only');
     state.isScanning = false;
     updateScanStatus(state.markets.length, state.aiSignals.length);
     renderSignals();
@@ -5214,58 +5259,59 @@ async function runScan() {
   state.isScanning = true;
   updateScanStatus(0, 0);
 
-  const newSignals = [];
-  const timeframes = ['240', 'D'];
+  try {
+    const newSignals = [];
+    const timeframes = ['240', 'D'];
 
-  for (let i = 0; i < state.markets.length; i++) {
-    const market = state.markets[i];
-    updateScanStatus(i + 1, newSignals.length);
+    for (let i = 0; i < state.markets.length; i++) {
+      const market = state.markets[i];
+      updateScanStatus(i + 1, newSignals.length);
 
-    for (const tf of timeframes) {
-      const signal = await analyzeMarket(market.symbol, tf);
-      if (signal) {
-        const existingIdx = newSignals.findIndex(s => s.symbol === signal.symbol);
-        if (existingIdx === -1 || newSignals[existingIdx].confidence < signal.confidence) {
-          if (existingIdx !== -1) newSignals.splice(existingIdx, 1);
-          newSignals.push(signal);
+      for (const tf of timeframes) {
+        const signal = await analyzeMarket(market.symbol, tf);
+        if (signal) {
+          const existingIdx = newSignals.findIndex(s => s.symbol === signal.symbol);
+          if (existingIdx === -1 || newSignals[existingIdx].confidence < signal.confidence) {
+            if (existingIdx !== -1) newSignals.splice(existingIdx, 1);
+            newSignals.push(signal);
+          }
         }
       }
+      await sleep(50);
     }
-    await sleep(50);
-  }
 
-  newSignals.sort((a, b) => b.confidence - a.confidence);
-  state.signals = newSignals;
+    newSignals.sort((a, b) => b.confidence - a.confidence);
+    state.signals = newSignals;
 
-  // Add new signals to history (keep last 100)
-  for (const signal of newSignals) {
-    const existingIdx = state.signalHistory.findIndex(
-      s => s.symbol === signal.symbol && s.direction === signal.direction
-    );
-    if (existingIdx === -1) {
-      // New signal - add to history
-      state.signalHistory.unshift({ ...signal, isNew: true });
-    } else if (state.signalHistory[existingIdx].confidence !== signal.confidence) {
-      // Signal updated - move to top
-      state.signalHistory.splice(existingIdx, 1);
-      state.signalHistory.unshift({ ...signal, isNew: true, isUpdated: true });
+    // Add new signals to history (keep last 100)
+    for (const signal of newSignals) {
+      const existingIdx = state.signalHistory.findIndex(
+        s => s.symbol === signal.symbol && s.direction === signal.direction
+      );
+      if (existingIdx === -1) {
+        state.signalHistory.unshift({ ...signal, isNew: true });
+      } else if (state.signalHistory[existingIdx].confidence !== signal.confidence) {
+        state.signalHistory.splice(existingIdx, 1);
+        state.signalHistory.unshift({ ...signal, isNew: true, isUpdated: true });
+      }
     }
-  }
-  // Keep only last 100 signals in history
-  state.signalHistory = state.signalHistory.slice(0, 100);
-  saveSignalHistory(); // Persist signal history to localStorage
+    state.signalHistory = state.signalHistory.slice(0, 100);
+    saveSignalHistory();
 
-  const highConfSignals = newSignals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE);
-  for (const signal of highConfSignals) {
-    const key = `${signal.symbol}_${signal.direction}_${signal.timeframe}`;
-    if (!state.previousHighConfSignals.has(key)) {
-      showNotification(signal);
-      state.previousHighConfSignals.add(key);
+    const highConfSignals = newSignals.filter(s => s.confidence >= CONFIG.HIGH_CONFIDENCE);
+    for (const signal of highConfSignals) {
+      const key = `${signal.symbol}_${signal.direction}_${signal.timeframe}`;
+      if (!state.previousHighConfSignals.has(key)) {
+        showNotification(signal);
+        state.previousHighConfSignals.add(key);
+      }
     }
+  } catch (error) {
+    console.error('Scan failed:', error);
+  } finally {
+    state.isScanning = false;
+    renderAll();
   }
-
-  state.isScanning = false;
-  renderAll();
 }
 
 // ============================================
@@ -5428,13 +5474,13 @@ function openDualPortfolioTrade(signal) {
   // Check max open trades
   const openTrades = portfolio.trades.filter(t => t.status === 'open');
   if (openTrades.length >= config.maxOpenTrades) {
-    console.log(`${portfolioType.toUpperCase()}: Max ${config.maxOpenTrades} trades reached, skipping ${signal.symbol}`);
+    debugLog(`${portfolioType.toUpperCase()}: Max ${config.maxOpenTrades} trades reached, skipping ${signal.symbol}`);
     return;
   }
 
   // Check if already in this trade
   if (openTrades.some(t => t.symbol === signal.symbol)) {
-    console.log(`${portfolioType.toUpperCase()}: Already in ${signal.symbol}, skipping`);
+    debugLog(`${portfolioType.toUpperCase()}: Already in ${signal.symbol}, skipping`);
     return;
   }
 
@@ -5484,7 +5530,7 @@ function openDualPortfolioTrade(signal) {
 
   const streakInfo = streakMultiplier > 1 ? ` | 🔥 Streak ${winStreak} (${streakMultiplier.toFixed(1)}x)` : '';
   const confInfo = ` | 🎯 ${confLabel} conf ${confidence}% (${confidenceMultiplier}x)`;
-  console.log(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)} | Margin: $${riskAmount.toFixed(2)}${confInfo}${streakInfo}`);
+  debugLog(`${signal.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: Opened ${signal.direction} ${signal.symbol} @ $${signal.entry.toFixed(2)} | Size: $${positionSize.toFixed(2)} | Margin: $${riskAmount.toFixed(2)}${confInfo}${streakInfo}`);
 
   // Sync to backend
   syncDualPortfolioToBackend();
@@ -5602,7 +5648,7 @@ function closeDualPortfolioTrade(portfolioType, trade, exitPrice) {
   }
 
   const result = isWin ? '✅ WIN' : '❌ LOSS';
-  console.log(`${trade.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: ${result} ${trade.symbol} | PnL: $${trade.pnl.toFixed(2)}`);
+  debugLog(`${trade.isGoldConsensus ? '🥇' : '🥈'} ${portfolioType.toUpperCase()} PORTFOLIO: ${result} ${trade.symbol} | PnL: $${trade.pnl.toFixed(2)}`);
 
   saveDualPortfolio();
   renderDualPortfolioHistory(portfolioType);
@@ -5889,7 +5935,7 @@ function loadDualPortfolio() {
     if (gold) dualPortfolioState.gold = JSON.parse(gold);
     if (config) dualPortfolioState.config = JSON.parse(config);
 
-    console.log(`💼 Loaded dual portfolios - Silver: $${dualPortfolioState.silver.balance.toFixed(2)}, Gold: $${dualPortfolioState.gold.balance.toFixed(2)}`);
+    debugLog(`💼 Loaded dual portfolios - Silver: $${dualPortfolioState.silver.balance.toFixed(2)}, Gold: $${dualPortfolioState.gold.balance.toFixed(2)}`);
   } catch (e) {
     console.error('Failed to load dual portfolio:', e);
   }
@@ -5919,7 +5965,7 @@ function resetDualPortfolio(portfolioType) {
   updatePortfolioComparison();
   syncDualPortfolioToBackend();
 
-  console.log(`💰 ${portfolioType.toUpperCase()} portfolio reset to $5,000`);
+  debugLog(`💰 ${portfolioType.toUpperCase()} portfolio reset to $5,000`);
 }
 
 // Sync dual portfolio to backend (Redis)
@@ -5946,7 +5992,7 @@ async function syncDualPortfolioToBackend() {
     if (response.ok) {
       dualPortfolioState.lastSync = Date.now();
       updatePortfolioComparison();
-      console.log('✅ Dual portfolio synced to backend');
+      debugLog('✅ Dual portfolio synced to backend');
     }
   } catch (e) {
     console.error('Failed to sync dual portfolio:', e);
@@ -6002,7 +6048,7 @@ async function loadDualPortfolioFromBackend() {
       updatePortfolioComparison();
       renderInsightsPanel();
 
-      console.log('✅ Dual portfolio loaded from backend');
+      debugLog('✅ Dual portfolio loaded from backend');
     }
   } catch (e) {
     console.error('Failed to load dual portfolio from backend:', e);
@@ -6074,8 +6120,16 @@ function initDualPortfolioEventListeners() {
 // WEBSOCKET FOR REAL-TIME PRICES
 // ============================================
 
+let _pricePollingId = null; // Track polling interval to avoid duplicates
+
 function initWebSocket() {
-  if (state.wsConnection) state.wsConnection.close();
+  // Clean up existing connection properly
+  if (state.wsConnection) {
+    state.wsConnection.onclose = null; // Prevent reconnect loop during cleanup
+    state.wsConnection.onerror = null;
+    state.wsConnection.close();
+    state.wsConnection = null;
+  }
 
   const symbols = state.markets.slice(0, 20).map(m => m.symbol.toLowerCase());
   const streams = symbols.map(s => `${s}@ticker`).join('/');
@@ -6084,24 +6138,28 @@ function initWebSocket() {
     state.wsConnection = new WebSocket(`wss://fstream.binance.com/stream?streams=${streams}`);
 
     state.wsConnection.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.data) {
-        const ticker = data.data;
-        const symbol = ticker.s;
-        const currentPrice = parseFloat(ticker.c);
-        state.priceCache[symbol] = currentPrice;
+      try {
+        const data = JSON.parse(event.data);
+        if (data.data) {
+          const ticker = data.data;
+          const symbol = ticker.s;
+          const currentPrice = parseFloat(ticker.c);
+          state.priceCache[symbol] = currentPrice;
 
-        const market = state.markets.find(m => m.symbol === symbol);
-        if (market) {
-          market.price = currentPrice;
-          market.change = parseFloat(ticker.P);
+          const market = state.markets.find(m => m.symbol === symbol);
+          if (market) {
+            market.price = currentPrice;
+            market.change = parseFloat(ticker.P);
+          }
+
+          if (symbol === state.selectedSymbol) {
+            updateChartPrice(currentPrice, parseFloat(ticker.P));
+          }
+
+          evaluateAiPredictions(symbol, currentPrice);
         }
-
-        if (symbol === state.selectedSymbol) {
-          updateChartPrice(currentPrice, parseFloat(ticker.P));
-        }
-
-        evaluateAiPredictions(symbol, currentPrice);
+      } catch (parseErr) {
+        debugLog('WebSocket message parse error:', parseErr);
       }
     };
 
@@ -6110,7 +6168,7 @@ function initWebSocket() {
       startPricePolling();
     };
 
-    state.wsConnection.onclose = () => setTimeout(initWebSocket, 5000);
+    state.wsConnection.onclose = () => managedSetTimeout(initWebSocket, CONFIG.WS_RECONNECT_DELAY);
   } catch (error) {
     console.error('WebSocket init failed:', error);
     startPricePolling();
@@ -6118,7 +6176,8 @@ function initWebSocket() {
 }
 
 function startPricePolling() {
-  setInterval(async () => {
+  if (_pricePollingId) return; // Already polling, don't create duplicate
+  _pricePollingId = managedSetInterval(async () => {
     try {
       const markets = await fetchMarkets();
       state.markets = markets;
@@ -6134,7 +6193,7 @@ function startPricePolling() {
     } catch (error) {
       console.error('Price polling failed:', error);
     }
-  }, 5000);
+  }, CONFIG.PRICE_POLLING_INTERVAL);
 }
 
 // ============================================
@@ -6354,7 +6413,7 @@ function addUserLine(price) {
   });
 
   state.userLines.push(line);
-  console.log(`📏 User line added at $${formatPrice(price)}`);
+  debugLog(`📏 User line added at $${formatPrice(price)}`);
 
   // Save user lines to localStorage
   saveUserLines();
@@ -6373,7 +6432,7 @@ function clearUserLines() {
 
   state.userLines = [];
   localStorage.removeItem(`user_lines_${state.selectedSymbol}`);
-  console.log('📏 User lines cleared');
+  debugLog('📏 User lines cleared');
 }
 
 function saveUserLines() {
@@ -7189,7 +7248,7 @@ async function loadSystemHealth() {
       renderHealthDashboard(data);
     }
   } catch (e) {
-    console.log('Health check failed:', e.message);
+    debugLog('Health check failed:', e.message);
   }
 }
 
@@ -7326,7 +7385,7 @@ async function loadAiContext() {
       renderAiContext(data);
     }
   } catch (e) {
-    console.log('AI context load failed:', e.message);
+    debugLog('AI context load failed:', e.message);
   }
 }
 
@@ -7787,7 +7846,7 @@ function logAiSignal(source, pick) {
     s.shadowStatus === 'pending'
   );
   if (hasPending) {
-    console.log(`⏭️ ${source}: Skipping duplicate ${pick.symbol} ${pick.direction} — pending signal already exists`);
+    debugLog(`⏭️ ${source}: Skipping duplicate ${pick.symbol} ${pick.direction} — pending signal already exists`);
     return;
   }
 
@@ -7876,7 +7935,7 @@ async function loadAiSignalLogFromServer() {
     if (merged) {
       saveAiSignalLog();
       renderAiDetailView();
-      console.log('📝 AI signal log merged from server');
+      debugLog('📝 AI signal log merged from server');
     }
 
     // Load trade lessons and confidence tracking from server
@@ -8319,7 +8378,7 @@ async function loadOptimizerStatus() {
     }
   } catch (e) {
     // Optimizer might not have run yet - that's fine
-    console.log('Optimizer status not available yet');
+    debugLog('Optimizer status not available yet');
   }
 }
 
@@ -8752,19 +8811,19 @@ function toggleDebugPanel() {
 // Expose debug functions globally
 window.toggleDebug = () => {
   DEBUG_MODE = !DEBUG_MODE;
-  console.log(`🔧 Debug mode: ${DEBUG_MODE ? 'ON' : 'OFF'}`);
+  debugLog(`🔧 Debug mode: ${DEBUG_MODE ? 'ON' : 'OFF'}`);
 };
 
 window.forceAiScan = () => {
-  console.log('🔧 Forcing AI scan...');
+  debugLog('🔧 Forcing AI scan...');
   runAiAnalysis();
 };
 
 window.showAiStatus = () => {
-  console.log('🔧 AI Debug Status:');
-  console.log('Claude:', state.aiDebugStatus.claude);
-  console.log('OpenAI:', state.aiDebugStatus.openai);
-  console.log('Grok:', state.aiDebugStatus.grok);
+  debugLog('🔧 AI Debug Status:');
+  debugLog('Claude:', state.aiDebugStatus.claude);
+  debugLog('OpenAI:', state.aiDebugStatus.openai);
+  debugLog('Grok:', state.aiDebugStatus.grok);
 };
 
 // ============================================
@@ -8935,7 +8994,7 @@ function updateSRLinesFromAI(signal) {
     state.srLines.push({ line: liqLine, isAiGenerated: true, type: 'liquidation' });
   }
 
-  console.log('📍 Updated AI S/R lines for', signal.symbol);
+  debugLog('📍 Updated AI S/R lines for', signal.symbol);
 }
 
 function updateAllSRFromAISignals() {
@@ -9297,7 +9356,7 @@ function loadSignalHistory() {
     const saved = localStorage.getItem('sentient_signal_history');
     if (saved) {
       state.signalHistory = JSON.parse(saved);
-      console.log(`📜 Loaded ${state.signalHistory.length} signals from history`);
+      debugLog(`📜 Loaded ${state.signalHistory.length} signals from history`);
     }
   } catch (e) {
     console.error('Failed to load signal history:', e);
@@ -9321,7 +9380,7 @@ function resetBalance() {
   updatePortfolioStats();
   updateEquityChart();
 
-  console.log('💰 Balance reset to $2000');
+  debugLog('💰 Balance reset to $2000');
 
   showNotification({
     symbol: 'SYSTEM',
@@ -9707,17 +9766,19 @@ function openSettingsModal() {
   const modal = document.getElementById('settingsModal');
   if (!modal) return;
 
-  // Load current values into inputs
-  document.getElementById('claudeApiKey').value = CONFIG.CLAUDE_API_KEY || '';
-  document.getElementById('openaiApiKey').value = CONFIG.GEMINI_API_KEY || '';
-  document.getElementById('grokApiKey').value = CONFIG.GROK_API_KEY || '';
-  document.getElementById('lunarcrushApiKey').value = CONFIG.LUNARCRUSH_API_KEY || '';
-  document.getElementById('coinglassApiKey').value = CONFIG.COINGLASS_API_KEY || '';
+  // Load current values into inputs (with null guards)
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  const setChecked = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
+  setVal('claudeApiKey', CONFIG.CLAUDE_API_KEY || '');
+  setVal('openaiApiKey', CONFIG.GEMINI_API_KEY || '');
+  setVal('grokApiKey', CONFIG.GROK_API_KEY || '');
+  setVal('lunarcrushApiKey', CONFIG.LUNARCRUSH_API_KEY || '');
+  setVal('coinglassApiKey', CONFIG.COINGLASS_API_KEY || '');
 
   // Load toggle states
-  document.getElementById('aiAutoTradeToggle').checked = state.aiAutoTradeEnabled;
-  document.getElementById('soundToggle').checked = state.soundEnabled;
-  document.getElementById('notificationToggle').checked = state.notificationsEnabled;
+  setChecked('aiAutoTradeToggle', state.aiAutoTradeEnabled);
+  setChecked('soundToggle', state.soundEnabled);
+  setChecked('notificationToggle', state.notificationsEnabled);
 
   // Load Telegram settings
   const telegramBotToken = document.getElementById('telegramBotToken');
@@ -9816,7 +9877,7 @@ function saveSettings() {
     if (claudeKey.startsWith('sk-ant-')) {
       CONFIG.CLAUDE_API_KEY = claudeKey;
       localStorage.setItem('claude_api_key', claudeKey);
-      console.log('✅ Claude API key saved');
+      debugLog('✅ Claude API key saved');
     } else if (claudeKey.length > 0) {
       console.warn('⚠️ Invalid Claude API key format');
     }
@@ -9830,7 +9891,7 @@ function saveSettings() {
     if (openaiKey.length > 10) {
       CONFIG.GEMINI_API_KEY = openaiKey;
       localStorage.setItem('gemini_api_key', openaiKey);
-      console.log('✅ Gemini API key saved');
+      debugLog('✅ Gemini API key saved');
     } else if (openaiKey.length > 0) {
       console.warn('⚠️ Invalid Gemini API key format');
     }
@@ -9844,7 +9905,7 @@ function saveSettings() {
     if (grokKey.startsWith('xai-')) {
       CONFIG.GROK_API_KEY = grokKey;
       localStorage.setItem('grok_api_key', grokKey);
-      console.log('✅ Grok API key saved');
+      debugLog('✅ Grok API key saved');
     } else if (grokKey.length > 0) {
       console.warn('⚠️ Invalid Grok API key format');
     }
@@ -9857,7 +9918,7 @@ function saveSettings() {
   if (lunarcrushKey && lunarcrushKey.length > 5) {
     CONFIG.LUNARCRUSH_API_KEY = lunarcrushKey;
     localStorage.setItem('lunarcrush_api_key', lunarcrushKey);
-    console.log('✅ LunarCrush API key saved');
+    debugLog('✅ LunarCrush API key saved');
   } else {
     CONFIG.LUNARCRUSH_API_KEY = '';
     localStorage.removeItem('lunarcrush_api_key');
@@ -9867,7 +9928,7 @@ function saveSettings() {
   if (coinglassKey && coinglassKey.length > 5) {
     CONFIG.COINGLASS_API_KEY = coinglassKey;
     localStorage.setItem('coinglass_api_key', coinglassKey);
-    console.log('✅ Coinglass API key saved');
+    debugLog('✅ Coinglass API key saved');
   } else {
     CONFIG.COINGLASS_API_KEY = '';
     localStorage.removeItem('coinglass_api_key');
@@ -9881,7 +9942,7 @@ function saveSettings() {
   if (telegramToken && telegramToken.length > 10) {
     CONFIG.TELEGRAM_BOT_TOKEN = telegramToken;
     localStorage.setItem('telegram_bot_token', telegramToken);
-    console.log('✅ Telegram Bot Token saved');
+    debugLog('✅ Telegram Bot Token saved');
   } else {
     CONFIG.TELEGRAM_BOT_TOKEN = '';
     localStorage.removeItem('telegram_bot_token');
@@ -9890,7 +9951,7 @@ function saveSettings() {
   if (telegramChatId && telegramChatId.length > 0) {
     CONFIG.TELEGRAM_CHAT_ID = telegramChatId;
     localStorage.setItem('telegram_chat_id', telegramChatId);
-    console.log('✅ Telegram Chat ID saved');
+    debugLog('✅ Telegram Chat ID saved');
   } else {
     CONFIG.TELEGRAM_CHAT_ID = '';
     localStorage.removeItem('telegram_chat_id');
@@ -9906,7 +9967,7 @@ function saveSettings() {
   if (discordWebhookUrl && discordWebhookUrl.startsWith('https://discord.com/api/webhooks/')) {
     CONFIG.DISCORD_WEBHOOK_URL = discordWebhookUrl;
     localStorage.setItem('discord_webhook_url', discordWebhookUrl);
-    console.log('Discord webhook URL saved');
+    debugLog('Discord webhook URL saved');
   } else if (!discordWebhookUrl) {
     CONFIG.DISCORD_WEBHOOK_URL = '';
     localStorage.removeItem('discord_webhook_url');
@@ -9937,7 +9998,7 @@ function saveSettings() {
 
   // Run AI analysis if configured
   if (isAnyAiConfigured()) {
-    console.log('🤖 AI configured - starting analysis...');
+    debugLog('🤖 AI configured - starting analysis...');
     updateAiScanStatus('Starting...');
     setTimeout(() => runAiAnalysis(), 1000);
   } else {
@@ -10104,7 +10165,7 @@ async function init() {
 
   // Load API keys from localStorage
   const keysLoaded = loadApiKeys();
-  console.log('🔑 API Keys loaded:', keysLoaded.claude ? 'Claude ✓' : 'Claude ✗', keysLoaded.openai ? 'Gemini ✓' : 'Gemini ✗');
+  debugLog('🔑 API Keys loaded:', keysLoaded.claude ? 'Claude ✓' : 'Claude ✗', keysLoaded.openai ? 'Gemini ✓' : 'Gemini ✗');
 
   // Prompt for missing API keys after UI loads
   if (!keysLoaded.claude || !keysLoaded.openai) {
@@ -10162,7 +10223,7 @@ async function init() {
     updateDualPortfolioStats(pt);
   }
   updatePortfolioComparison();
-  console.log('💼 Dual Portfolio System initialized');
+  debugLog('💼 Dual Portfolio System initialized');
 
   // Initialize AI Detail view
   initAiDetailTabs();
@@ -10180,41 +10241,50 @@ async function init() {
   // Run initial scans
   runScan();
 
-  // Start regular scan interval
-  setInterval(runScan, CONFIG.SCAN_INTERVAL);
-  setInterval(updateOpenPositions, CONFIG.PNL_UPDATE_INTERVAL);
-  setInterval(updateDualPortfolioPositions, CONFIG.PNL_UPDATE_INTERVAL); // Update dual portfolios
-  setInterval(renderMarkets, 2000);
-  setInterval(updateShadowPnL, 5000); // Check shadow P&L for AI signal log every 5s
-  setInterval(renderAiDetailView, 30000); // Refresh AI detail view every 30s
-  setInterval(loadAiSignalLogFromServer, 120000); // Sync AI signal log from server every 2 min
-  setInterval(loadPerformanceStatsFromRedis, 120000); // Refresh sidebar AI stats from server every 2 min
-  setInterval(loadOptimizerStatus, 600000); // Refresh optimizer status every 10 min
+  // Start regular scan intervals (managed for cleanup)
+  managedSetInterval(runScan, CONFIG.SCAN_INTERVAL);
+  managedSetInterval(updateOpenPositions, CONFIG.PNL_UPDATE_INTERVAL);
+  managedSetInterval(updateDualPortfolioPositions, CONFIG.PNL_UPDATE_INTERVAL);
+  managedSetInterval(renderMarkets, CONFIG.MARKET_RENDER_INTERVAL);
+  managedSetInterval(updateShadowPnL, CONFIG.SHADOW_PNL_INTERVAL);
+  managedSetInterval(renderAiDetailView, CONFIG.AI_DETAIL_REFRESH_INTERVAL);
+  managedSetInterval(loadAiSignalLogFromServer, CONFIG.AI_SIGNAL_LOG_SYNC_INTERVAL);
+  managedSetInterval(loadPerformanceStatsFromRedis, CONFIG.PERFORMANCE_STATS_INTERVAL);
+  managedSetInterval(loadOptimizerStatus, CONFIG.OPTIMIZER_STATUS_INTERVAL);
 
-  // Initialize AI scanning with 10-minute interval
-  console.log('🤖 Sentient Trader v4.0 - Dual AI System');
-  console.log('💰 Starting balance: $' + state.balance.toFixed(2));
-  console.log('📊 Features: Funding Rates, OI Tracking, MTF Analysis, Trailing Stops');
-  console.log('🎯 AI Consensus Detection enabled');
+  debugLog('🤖 Sentient Trader v4.0 - Dual AI System');
+  debugLog('💰 Starting balance: $' + state.balance.toFixed(2));
+  debugLog('📊 Features: Funding Rates, OI Tracking, MTF Analysis, Trailing Stops');
+  debugLog('🎯 AI Consensus Detection enabled');
 
   // Run first AI analysis after initial data is loaded
-  setTimeout(() => {
+  managedSetTimeout(() => {
     if (isAnyAiConfigured()) {
       runAiAnalysis();
     }
   }, 5000);
 
   // Set up 10-minute AI scan interval
-  setInterval(runAiAnalysis, CONFIG.AI_SCAN_INTERVAL);
+  managedSetInterval(runAiAnalysis, CONFIG.AI_SCAN_INTERVAL);
 
-  // Periodically update funding rates (every 5 minutes)
-  setInterval(fetchFundingRates, 300000);
+  // Periodically update funding rates
+  managedSetInterval(fetchFundingRates, CONFIG.FUNDING_RATES_INTERVAL);
 
   // Initialize countdown
   state.nextAiScanTime = Date.now() + 5000; // First scan in 5 seconds
   updateAiScanCountdown();
 
-  console.log('✅ Sentient Trader initialized successfully');
+  debugLog('✅ Sentient Trader initialized successfully');
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// Clean up all intervals, timeouts, and WebSocket on page unload
+window.addEventListener('beforeunload', () => {
+  clearAllManagedTimers();
+  if (state.wsConnection) {
+    state.wsConnection.onclose = null; // Prevent reconnect attempt
+    state.wsConnection.close();
+    state.wsConnection = null;
+  }
+});
