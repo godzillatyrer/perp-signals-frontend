@@ -15,14 +15,22 @@ const CONFIG = {
   MIN_TP_PERCENT_BTC_ETH: 3,
   MIN_TP_PERCENT_LARGE_CAP: 5,
   MIN_TP_PERCENT_MID_CAP: 7,
-  // Top coins to analyze — top 30 by volume for maximum opportunity
+  // Top coins to analyze — top 50 by volume for maximum opportunity
   TOP_COINS: [
+    // Tier 1: Major caps
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
+    // Tier 2: Large caps
     'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT',
     'SUIUSDT', 'PEPEUSDT', 'WIFUSDT', 'NEARUSDT', 'ARBUSDT',
     'OPUSDT', 'FETUSDT', 'INJUSDT', 'APTUSDT', 'ATOMUSDT',
     'FILUSDT', 'ICPUSDT', 'RUNEUSDT', 'LTCUSDT', 'UNIUSDT',
-    'AAVEUSDT', 'RENDERUSDT', 'TRXUSDT', 'TIAUSDT', 'MATICUSDT'
+    'AAVEUSDT', 'RENDERUSDT', 'TRXUSDT', 'TIAUSDT', 'MATICUSDT',
+    // Tier 3: Mid caps — added to match watchlist coverage
+    'SEIUSDT', 'JUPUSDT', 'ONDOUSDT', 'ENAUSDT', 'STXUSDT',
+    'EIGENUSDT', 'PENDLEUSDT', 'WLDUSDT', 'MKRUSDT', 'LDOUSDT',
+    'GRTUSDT', 'IMXUSDT', 'FTMUSDT', 'ALGOUSDT', 'FLOWUSDT',
+    'SNXUSDT', 'GMXUSDT', 'DYDXUSDT', 'THETAUSDT', 'HBARUSDT',
+    'JASMYUSDT', 'BLURUSDT', 'ORDIUSDT', 'KASUSDT', 'COOKIEUSDT'
   ],
   // Signal cooldown in hours - 12 hours per coin (same coin cannot signal again)
   SIGNAL_COOLDOWN_HOURS: 12,
@@ -30,18 +38,20 @@ const CONFIG = {
   PRICE_MOVE_OVERRIDE_PERCENT: 10,
   // Correlation groups (don't send multiple signals from same group)
   CORRELATION_GROUPS: {
-    'BTC_ECOSYSTEM': ['BTCUSDT'],
-    'ETH_ECOSYSTEM': ['ETHUSDT', 'OPUSDT', 'ARBUSDT', 'MATICUSDT'],
-    'ALT_L1': ['SOLUSDT', 'AVAXUSDT', 'DOTUSDT', 'NEARUSDT', 'APTUSDT', 'SUIUSDT', 'ATOMUSDT', 'ICPUSDT'],
-    'MEME': ['DOGEUSDT', 'PEPEUSDT', 'WIFUSDT'],
-    'DEFI': ['LINKUSDT', 'ADAUSDT', 'UNIUSDT', 'AAVEUSDT', 'INJUSDT', 'RUNEUSDT'],
-    'AI_TOKENS': ['FETUSDT', 'RENDERUSDT'],
+    'BTC_ECOSYSTEM': ['BTCUSDT', 'STXUSDT', 'ORDIUSDT', 'KASUSDT'],
+    'ETH_ECOSYSTEM': ['ETHUSDT', 'OPUSDT', 'ARBUSDT', 'MATICUSDT', 'IMXUSDT', 'EIGENUSDT'],
+    'ALT_L1': ['SOLUSDT', 'AVAXUSDT', 'DOTUSDT', 'NEARUSDT', 'APTUSDT', 'SUIUSDT', 'ATOMUSDT', 'ICPUSDT', 'SEIUSDT', 'FTMUSDT', 'ALGOUSDT', 'HBARUSDT', 'FLOWUSDT', 'THETAUSDT'],
+    'MEME': ['DOGEUSDT', 'PEPEUSDT', 'WIFUSDT', 'BLURUSDT', 'JASMYUSDT', 'COOKIEUSDT'],
+    'DEFI': ['LINKUSDT', 'ADAUSDT', 'UNIUSDT', 'AAVEUSDT', 'INJUSDT', 'RUNEUSDT', 'PENDLEUSDT', 'MKRUSDT', 'LDOUSDT', 'SNXUSDT', 'GMXUSDT', 'DYDXUSDT', 'JUPUSDT'],
+    'AI_TOKENS': ['FETUSDT', 'RENDERUSDT', 'WLDUSDT'],
     'STORAGE': ['FILUSDT', 'TIAUSDT'],
+    'RWA': ['ONDOUSDT', 'ENAUSDT'],
+    'INFRA': ['GRTUSDT'],
     'EXCHANGE': ['BNBUSDT'],
     'LEGACY': ['LTCUSDT', 'TRXUSDT', 'XRPUSDT']
   },
-  // Max signals per correlation group per scan
-  MAX_SIGNALS_PER_GROUP: 1,
+  // Max signals per correlation group per scan (2 since groups are larger now)
+  MAX_SIGNALS_PER_GROUP: 2,
   MIN_RISK_REWARD: 2,
   MIN_ATR_PERCENT: 0.4,
   MAX_ENTRY_WIGGLE_PERCENT: 4,
@@ -1338,6 +1348,7 @@ async function fetchMarketData() {
     try {
       console.log('Trying CoinGecko API...');
       const cgIds = {
+        // Original 30
         'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'SOLUSDT': 'solana',
         'BNBUSDT': 'binancecoin', 'XRPUSDT': 'ripple', 'DOGEUSDT': 'dogecoin',
         'ADAUSDT': 'cardano', 'AVAXUSDT': 'avalanche-2', 'LINKUSDT': 'chainlink',
@@ -1348,7 +1359,21 @@ async function fetchMarketData() {
         'FILUSDT': 'filecoin', 'ICPUSDT': 'internet-computer',
         'RUNEUSDT': 'thorchain', 'LTCUSDT': 'litecoin', 'UNIUSDT': 'uniswap',
         'AAVEUSDT': 'aave', 'RENDERUSDT': 'render-token', 'TRXUSDT': 'tron',
-        'TIAUSDT': 'celestia', 'MATICUSDT': 'matic-network'
+        'TIAUSDT': 'celestia', 'MATICUSDT': 'matic-network',
+        // New 25 mid-caps
+        'SEIUSDT': 'sei-network', 'JUPUSDT': 'jupiter-exchange-solana',
+        'ONDOUSDT': 'ondo-finance', 'ENAUSDT': 'ethena',
+        'STXUSDT': 'blockstack', 'EIGENUSDT': 'eigenlayer',
+        'PENDLEUSDT': 'pendle', 'WLDUSDT': 'worldcoin-wld',
+        'MKRUSDT': 'maker', 'LDOUSDT': 'lido-dao',
+        'GRTUSDT': 'the-graph', 'IMXUSDT': 'immutable-x',
+        'FTMUSDT': 'fantom', 'ALGOUSDT': 'algorand',
+        'FLOWUSDT': 'flow', 'SNXUSDT': 'havven',
+        'GMXUSDT': 'gmx', 'DYDXUSDT': 'dydx-chain',
+        'THETAUSDT': 'theta-token', 'HBARUSDT': 'hedera-hashgraph',
+        'JASMYUSDT': 'jasmycoin', 'BLURUSDT': 'blur',
+        'ORDIUSDT': 'ordinals', 'KASUSDT': 'kaspa',
+        'COOKIEUSDT': 'cookie-dao'
       };
 
       const ids = Object.values(cgIds).join(',');

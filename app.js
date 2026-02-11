@@ -84,7 +84,7 @@ const CONFIG = {
   MIN_CONFIDENCE: 65,
   HIGH_CONFIDENCE: 75, // Alert threshold
   ALERT_CONFIDENCE: 75, // Minimum confidence for alerts
-  TOP_COINS: 50,
+  TOP_COINS: 75,
   LEVERAGE: 5,
   RISK_PERCENT: 2,
   TP_PERCENT: 5, // Minimum 5% TP for worthwhile trades
@@ -112,6 +112,7 @@ const CONFIG = {
   PERFORMANCE_STATS_INTERVAL: 120000,
   OPTIMIZER_STATUS_INTERVAL: 600000,
   FUNDING_RATES_INTERVAL: 300000,
+  SENTIMENT_FETCH_INTERVAL: 1800000, // 30 minutes for LunarCrush (avoid rate limits)
   PRICE_POLLING_INTERVAL: 5000,
   WS_RECONNECT_DELAY: 5000
 };
@@ -1030,6 +1031,7 @@ const state = {
   fundingRates: {}, // Symbol -> funding rate
   openInterest: {}, // Symbol -> OI data
   socialSentiment: {}, // Symbol -> LunarCrush data
+  lastSentimentFetchTime: 0, // Timestamp of last LunarCrush fetch
   liquidationData: {}, // Symbol -> Coinglass liquidation data
   tradeLessons: [], // AI-generated post-trade lessons
   confidenceTracking: [], // Confidence vs outcome correlation data
@@ -1774,6 +1776,14 @@ async function fetchBatchSocialSentiment(symbols) {
     return {};
   }
 
+  // Throttle: only fetch every 30 minutes (reuse cached data in between)
+  const timeSinceLastFetch = Date.now() - state.lastSentimentFetchTime;
+  if (timeSinceLastFetch < CONFIG.SENTIMENT_FETCH_INTERVAL && Object.keys(state.socialSentiment).length > 0) {
+    const minsLeft = Math.round((CONFIG.SENTIMENT_FETCH_INTERVAL - timeSinceLastFetch) / 60000);
+    debugLog(`🌙 LunarCrush cached (next fetch in ${minsLeft}m) - ${Object.keys(state.socialSentiment).length} coins`);
+    return state.socialSentiment;
+  }
+
   debugLog('🌙 Fetching social sentiment data...');
 
   // Fetch for top 10 symbols only to avoid rate limits
@@ -1784,7 +1794,8 @@ async function fetchBatchSocialSentiment(symbols) {
     await sleep(100); // Rate limiting
   }
 
-  debugLog(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins`);
+  state.lastSentimentFetchTime = Date.now();
+  debugLog(`🌙 Social sentiment loaded for ${Object.keys(state.socialSentiment).length} coins (next fetch in 30m)`);
 
   // Persist sentiment data to Redis so server-side scan.js can use it in AI prompts
   if (Object.keys(state.socialSentiment).length > 0) {
