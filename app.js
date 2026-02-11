@@ -161,7 +161,7 @@ function loadApiKey() {
 // SIGNAL COOLDOWN TRACKING (localStorage-based)
 // ============================================
 
-const SIGNAL_COOLDOWN_HOURS = 12; // 12-hour cooldown per coin
+const SIGNAL_COOLDOWN_HOURS = 4; // 4-hour cooldown per coin
 const PRICE_OVERRIDE_PERCENT = 10; // 10% price move overrides cooldown
 
 function getSentSignals() {

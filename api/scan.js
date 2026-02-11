@@ -46,9 +46,9 @@ const CONFIG = {
     'SNXUSDT', 'GMXUSDT', 'DYDXUSDT', 'THETAUSDT', 'HBARUSDT',
     'JASMYUSDT', 'BLURUSDT', 'ORDIUSDT', 'KASUSDT', 'COOKIEUSDT'
   ],
-  // Signal cooldown in hours - 12 hours per coin (same coin cannot signal again)
-  SIGNAL_COOLDOWN_HOURS: 12,
-  // Price move % that overrides cooldown - ONLY 10%+ can bypass 12h cooldown
+  // Signal cooldown in hours - 4 hours per coin (same coin cannot signal again)
+  SIGNAL_COOLDOWN_HOURS: 4,
+  // Price move % that overrides cooldown - ONLY 10%+ can bypass 4h cooldown
   PRICE_MOVE_OVERRIDE_PERCENT: 10,
   // Correlation groups — sourced from shared lib/trading-config.js
   CORRELATION_GROUPS: SHARED_CORRELATION_GROUPS,
@@ -168,7 +168,7 @@ function isMajorEventDay() {
 // SIGNAL TRACKING (Persistent via Upstash Redis)
 // ============================================
 // Stores: { direction, entry, timestamp } for each symbol
-// Cooldown: 12 hours, unless direction flips or price moves 10%+
+// Cooldown: 4 hours, unless price moves 10%+
 
 let redis = null;
 
@@ -239,8 +239,8 @@ async function isSignalOnCooldown(symbol, direction, currentPrice) {
     return false;
   }
 
-  // NOTE: Direction flip bypass REMOVED - 12h cooldown applies regardless of direction
-  // The same coin should not get signals within 12h, whether LONG or SHORT
+  // NOTE: Direction flip bypass REMOVED - 4h cooldown applies regardless of direction
+  // The same coin should not get signals within 4h, whether LONG or SHORT
   // This prevents oscillating signals when AI recommendations flip back and forth
 
   // Check price movement - ONLY 10%+ can override cooldown

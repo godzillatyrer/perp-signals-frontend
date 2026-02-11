@@ -22,7 +22,7 @@ const BOUNDS = {
   minRiskRewardGold: { min: 1.0, max: 3.0, default: 1.5 },
   minADX:            { min: 10, max: 30, default: 15 },
   aiWeight:          { min: 0.3, max: 2.0, default: 1.0 },
-  cooldownHours:     { min: 4, max: 24, default: 12 },
+  cooldownHours:     { min: 2, max: 24, default: 4 },
 };
 
 function getDefaultOptConfig() {
@@ -37,7 +37,7 @@ function getDefaultOptConfig() {
     minRiskReward: 2.0,
     minRiskRewardGold: 1.5,
     minADX: 15,
-    cooldownHours: 12,
+    cooldownHours: 4,
 
     // AI weights (higher = more trusted in consensus scoring)
     aiWeights: { claude: 1.0, openai: 1.0, grok: 1.0 },
