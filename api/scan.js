@@ -2204,13 +2204,6 @@ async function openTradeForSignal(signal) {
       return { opened: false, reason: 'duplicate' };
     }
 
-    // Correlation protection — max 1 trade per correlation group
-    const tradeGroup = getCorrelationGroup(signal.symbol);
-    const groupConflict = openTrades.find(t => getCorrelationGroup(t.symbol) === tradeGroup);
-    if (groupConflict) {
-      console.log(`🔗 ${portfolioType.toUpperCase()}: Already in ${groupConflict.symbol} (same ${tradeGroup} group), skipping ${signal.symbol}`);
-      return { opened: false, reason: 'correlation' };
-    }
 
     // Max exposure limit — from shared config
     const totalExposure = openTrades.reduce((sum, t) => sum + (t.remainingSize || t.size), 0);
@@ -2310,14 +2303,6 @@ async function openTradeForSignal(signal) {
       }
     }
 
-    // Session-aware filter — prefer US/EU overlap (13:00-21:00 UTC) for higher quality
-    const utcHour = new Date().getUTCHours();
-    const isHighVolSession = utcHour >= 13 && utcHour <= 21;
-    if (!isHighVolSession && !signal.isGoldConsensus) {
-      // Only allow Gold consensus trades during low-volume hours (Asian session)
-      console.log(`🕐 ${portfolioType.toUpperCase()}: Low-volume session (${utcHour}:00 UTC) — Silver signals blocked, only Gold allowed`);
-      return { opened: false, reason: 'session_filter' };
-    }
 
     // === ANTI-MARTINGALE: Increase risk on winning streaks ===
     const winStreak = calculateWinStreak(portfolio.trades);

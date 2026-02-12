@@ -5518,20 +5518,6 @@ function openDualPortfolioTrade(signal) {
     return;
   }
 
-  // === CORRELATION PROTECTION: Max 1 trade per correlation group ===
-  const correlationGroups = tc.CORRELATION_GROUPS || {};
-  const getGroup = (sym) => {
-    for (const [group, symbols] of Object.entries(correlationGroups)) {
-      if (symbols.includes(sym)) return group;
-    }
-    return sym;
-  };
-  const tradeGroup = getGroup(signal.symbol);
-  const groupConflict = openTrades.find(t => getGroup(t.symbol) === tradeGroup);
-  if (groupConflict) {
-    debugLog(`🔗 ${portfolioType.toUpperCase()}: Already in ${groupConflict.symbol} (same ${tradeGroup} group), skipping ${signal.symbol}`);
-    return;
-  }
 
   // === MAX EXPOSURE: Total open position value capped at 60% of balance ===
   const maxExposureRatio = tc.MAX_EXPOSURE_RATIO || 0.60;
