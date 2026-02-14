@@ -181,6 +181,36 @@ export default async function handler(request, response) {
       }
       health.data.cooldowns = cooldownKeys;
 
+      // Cron job heartbeat status — detect if background scanning has stopped
+      const cronJobs = {
+        scan: { key: 'cron:scan:heartbeat', expectedInterval: 10 * 60 * 1000 },        // every 10 min
+        monitor: { key: 'cron:monitor:heartbeat', expectedInterval: 2 * 60 * 1000 },    // every 2 min
+        evaluate: { key: 'cron:evaluate:heartbeat', expectedInterval: 30 * 60 * 1000 },  // every 30 min
+        optimize: { key: 'cron:optimize:heartbeat', expectedInterval: 6 * 60 * 60 * 1000 } // every 6 hours
+      };
+      health.processes.crons = {};
+      for (const [name, { key, expectedInterval }] of Object.entries(cronJobs)) {
+        const hb = await r.get(key);
+        if (hb) {
+          const parsed = typeof hb === 'string' ? JSON.parse(hb) : hb;
+          const msSinceLastRun = Date.now() - parsed.lastRun;
+          // Consider stale if 3x the expected interval has passed without a run
+          const isStale = msSinceLastRun > expectedInterval * 3;
+          health.processes.crons[name] = {
+            ...parsed,
+            msSinceLastRun,
+            isStale,
+            status: isStale ? 'STALE' : parsed.success ? 'OK' : 'FAILED'
+          };
+        } else {
+          health.processes.crons[name] = {
+            status: 'NEVER_RUN',
+            isStale: true,
+            note: 'No heartbeat recorded - cron may not be deployed or running'
+          };
+        }
+      }
+
     } catch (e) {
       health.processes.error = e.message;
     }

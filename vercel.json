@@ -9,6 +9,20 @@
       ]
     }
   ],
+  "functions": {
+    "api/scan.js": {
+      "maxDuration": 300
+    },
+    "api/monitor-positions.js": {
+      "maxDuration": 60
+    },
+    "api/evaluate-positions.js": {
+      "maxDuration": 120
+    },
+    "api/optimize.js": {
+      "maxDuration": 120
+    }
+  },
   "crons": [
     {
       "path": "/api/scan",

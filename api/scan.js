@@ -4,6 +4,9 @@
 // Uses Upstash Redis for persistent cooldown tracking across invocations
 // Integrates Discord community calls for enhanced AI context
 
+// Allow up to 300 seconds for this function (scans 50 coins + 3 AI APIs)
+export const maxDuration = 300;
+
 import { Redis } from '@upstash/redis';
 import { getRecentCalls, formatCallsForAIContext } from './discord.js';
 import { addPendingSignal, evaluatePendingSignals, getPendingSignalsSummary } from './pending-signals.js';
@@ -1693,7 +1696,7 @@ async function analyzeWithClaude(prompt) {
   if (!process.env.CLAUDE_API_KEY) return null;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1705,7 +1708,7 @@ async function analyzeWithClaude(prompt) {
         max_tokens: 2048,
         messages: [{ role: 'user', content: prompt }]
       })
-    });
+    }, 90000);
 
     const data = await response.json();
     if (data.content && data.content[0]) {
@@ -1716,7 +1719,7 @@ async function analyzeWithClaude(prompt) {
       }
     }
   } catch (error) {
-    console.error('Claude analysis error:', error);
+    console.error('Claude analysis error:', error.message);
   }
   return null;
 }
@@ -1727,7 +1730,7 @@ async function analyzeWithGemini(prompt) {
   console.log('💎 [GEMINI] Starting API call...');
 
   try {
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    const response = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1738,7 +1741,7 @@ async function analyzeWithGemini(prompt) {
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 4096
       })
-    });
+    }, 90000);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -1779,7 +1782,7 @@ async function analyzeWithGrok(prompt) {
   console.log('⚡ [GROK] Starting API call...');
 
   try {
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    const response = await fetchWithTimeout('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1790,7 +1793,7 @@ async function analyzeWithGrok(prompt) {
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048
       })
-    });
+    }, 90000);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -2482,6 +2485,7 @@ function formatTradeOpenMessage(signal, tradeResult) {
 
 export default async function handler(request, response) {
   console.log('🔄 Starting AI scan...');
+  const scanStartTime = Date.now();
 
   try {
     // ======= LOAD OPTIMIZED CONFIG =======
@@ -2565,7 +2569,7 @@ export default async function handler(request, response) {
     // Fetch technical indicators for all coins in parallel batches
     console.log(`📈 Calculating technical indicators for ${CONFIG.TOP_COINS.length} coins...`);
     const indicatorData = {};
-    const BATCH_SIZE = 5; // Process 5 coins at a time to avoid rate limits
+    const BATCH_SIZE = 10; // Process 10 coins at a time (50 coins / 10 = 5 batches instead of 10)
     for (let i = 0; i < CONFIG.TOP_COINS.length; i += BATCH_SIZE) {
       const batch = CONFIG.TOP_COINS.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
@@ -2839,6 +2843,25 @@ export default async function handler(request, response) {
 
     console.log(`📤 Sent ${alertsSent} alerts, opened ${tradesOpened} trades, ${pendingSignalsAdded} pending signals added`);
 
+    // Record cron heartbeat in Redis so health checks can detect if crons stop running
+    try {
+      const r = getRedis();
+      if (r) {
+        await r.set('cron:scan:heartbeat', JSON.stringify({
+          lastRun: Date.now(),
+          duration: Date.now() - scanStartTime,
+          success: true,
+          alertsSent,
+          tradesOpened,
+          coinsScanned: Object.keys(indicatorData).length,
+          aiResponses: analyses.length,
+          consensusSignals: consensusSignals.length
+        }));
+      }
+    } catch (e) {
+      console.log('Failed to save scan heartbeat:', e.message);
+    }
+
     // Get pending signals summary for response
     const pendingSummary = await getPendingSignalsSummary();
 
@@ -2872,6 +2895,18 @@ export default async function handler(request, response) {
 
   } catch (error) {
     console.error('Scan error:', error);
+    // Record failure heartbeat
+    try {
+      const r = getRedis();
+      if (r) {
+        await r.set('cron:scan:heartbeat', JSON.stringify({
+          lastRun: Date.now(),
+          duration: Date.now() - scanStartTime,
+          success: false,
+          error: error.message
+        }));
+      }
+    } catch (e) { /* ignore heartbeat save errors */ }
     return response.status(500).json({
       success: false,
       error: error.message

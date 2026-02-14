@@ -2,6 +2,9 @@
 // Runs as a Vercel cron job every 2 minutes to ensure trades are managed 24/7
 // Features: TP/SL execution, breakeven stop-loss, trailing stop, partial TP
 
+// Allow up to 60 seconds for this function
+export const maxDuration = 60;
+
 import { Redis } from '@upstash/redis';
 import {
   PORTFOLIO_CONFIG,
@@ -770,6 +773,19 @@ export default async function handler(request, response) {
     const duration = Date.now() - startTime;
     console.log(`✅ Position Monitor complete in ${duration}ms | Checked: ${openTrades.length} | Closed: ${closedTrades.length} | SL adjusted: ${slAdjusted} | Shadow resolved: ${shadowResolved}`);
 
+    // Record cron heartbeat
+    try {
+      await r.set('cron:monitor:heartbeat', JSON.stringify({
+        lastRun: Date.now(),
+        duration,
+        success: true,
+        tradesChecked: openTrades.length,
+        tradesClosed: closedTrades.length
+      }));
+    } catch (e) {
+      console.log('Failed to save monitor heartbeat:', e.message);
+    }
+
     return response.status(200).json({
       success: true,
       tradesChecked: openTrades.length,
@@ -788,6 +804,18 @@ export default async function handler(request, response) {
 
   } catch (error) {
     console.error('Position Monitor error:', error);
+    // Record failure heartbeat
+    try {
+      const r = getRedis();
+      if (r) {
+        await r.set('cron:monitor:heartbeat', JSON.stringify({
+          lastRun: Date.now(),
+          duration: Date.now() - startTime,
+          success: false,
+          error: error.message
+        }));
+      }
+    } catch (e) { /* ignore */ }
     return response.status(500).json({
       success: false,
       error: error.message
