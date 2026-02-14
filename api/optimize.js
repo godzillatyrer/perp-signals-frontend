@@ -3,6 +3,9 @@
 // Reads trade history from Redis, computes optimal config, writes it back
 // scan.js reads this config and uses it instead of hardcoded defaults
 
+// Allow up to 120 seconds for this function
+export const maxDuration = 120;
+
 import { Redis } from '@upstash/redis';
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
@@ -592,6 +595,20 @@ export default async function handler(request, response) {
     }
 
     const elapsed = Date.now() - startTime;
+
+    // Record cron heartbeat
+    try {
+      await redis.set('cron:optimize:heartbeat', JSON.stringify({
+        lastRun: Date.now(),
+        duration: elapsed,
+        success: true,
+        cycle: config.cycleCount,
+        tradesAnalyzed: config.totalTradesAnalyzed
+      }));
+    } catch (e) {
+      console.log('Failed to save optimize heartbeat:', e.message);
+    }
+
     return response.status(200).json({
       success: true,
       elapsed: elapsed + 'ms',
@@ -614,6 +631,15 @@ export default async function handler(request, response) {
     });
   } catch (error) {
     console.error('Optimizer error:', error);
+    // Record failure heartbeat
+    try {
+      await redis.set('cron:optimize:heartbeat', JSON.stringify({
+        lastRun: Date.now(),
+        duration: Date.now() - startTime,
+        success: false,
+        error: error.message
+      }));
+    } catch (e) { /* ignore */ }
     return response.status(500).json({
       error: error.message,
       elapsed: (Date.now() - startTime) + 'ms'

@@ -2,6 +2,9 @@
 // Uses a single Claude call to assess all open positions against current market conditions
 // Can recommend: HOLD, TIGHTEN (move SL closer), or EXIT (close early)
 
+// Allow up to 120 seconds for this function (calls Claude for analysis)
+export const maxDuration = 120;
+
 import { Redis } from '@upstash/redis';
 
 const PORTFOLIO_KEY = 'dual_portfolio_data';
@@ -307,7 +310,7 @@ async function evaluateWithAI(prompt) {
         max_tokens: 1024,
         messages: [{ role: 'user', content: prompt }]
       })
-    }, 30000);
+    }, 60000);
 
     const data = await response.json();
     if (data.content && data.content[0]) {
@@ -590,6 +593,21 @@ export default async function handler(request, response) {
     const duration = Date.now() - startTime;
     console.log(`✅ AI Evaluation complete in ${duration}ms | Hold: ${holdCount} | Tighten: ${tightenCount} | Exit: ${exitCount}`);
 
+    // Record cron heartbeat
+    try {
+      await r.set('cron:evaluate:heartbeat', JSON.stringify({
+        lastRun: Date.now(),
+        duration,
+        success: true,
+        tradesChecked: openTrades.length,
+        hold: holdCount,
+        tighten: tightenCount,
+        exit: exitCount
+      }));
+    } catch (e) {
+      console.log('Failed to save evaluate heartbeat:', e.message);
+    }
+
     return response.status(200).json({
       success: true,
       tradesChecked: openTrades.length,
@@ -602,6 +620,18 @@ export default async function handler(request, response) {
 
   } catch (error) {
     console.error('AI Evaluator error:', error);
+    // Record failure heartbeat
+    try {
+      const r = getRedis();
+      if (r) {
+        await r.set('cron:evaluate:heartbeat', JSON.stringify({
+          lastRun: Date.now(),
+          duration: Date.now() - startTime,
+          success: false,
+          error: error.message
+        }));
+      }
+    } catch (e) { /* ignore */ }
     return response.status(500).json({ success: false, error: error.message });
   }
 }
